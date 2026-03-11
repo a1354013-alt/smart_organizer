@@ -1,31 +1,45 @@
 import streamlit as st
 import os
-import tempfile
+import logging
 import pandas as pd
+from pathlib import Path
 from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
 from storage import StorageManager
 
-# 配置
-DB_PATH = "/home/ubuntu/smart_organizer/smart_organizer.db"
-REPO_ROOT = "/home/ubuntu/smart_organizer/repo"
-UPLOAD_DIR = "/home/ubuntu/smart_organizer/uploads"
+# ========== 路徑配置 (動態，非硬編碼) ==========
+PROJECT_ROOT = Path(__file__).parent
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
+REPO_ROOT = PROJECT_ROOT / "repo"
+DB_PATH = PROJECT_ROOT / "smart_organizer.db"
+
+# 確保目錄存在
+UPLOAD_DIR.mkdir(exist_ok=True)
+REPO_ROOT.mkdir(exist_ok=True)
+
+# 設定 Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # 初始化
 processor = FileProcessor()
-storage = StorageManager(DB_PATH, REPO_ROOT)
+storage = StorageManager(str(DB_PATH), str(REPO_ROOT))
 
 st.set_page_config(page_title="智慧檔案整理助理", layout="wide")
-st.title("📁 智慧檔案整理助理 (V2 終極版)")
-st.markdown("**AI 驅動的智慧分類、預覽與全文檢索 - 企業級檔案管理**")
+st.title("📁 智慧檔案整理助理 (V2 終極版 - 重構)")
+st.markdown("**資料庫驅動的檔案生命週期管理系統**")
 
-# Sidebar 配置
-st.sidebar.header("⚙️ 設定")
-repo_path = st.sidebar.text_input("儲存庫路徑", REPO_ROOT)
-if repo_path != REPO_ROOT:
-    REPO_ROOT = repo_path
-    storage = StorageManager(DB_PATH, REPO_ROOT)
+# ========== Sidebar 配置 ==========
+st.sidebar.header("⚙️ 設定與維護")
+if st.sidebar.button("🧹 清理孤立暫存檔"):
+    try:
+        storage.cleanup_orphaned_uploads(str(UPLOAD_DIR))
+        st.sidebar.success("✅ 清理完成")
+    except Exception as e:
+        st.sidebar.error(f"❌ 清理失敗: {e}")
 
-# 主要流程
+st.sidebar.markdown(f"**路徑配置**\n- 上傳目錄: `{UPLOAD_DIR}`\n- 儲存庫: `{REPO_ROOT}`\n- 資料庫: `{DB_PATH}`")
+
+# ========== 主流程 ==========
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📤 上傳與分析", "👁️ 預覽與確認", "✅ 執行整理", "🔍 全文檢索", "📊 查看紀錄"])
 
 with tab1:
@@ -52,45 +66,59 @@ with tab1:
                 progress_bar.progress(progress)
                 status_text.text(f"分析中... {idx + 1}/{len(uploaded_files)}")
                 
-                temp_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                file_hash = processor.get_file_hash(temp_path)
-                
-                duplicate_check = storage.check_duplicate(file_hash)
-                if duplicate_check:
-                    duplicates.append({
-                        'filename': uploaded_file.name,
-                        'existing_path': duplicate_check[1]
-                    })
-                    continue
-                
-                metadata = processor.extract_metadata(temp_path)
-                main_topic, tag_scores = processor.classify_multi_tag(metadata, uploaded_file.name)
-                
-                if metadata['standard_date'] is None:
-                    metadata['standard_date'] = 'UnknownDate'
-                
-                file_id = storage.create_pending_record({
-                    'original_name': uploaded_file.name,
-                    'file_hash': file_hash,
-                    'file_type': metadata['file_type']
-                })
-                
-                if file_id:
-                    analysis_results.append({
-                        'file_id': file_id,
-                        'temp_path': temp_path,
+                try:
+                    # 清洗檔名
+                    safe_filename = processor.sanitize_filename(uploaded_file.name)
+                    temp_path = str(UPLOAD_DIR / safe_filename)
+                    
+                    # 寫入暫存檔
+                    with open(temp_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # 計算 Hash
+                    file_hash = processor.get_file_hash(temp_path)
+                    
+                    # 檢查重複
+                    duplicate_check = storage.check_duplicate(file_hash)
+                    if duplicate_check:
+                        duplicates.append({
+                            'filename': uploaded_file.name,
+                            'existing_path': duplicate_check[1]
+                        })
+                        os.remove(temp_path)
+                        continue
+                    
+                    # 提取中繼資料
+                    metadata = processor.extract_metadata(temp_path)
+                    main_topic, tag_scores = processor.classify_multi_tag(metadata, uploaded_file.name)
+                    
+                    if metadata['standard_date'] is None:
+                        metadata['standard_date'] = 'UnknownDate'
+                    
+                    # 立即寫入資料庫 (temp_path 策略)
+                    file_id = storage.create_pending_record({
                         'original_name': uploaded_file.name,
+                        'temp_path': temp_path,
                         'file_hash': file_hash,
-                        'file_type': metadata['file_type'],
-                        'standard_date': metadata['standard_date'],
-                        'main_topic': main_topic,
-                        'tag_scores': tag_scores,
-                        'metadata': metadata,
-                        'preview_path': metadata.get('preview_path')
+                        'file_type': metadata['file_type']
                     })
+                    
+                    if file_id:
+                        analysis_results.append({
+                            'file_id': file_id,
+                            'original_name': uploaded_file.name,
+                            'file_type': metadata['file_type'],
+                            'standard_date': metadata['standard_date'],
+                            'main_topic': main_topic,
+                            'tag_scores': tag_scores,
+                            'metadata': metadata,
+                            'preview_path': metadata.get('preview_path'),
+                            'is_scanned': metadata.get('is_scanned', False)
+                        })
+                
+                except Exception as e:
+                    logger.error(f"分析失敗 ({uploaded_file.name}): {e}")
+                    st.error(f"❌ 分析失敗: {uploaded_file.name} - {e}")
             
             progress_bar.progress(1.0)
             status_text.text("✅ 分析完成！")
@@ -101,7 +129,6 @@ with tab1:
                     st.write(f"  - {dup['filename']}")
             
             st.session_state.analysis_results = analysis_results
-            st.session_state.analysis_complete = True
             
             if analysis_results:
                 st.info(f"✅ 成功分析 {len(analysis_results)} 個檔案，請前往「預覽與確認」頁籤")
@@ -118,7 +145,6 @@ with tab2:
             with st.expander(f"📄 {result['original_name']}", expanded=(idx == 0)):
                 col1, col2 = st.columns([1, 2])
                 
-                # 左側：預覽圖
                 with col1:
                     st.subheader("預覽")
                     if result['preview_path'] and os.path.exists(result['preview_path']):
@@ -126,24 +152,24 @@ with tab2:
                             from PIL import Image
                             img = Image.open(result['preview_path'])
                             st.image(img, use_column_width=True)
-                        except:
-                            st.info("無法顯示預覽")
+                        except Exception as e:
+                            st.warning(f"預覽失敗: {e}")
                     else:
                         st.info("無預覽圖")
                 
-                # 右側：詳細資訊與編輯
                 with col2:
                     st.subheader("詳細資訊")
                     st.write(f"**檔名**: {result['original_name']}")
                     st.write(f"**類型**: {result['file_type']}")
                     st.write(f"**日期**: {result['standard_date']}")
                     
-                    # 標籤顯示
+                    if result['is_scanned']:
+                        st.warning("⚠️ 掃描 PDF - 目前不可全文搜尋")
+                    
                     st.write("**建議標籤**:")
                     tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in result['tag_scores'].items()])
                     st.write(tag_str)
                     
-                    # 主題選擇
                     tag_options = DOCUMENT_TAGS if result['file_type'] == 'document' else PHOTO_TAGS
                     new_topic = st.selectbox(
                         "選擇主題",
@@ -153,7 +179,6 @@ with tab2:
                     )
                     result['main_topic'] = new_topic
                     
-                    # LLM 摘要 (可選)
                     if st.button(f"🤖 生成 AI 摘要", key=f"summary_{idx}"):
                         with st.spinner("正在生成摘要..."):
                             summary, llm_tags = processor.get_llm_summary(
@@ -167,7 +192,6 @@ with tab2:
         
         if st.button("✅ 確認無誤，進行整理", key="confirm_button"):
             st.session_state.confirmed_results = analysis_results
-            st.session_state.ready_to_organize = True
             st.success("✅ 已確認！請前往「執行整理」頁籤")
     else:
         st.info("請先在「上傳與分析」頁籤上傳檔案")
@@ -188,30 +212,45 @@ with tab3:
                 status_text.text(f"整理中... {idx + 1}/{len(confirmed_results)}")
                 
                 try:
+                    # 從資料庫讀取最新資訊 (唯一來源)
+                    file_info = storage.get_file_by_id(result['file_id'])
+                    if not file_info:
+                        raise ValueError(f"找不到檔案紀錄: {result['file_id']}")
+                    
+                    # 更新中繼資料
                     storage.update_file_metadata(result['file_id'], {
                         'standard_date': result['standard_date'],
                         'main_topic': result['main_topic'],
                         'summary': result.get('summary', ''),
-                        'content': result['metadata'].get('extracted_text', '')
+                        'content': result['metadata'].get('extracted_text', ''),
+                        'is_scanned': result.get('is_scanned', False)
                     })
                     
+                    # 添加標籤
                     storage.add_tags_to_file(result['file_id'], result['tag_scores'])
                     
-                    new_path = storage.finalize_organization(
-                        result['file_id'],
-                        result['temp_path'],
-                        result['standard_date'],
-                        result['main_topic'],
-                        result['original_name']
-                    )
+                    # 計算最終路徑
+                    year = result['standard_date'].split('-')[0] if result['standard_date'] and '-' in result['standard_date'] else "UnknownYear"
+                    month = result['standard_date'][:7] if result['standard_date'] and len(result['standard_date']) >= 7 else "UnknownMonth"
+                    target_dir = REPO_ROOT / year / month
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    new_filename = f"{result['standard_date']}_{result['main_topic']}_{result['original_name']}"
+                    new_filename = processor.sanitize_filename(new_filename)
+                    target_path = str(target_dir / new_filename)
+                    target_path = processor.get_unique_path(target_path)
+                    
+                    # 執行移動 (資料庫會自動更新 final_path)
+                    final_path = storage.finalize_organization(result['file_id'], target_path)
                     
                     execution_results.append({
                         'original_name': result['original_name'],
-                        'new_path': new_path,
+                        'new_path': final_path,
                         'status': 'SUCCESS'
                     })
                     
                 except Exception as e:
+                    logger.error(f"整理失敗 ({result['file_id']}): {e}")
                     execution_results.append({
                         'original_name': result['original_name'],
                         'error': str(e),
@@ -221,14 +260,14 @@ with tab3:
             progress_bar.progress(1.0)
             status_text.text("✅ 整理完成！")
             
-            st.success(f"🎉 成功整理 {len([r for r in execution_results if r['status'] == 'SUCCESS'])} 個檔案")
+            successful = len([r for r in execution_results if r['status'] == 'SUCCESS'])
+            st.success(f"🎉 成功整理 {successful} 個檔案")
             
             df_execution = pd.DataFrame(execution_results)
             st.dataframe(df_execution, use_container_width=True)
             
             del st.session_state.analysis_results
             del st.session_state.confirmed_results
-            del st.session_state.ready_to_organize
     else:
         st.info("請先在「預覽與確認」頁籤確認檔案")
 
@@ -240,20 +279,26 @@ with tab4:
     
     if search_query:
         with st.spinner("搜尋中..."):
-            results = storage.search_content(search_query)
-        
-        if results:
-            st.success(f"✅ 找到 {len(results)} 個相關檔案")
-            
-            for result in results:
-                with st.expander(f"📄 {result['original_name']} ({result['standard_date']})"):
-                    st.write(f"**主題**: {result['main_topic']}")
-                    st.write(f"**摘要**: {result.get('summary', '無摘要')}")
-                    if result.get('snippet'):
-                        st.write(f"**相關片段**: ...{result['snippet']}...")
-                    st.write(f"**路徑**: {result['new_path']}")
-        else:
-            st.warning("未找到相關檔案")
+            try:
+                results = storage.search_content(search_query)
+                
+                if results:
+                    st.success(f"✅ 找到 {len(results)} 個相關檔案")
+                    
+                    for result in results:
+                        with st.expander(f"📄 {result['original_name']} ({result['standard_date']})"):
+                            st.write(f"**主題**: {result['main_topic']}")
+                            st.write(f"**摘要**: {result.get('summary', '無摘要')}")
+                            if result.get('is_scanned'):
+                                st.warning("⚠️ 此為掃描 PDF，搜尋結果可能不完整")
+                            if result.get('snippet'):
+                                st.write(f"**相關片段**: ...{result['snippet']}...")
+                            st.write(f"**路徑**: {result['final_path']}")
+                else:
+                    st.warning("未找到相關檔案")
+            except Exception as e:
+                logger.error(f"搜尋失敗: {e}")
+                st.error(f"❌ 搜尋失敗: {e}")
 
 with tab5:
     st.header("步驟 5：統計與查看紀錄")
@@ -276,17 +321,17 @@ with tab5:
             photo_count = len(df_all[df_all['file_type'] == 'photo'])
             st.metric("照片數", photo_count)
         with col5:
-            unique_dates = df_all['standard_date'].nunique()
-            st.metric("日期種類", unique_dates)
+            scanned = len(df_all[df_all['is_scanned'] == 1])
+            st.metric("掃描 PDF", scanned)
         
         st.subheader("主題分佈")
         topic_counts = df_all['main_topic'].value_counts()
         st.bar_chart(topic_counts)
         
         st.subheader("詳細紀錄")
-        display_cols = ['original_name', 'standard_date', 'main_topic', 'file_type', 'status', 'summary']
+        display_cols = ['original_name', 'standard_date', 'main_topic', 'file_type', 'status', 'is_scanned', 'summary']
         df_display = df_all[display_cols].copy()
-        df_display.columns = ['檔名', '日期', '主題', '類型', '狀態', '摘要']
+        df_display.columns = ['檔名', '日期', '主題', '類型', '狀態', '掃描', '摘要']
         st.dataframe(df_display, use_container_width=True)
         
         st.subheader("📥 匯出清單")
@@ -302,10 +347,11 @@ with tab5:
 
 st.markdown("---")
 st.markdown("""
-**🚀 V2 終極版功能亮點：**
-- ✅ **視覺化預覽**：PDF 自動轉圖片、照片直接預覽
-- ✅ **全文檢索**：搜尋檔案內容，秒級找到相關檔案
-- ✅ **LLM 智慧摘要**：AI 自動生成文件摘要與建議標籤
-- ✅ **多標籤支援**：每個檔案可擁有多個主題標籤
-- ✅ **狀態追蹤**：完整的生命週期管理
+**🔧 重構版本改進：**
+- ✅ **資料庫驅動**：所有操作以 DB 中的 filePath 為唯一來源
+- ✅ **路徑解耦**：動態路徑配置，無硬編碼
+- ✅ **FTS5 修復**：使用 bm25 排序，全文檢索正常運作
+- ✅ **檔名安全**：自動清洗非法字元，衝突自動加序號
+- ✅ **掃描標記**：明確標示掃描 PDF，無法搜尋的檔案有警告
+- ✅ **暫存清理**：可控的孤立檔案清理機制
 """)
