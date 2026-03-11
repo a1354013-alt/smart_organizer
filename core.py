@@ -7,6 +7,7 @@ from PIL import Image
 import exifread
 from pypdf import PdfReader
 from pdf2image import convert_from_path
+import pytesseract
 from openai import OpenAI
 
 # 設定 Logging
@@ -24,24 +25,17 @@ class FileProcessor:
             self.client = None
 
     def sanitize_filename(self, filename, max_length=200):
-        """檔名安全處理：移除非法字元、限制長度"""
-        # 移除非法字元
         filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-        # 移除控制字元與 ..
         filename = "".join(ch for ch in filename if ord(ch) >= 32)
         filename = filename.replace("..", "")
-        
         name, ext = os.path.splitext(filename)
-        # 限制長度
         if len(name) > max_length:
             name = name[:max_length]
         return f"{name}{ext}"
 
     def get_unique_path(self, target_path):
-        """若檔名衝突，自動加序號"""
         if not os.path.exists(target_path):
             return target_path
-        
         base, ext = os.path.splitext(target_path)
         counter = 1
         while os.path.exists(f"{base}_{counter}{ext}"):
@@ -60,7 +54,7 @@ class FileProcessor:
             raise
 
     def extract_metadata(self, file_path):
-        """提取中繼資料，明確標記掃描 PDF"""
+        """提取中繼資料，實作掃描檔第一頁 OCR 補強"""
         ext = os.path.splitext(file_path)[1].lower()
         metadata = {
             'file_type': 'unknown',
@@ -75,15 +69,21 @@ class FileProcessor:
                 metadata['file_type'] = 'photo'
                 metadata['standard_date'] = self._get_photo_date(file_path)
                 metadata['preview_path'] = file_path
+                # 照片也嘗試 OCR (例如收據照片)
+                metadata['extracted_text'] = self._ocr_image(file_path)
             elif ext == '.pdf':
                 metadata['file_type'] = 'document'
                 metadata['standard_date'] = self._get_file_mtime(file_path)
                 metadata['extracted_text'] = self._extract_pdf_text(file_path)
-                # 明確標記掃描 PDF
-                if not metadata['extracted_text'].strip():
-                    metadata['is_scanned'] = True
-                    logger.info(f"偵測到掃描 PDF: {file_path}")
+                
+                # 產生預覽圖
                 metadata['preview_path'] = self._generate_pdf_preview(file_path)
+                
+                # 掃描檔補強：若無文字，則 OCR 第一頁
+                if not metadata['extracted_text'].strip() and metadata['preview_path']:
+                    metadata['is_scanned'] = True
+                    logger.info(f"偵測到掃描 PDF，執行第一頁 OCR: {file_path}")
+                    metadata['extracted_text'] = self._ocr_image(metadata['preview_path'])
             
             if not metadata['standard_date']:
                 metadata['standard_date'] = self._get_file_mtime(file_path)
@@ -91,6 +91,16 @@ class FileProcessor:
             logger.error(f"提取中繼資料失敗 ({file_path}): {e}")
             
         return metadata
+
+    def _ocr_image(self, image_path):
+        """使用 Tesseract 進行 OCR (支援繁中與英文)"""
+        try:
+            # 嘗試繁體中文與英文
+            text = pytesseract.image_to_string(Image.open(image_path), lang='chi_tra+eng')
+            return text.strip()
+        except Exception as e:
+            logger.error(f"OCR 失敗: {e}")
+            return ""
 
     def _generate_pdf_preview(self, file_path):
         try:
@@ -166,11 +176,11 @@ class FileProcessor:
     def classify_multi_tag(self, metadata, original_name):
         scores = {}
         name_lower = original_name.lower()
+        text = metadata['extracted_text'].lower()
         
         if metadata['file_type'] == 'document':
             tags = DOCUMENT_TAGS
             scores = {tag: 0.0 for tag in tags}
-            text = metadata['extracted_text'].lower()
             
             rules = [
                 (["統一編號", "發票", "收據", "invoice"], "發票", 0.8),
@@ -195,10 +205,11 @@ class FileProcessor:
                 (["screenshot", "截圖"], "截圖", 0.9),
                 (["food", "美食"], "美食", 0.8),
                 (["trip", "travel", "旅行"], "旅行", 0.8),
-                (["receipt", "收據"], "文件/收據", 0.9)
+                (["receipt", "收據", "發票", "統一編號"], "文件/收據", 0.9)
             ]
             for keywords, tag, weight in rules:
                 if any(k in name_lower for k in keywords): scores[tag] += weight
+                if any(k in text for k in keywords): scores[tag] += 0.5
             default_tag = '其他照片'
 
         results = {tag: min(score, 1.0) for tag, score in scores.items() if score > 0}
