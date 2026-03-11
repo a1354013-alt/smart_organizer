@@ -16,24 +16,32 @@ logger = logging.getLogger(__name__)
 DOCUMENT_TAGS = ['發票', '合約', '報價', '請款', '證明文件', '會議紀錄', '掃描', '其他文件']
 PHOTO_TAGS = ['人物', '美食', '旅行', '文件/收據', '工作', '截圖', '風景', '其他照片']
 
-class FileProcessor:
-    def __init__(self):
-        try:
-            self.client = OpenAI()
-        except Exception as e:
-            logger.warning(f"OpenAI Client 初始化失敗 (可能缺少 API Key): {e}")
-            self.client = None
-
-    def sanitize_filename(self, filename, max_length=200):
-        filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-        filename = "".join(ch for ch in filename if ord(ch) >= 32)
-        filename = filename.replace("..", "")
+class FileUtils:
+    """純工具函式類別，不涉及業務邏輯與昂貴初始化"""
+    @staticmethod
+    def sanitize_filename(filename, max_length=200):
+        # 先分離檔名與副檔名
         name, ext = os.path.splitext(filename)
+        # 移除非法字元
+        name = re.sub(r'[\\/*?:"<>|]', "", name)
+        # 移除控制字元
+        name = "".join(ch for ch in name if ord(ch) >= 32)
+        # 移除路徑遍歷風險
+        while ".." in name:
+            name = name.replace("..", "")
+        # 移除開頭或結尾的點
+        name = name.strip(".")
+        
+        # 【邊界處理】若檔名被洗成空的，給予預設值
+        if not name:
+            name = "untitled_file"
+            
         if len(name) > max_length:
             name = name[:max_length]
         return f"{name}{ext}"
 
-    def get_unique_path(self, target_path):
+    @staticmethod
+    def get_unique_path(target_path):
         if not os.path.exists(target_path):
             return target_path
         base, ext = os.path.splitext(target_path)
@@ -42,26 +50,55 @@ class FileProcessor:
             counter += 1
         return f"{base}_{counter}{ext}"
 
+    @staticmethod
+    def escape_fts_query(query):
+        """【FTS 安全化】轉義特殊字元並處理分詞"""
+        if not query:
+            return ""
+        # 移除 FTS5 特殊語法字元，防止 SQL 報錯
+        # 僅保留基本文字與空白
+        clean_query = re.sub(r'[":\-*()]', " ", query)
+        # 將空白拆詞後用 AND 組合 (FTS5 預設空白即為分詞)
+        words = [f'"{w}"' for w in clean_query.split() if w]
+        return " ".join(words)
+
+class FileProcessor:
+    def __init__(self):
+        try:
+            self.client = OpenAI(timeout=30.0)
+            # 【優化】從環境變數讀取模型名稱，預設為 gpt-4.1-mini
+            self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        except Exception as e:
+            logger.warning(f"OpenAI Client 初始化失敗: {e}")
+            self.client = None
+            self.model = "gpt-4.1-mini"
+
     def get_file_hash(self, file_path):
         sha256_hash = hashlib.sha256()
         try:
-            with open(file_path, "rb") as f:
-                for byte_block in iter(lambda: f.read(4096), b""):
+            if hasattr(file_path, 'read'):
+                file_path.seek(0)
+                for byte_block in iter(lambda: file_path.read(4096), b""):
                     sha256_hash.update(byte_block)
+                file_path.seek(0)
+            else:
+                with open(file_path, "rb") as f:
+                    for byte_block in iter(lambda: f.read(4096), b""):
+                        sha256_hash.update(byte_block)
             return sha256_hash.hexdigest()
         except Exception as e:
             logger.error(f"計算 Hash 失敗: {e}")
             raise
 
     def extract_metadata(self, file_path):
-        """提取中繼資料，實作掃描檔第一頁 OCR 補強"""
         ext = os.path.splitext(file_path)[1].lower()
         metadata = {
             'file_type': 'unknown',
             'standard_date': None,
             'extracted_text': '',
             'is_scanned': False,
-            'preview_path': None
+            'preview_path': None,
+            'ocr_error': None
         }
 
         try:
@@ -69,21 +106,21 @@ class FileProcessor:
                 metadata['file_type'] = 'photo'
                 metadata['standard_date'] = self._get_photo_date(file_path)
                 metadata['preview_path'] = file_path
-                # 照片也嘗試 OCR (例如收據照片)
-                metadata['extracted_text'] = self._ocr_image(file_path)
+                text, err = self._ocr_image(file_path)
+                metadata['extracted_text'] = text
+                metadata['ocr_error'] = err
             elif ext == '.pdf':
                 metadata['file_type'] = 'document'
                 metadata['standard_date'] = self._get_file_mtime(file_path)
                 metadata['extracted_text'] = self._extract_pdf_text(file_path)
-                
-                # 產生預覽圖
                 metadata['preview_path'] = self._generate_pdf_preview(file_path)
                 
-                # 掃描檔補強：若無文字，則 OCR 第一頁
+                # 掃描檔補強
                 if not metadata['extracted_text'].strip() and metadata['preview_path']:
                     metadata['is_scanned'] = True
-                    logger.info(f"偵測到掃描 PDF，執行第一頁 OCR: {file_path}")
-                    metadata['extracted_text'] = self._ocr_image(metadata['preview_path'])
+                    text, err = self._ocr_image(metadata['preview_path'])
+                    metadata['extracted_text'] = text
+                    metadata['ocr_error'] = err
             
             if not metadata['standard_date']:
                 metadata['standard_date'] = self._get_file_mtime(file_path)
@@ -93,26 +130,29 @@ class FileProcessor:
         return metadata
 
     def _ocr_image(self, image_path):
-        """使用 Tesseract 進行 OCR (支援繁中與英文)"""
         try:
-            # 嘗試繁體中文與英文
             text = pytesseract.image_to_string(Image.open(image_path), lang='chi_tra+eng')
-            return text.strip()
+            return text.strip(), None
         except Exception as e:
-            logger.error(f"OCR 失敗: {e}")
-            return ""
+            err_msg = str(e)
+            logger.error(f"OCR 失敗: {err_msg}")
+            if "tesseract is not installed" in err_msg.lower():
+                return "", "系統未安裝 Tesseract OCR 引擎"
+            if "chi_tra" in err_msg.lower():
+                return "", "系統缺少繁體中文語言包 (chi_tra)"
+            return "", f"OCR 錯誤: {err_msg[:50]}"
 
     def _generate_pdf_preview(self, file_path):
         try:
             preview_dir = os.path.join(os.path.dirname(file_path), 'previews')
             os.makedirs(preview_dir, exist_ok=True)
-            preview_filename = os.path.basename(file_path) + ".jpg"
+            preview_filename = "preview_" + os.path.basename(file_path) + ".png"
             preview_path = os.path.join(preview_dir, preview_filename)
             
             if not os.path.exists(preview_path):
                 images = convert_from_path(file_path, first_page=1, last_page=1)
                 if images:
-                    images[0].save(preview_path, 'JPEG')
+                    images[0].save(preview_path, 'PNG')
             return preview_path
         except Exception as e:
             logger.error(f"PDF 預覽圖產生失敗: {e}")
@@ -162,7 +202,7 @@ class FileProcessor:
             請以 JSON 格式回傳：{{"summary": "...", "tags": ["tag1", "tag2", "tag3"]}}
             """
             response = self.client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"}
             )
@@ -181,7 +221,6 @@ class FileProcessor:
         if metadata['file_type'] == 'document':
             tags = DOCUMENT_TAGS
             scores = {tag: 0.0 for tag in tags}
-            
             rules = [
                 (["統一編號", "發票", "收據", "invoice"], "發票", 0.8),
                 (["合約", "協議", "contract", "agreement"], "合約", 0.9),
@@ -190,14 +229,11 @@ class FileProcessor:
                 (["證明", "證書", "certificate"], "證明文件", 0.8),
                 (["會議", "紀錄", "minutes"], "會議紀錄", 0.8)
             ]
-            
             for keywords, tag, weight in rules:
-                if any(k in name_lower for k in keywords): scores[tag] += 0.4
-                if any(k in text for k in keywords): scores[tag] += 0.6
-            
+                if any(k in name_lower for k in keywords): scores[tag] += weight
+                if any(k in text for k in keywords): scores[tag] += weight
             if metadata['is_scanned']: scores['掃描'] += 0.5
             default_tag = '其他文件'
-            
         else:
             tags = PHOTO_TAGS
             scores = {tag: 0.0 for tag in tags}
@@ -209,11 +245,10 @@ class FileProcessor:
             ]
             for keywords, tag, weight in rules:
                 if any(k in name_lower for k in keywords): scores[tag] += weight
-                if any(k in text for k in keywords): scores[tag] += 0.5
+                if any(k in text for k in keywords): scores[tag] += weight
             default_tag = '其他照片'
 
         results = {tag: min(score, 1.0) for tag, score in scores.items() if score > 0}
         if not results: results[default_tag] = 1.0
         main_topic = max(results, key=results.get)
-        
         return main_topic, results

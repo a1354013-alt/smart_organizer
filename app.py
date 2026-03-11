@@ -2,8 +2,9 @@ import streamlit as st
 import os
 import logging
 import pandas as pd
+import matplotlib.pyplot as plt
 from pathlib import Path
-from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
+from core import FileProcessor, FileUtils, DOCUMENT_TAGS, PHOTO_TAGS
 from storage import StorageManager
 
 # ========== 路徑配置 (集中管理) ==========
@@ -16,13 +17,13 @@ DB_PATH = PROJECT_ROOT / "smart_organizer.db"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 初始化 (注意：StorageManager 現在接收 upload_dir 參數)
+# 初始化
 processor = FileProcessor()
 storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
 
 st.set_page_config(page_title="智慧檔案整理助理", layout="wide")
-st.title("📁 智慧檔案整理助理 (V2.1 終極加固版)")
-st.markdown("**資料庫驅動的檔案生命週期管理系統 - 路徑完全封裝**")
+st.title("📁 智慧檔案整理助理 (v2.7 Steel-Fortified)")
+st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘版**\n- FTS 同步修復 | 三階段 Crash-safe Finalize | Schema Cascade | OpenAI Timeout")
 
 # ========== Sidebar 配置 ==========
 st.sidebar.header("⚙️ 設定與維護")
@@ -63,31 +64,38 @@ with tab1:
                 status_text.text(f"分析中... {idx + 1}/{len(uploaded_files)}")
                 
                 try:
-                    # 【路徑封裝】UI 不再自己組路徑，交由 Storage 層
                     file_hash = processor.get_file_hash(uploaded_file)
                     
-                    # 檢查重複
-                    duplicate_check = storage.check_duplicate(file_hash)
-                    if duplicate_check:
-                        duplicates.append({
-                            'filename': uploaded_file.name,
-                            'existing_path': duplicate_check[1]
-                        })
-                        continue
-                    
-                    # 【路徑封裝】由 Storage 層建立暫存檔並回傳 file_id
-                    file_id = storage.create_temp_file(
+                    # 【優化】由 Storage 層建立暫存檔，並處理併發衝突
+                    result = storage.create_temp_file(
                         uploaded_file.name,
                         uploaded_file.getbuffer(),
                         file_hash,
                         'photo' if uploaded_file.type.startswith('image') else 'document'
                     )
                     
-                    if not file_id:
-                        st.error(f"❌ 無法建立暫存檔: {uploaded_file.name}")
+                    if not result["success"]:
+                        if result.get("reason") == "DUPLICATE":
+                            dup_status = result.get('status', 'UNKNOWN')
+                            dup_name = uploaded_file.name
+                            if dup_status == 'COMPLETED':
+                                duplicates.append({
+                                    'filename': uploaded_file.name,
+                                    'status': 'COMPLETED',
+                                    'path': result.get('final_path', '已整理'),
+                                    'display': f"{dup_name} (已整理)"
+                                })
+                            else:
+                                duplicates.append({
+                                    'filename': uploaded_file.name,
+                                    'status': 'PENDING',
+                                    'display': f"{dup_name} (已在待整理清單)"
+                                })
+                        else:
+                            st.error(f"❌ 建立暫存檔失敗: {uploaded_file.name} - {result.get('message')}")
                         continue
                     
-                    # 【路徑讀取】由 Storage 層提供路徑
+                    file_id = result["file_id"]
                     temp_file_path = storage.get_file_path(file_id)
                     
                     # 提取中繼資料
@@ -119,12 +127,17 @@ with tab1:
             if duplicates:
                 st.warning(f"⚠️ 發現 {len(duplicates)} 個重複檔案，已跳過")
                 for dup in duplicates:
-                    st.write(f"  - {dup['filename']}")
+                    if dup['status'] == 'COMPLETED':
+                        st.info(f"📁 {dup['display']} → {dup.get('path', '已整理')}")
+                    else:
+                        st.info(f"⏳ {dup['display']}")
             
             st.session_state.analysis_results = analysis_results
             
             if analysis_results:
-                st.info(f"✅ 成功分析 {len(analysis_results)} 個檔案，請前往「預覽與確認」頁籤")
+                st.success(f"✅ 成功分析 {len(analysis_results)} 個檔案，請前往『預覽與確認』頁籤")
+            else:
+                st.warning("⚠️ 未有新檔案可分析")
 
 with tab2:
     st.header("步驟 2：預覽與確認")
@@ -158,6 +171,8 @@ with tab2:
                     
                     if result['is_scanned']:
                         st.warning("⚠️ 掃描 PDF - 已執行第一頁 OCR，可進行搜尋與分類")
+                        if result['metadata'].get('ocr_error'):
+                            st.error(f"❌ OCR 提示: {result['metadata']['ocr_error']}")
                     
                     st.write("**建議標籤**:")
                     tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in result['tag_scores'].items()])
@@ -205,11 +220,6 @@ with tab3:
                 status_text.text(f"整理中... {idx + 1}/{len(confirmed_results)}")
                 
                 try:
-                    # 【路徑讀取】由 Storage 層提供路徑
-                    file_info = storage.get_file_by_id(result['file_id'])
-                    if not file_info:
-                        raise ValueError(f"找不到檔案紀錄: {result['file_id']}")
-                    
                     # 更新中繼資料
                     storage.update_file_metadata(result['file_id'], {
                         'standard_date': result['standard_date'],
@@ -222,18 +232,13 @@ with tab3:
                     # 添加標籤
                     storage.add_tags_to_file(result['file_id'], result['tag_scores'])
                     
-                    # 【路徑組裝】由 Storage 層決定最終路徑
-                    year = result['standard_date'].split('-')[0] if result['standard_date'] and '-' in result['standard_date'] else "UnknownYear"
-                    month = result['standard_date'][:7] if result['standard_date'] and len(result['standard_date']) >= 7 else "UnknownMonth"
-                    target_dir = REPO_ROOT / year / month
-                    
-                    new_filename = f"{result['standard_date']}_{result['main_topic']}_{result['original_name']}"
-                    new_filename = processor.sanitize_filename(new_filename)
-                    target_path = str(target_dir / new_filename)
-                    target_path = processor.get_unique_path(target_path)
-                    
-                    # 【路徑移動】由 Storage 層執行
-                    final_path = storage.finalize_organization(result['file_id'], target_path)
+                    # 執行最終整理
+                    final_path = storage.finalize_organization(
+                        result['file_id'],
+                        result['standard_date'],
+                        result['main_topic'],
+                        result['original_name']
+                    )
                     
                     execution_results.append({
                         'original_name': result['original_name'],
@@ -252,26 +257,27 @@ with tab3:
             progress_bar.progress(1.0)
             status_text.text("✅ 整理完成！")
             
-            successful = len([r for r in execution_results if r['status'] == 'SUCCESS'])
-            st.success(f"🎉 成功整理 {successful} 個檔案")
+            st.session_state.execution_results = execution_results
+            st.session_state.analysis_results = []
+            st.session_state.confirmed_results = []
             
-            df_execution = pd.DataFrame(execution_results)
-            st.dataframe(df_execution, use_container_width=True)
-            
-            del st.session_state.analysis_results
-            del st.session_state.confirmed_results
+            for res in execution_results:
+                if res['status'] == 'SUCCESS':
+                    st.success(f"✅ {res['original_name']} -> {res['new_path']}")
+                else:
+                    st.error(f"❌ {res['original_name']} 失敗: {res['error']}")
     else:
         st.info("請先在「預覽與確認」頁籤確認檔案")
 
 with tab4:
     st.header("步驟 4：全文檢索")
-    st.markdown("在已整理的檔案中搜尋內容")
     
     search_query = st.text_input("輸入搜尋關鍵字", placeholder="例如：軟體開發、統編 12345678")
     
     if search_query:
         with st.spinner("搜尋中..."):
             try:
+                # 【FTS 安全化】轉義邏輯已移至 Storage 層，UI 直接傳入原始字串
                 results = storage.search_content(search_query)
                 
                 if results:
@@ -280,70 +286,51 @@ with tab4:
                     for result in results:
                         with st.expander(f"📄 {result['original_name']} ({result['standard_date']})"):
                             st.write(f"**主題**: {result['main_topic']}")
-                            st.write(f"**摘要**: {result.get('summary', '無摘要')}")
-                            if result.get('is_scanned'):
-                                st.info("ℹ️ 此為掃描 PDF，已執行 OCR 處理")
-                            if result.get('snippet'):
-                                st.write(f"**相關片段**: ...{result['snippet']}...")
                             st.write(f"**路徑**: {result['final_path']}")
+                            st.markdown(f"**內容片段**: ...{result['snippet']}...")
+                            if result['final_path'] and os.path.exists(result['final_path']):
+                                with open(result['final_path'], "rb") as f:
+                                    st.download_button(
+                                        "下載檔案",
+                                        f,
+                                        file_name=os.path.basename(result['final_path']),
+                                        key=f"dl_{result['file_id']}"
+                                    )
                 else:
-                    st.warning("未找到相關檔案")
+                    st.info("🔍 找不到相關檔案，請嘗試其他關鍵字")
             except Exception as e:
                 logger.error(f"搜尋失敗: {e}")
                 st.error(f"❌ 搜尋失敗: {e}")
+    else:
+        st.info("🔍 輸入搜尋關鍵字，支援中文、英文及數字")
 
 with tab5:
-    st.header("步驟 5：統計與查看紀錄")
+    st.header("步驟 5：查看紀錄")
     
-    all_records = storage.get_all_records()
-    
-    if all_records:
-        df_all = pd.DataFrame(all_records)
+    records = storage.get_all_records()
+    if records:
+        df = pd.DataFrame(records)
+        # 整理顯示欄位
+        display_df = df[['file_id', 'original_name', 'standard_date', 'main_topic', 'all_tags', 'status', 'created_at']]
+        st.dataframe(display_df, use_container_width=True)
         
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # 統計圖表
+        st.subheader("統計分析")
+        col1, col2 = st.columns(2)
         with col1:
-            st.metric("總檔案數", len(df_all))
+            st.write("**主題分佈**")
+            topic_counts = df['main_topic'].value_counts()
+            st.bar_chart(topic_counts)
         with col2:
-            completed = len(df_all[df_all['status'] == 'COMPLETED'])
-            st.metric("已完成", completed)
-        with col3:
-            doc_count = len(df_all[df_all['file_type'] == 'document'])
-            st.metric("文件數", doc_count)
-        with col4:
-            photo_count = len(df_all[df_all['file_type'] == 'photo'])
-            st.metric("照片數", photo_count)
-        with col5:
-            scanned = len(df_all[df_all['is_scanned'] == 1])
-            st.metric("掃描檔", scanned)
-        
-        st.subheader("主題分佈")
-        topic_counts = df_all['main_topic'].value_counts()
-        st.bar_chart(topic_counts)
-        
-        st.subheader("詳細紀錄")
-        display_cols = ['original_name', 'standard_date', 'main_topic', 'file_type', 'status', 'is_scanned', 'summary']
-        df_display = df_all[display_cols].copy()
-        df_display.columns = ['檔名', '日期', '主題', '類型', '狀態', '掃描', '摘要']
-        st.dataframe(df_display, use_container_width=True)
-        
-        st.subheader("📥 匯出清單")
-        csv_data = df_all.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button(
-            label="下載 CSV 清單",
-            data=csv_data,
-            file_name="smart_organizer_list.csv",
-            mime="text/csv"
-        )
+            st.write("**處理狀態**")
+            status_counts = df['status'].value_counts()
+            # 【v2.7 修正】使用 matplotlib 繪製圓餅圖，修復 st.pie_chart() 錯誤
+            fig, ax = plt.subplots()
+            status_counts.plot.pie(ax=ax, autopct='%1.1f%%', startangle=90)
+            ax.set_ylabel("")
+            st.pyplot(fig)
     else:
-        st.warning("尚無資料可顯示")
+        st.info("目前尚無處理紀錄")
 
-st.markdown("---")
-st.markdown("""
-**🔧 V2.1 終極加固版改進：**
-- ✅ **路徑完全封裝**：app.py 完全不自己組路徑，所有操作由 StorageManager 統一管理
-- ✅ **資料庫驅動**：所有檔案操作以 DB 中的 filePath 為唯一來源
-- ✅ **Schema 版本化**：sys_config 表追蹤版本，支援未來 Migration
-- ✅ **掃描檔 OCR 補強**：自動 OCR 第一頁，掃描檔也能搜尋與分類
-- ✅ **FTS5 修復**：使用 bm25 排序，全文檢索穩定運作
-- ✅ **檔名安全**：自動清洗非法字元，衝突自動加序號
-""")
+st.divider()
+st.caption("智慧檔案整理助理 v2.7 Steel-Fortified | Powered by Python & Streamlit")

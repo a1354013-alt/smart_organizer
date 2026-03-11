@@ -2,14 +2,17 @@ import sqlite3
 import os
 import shutil
 import logging
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
+from core import FileUtils
 
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 7  # 再次升級版本以引入 moving_target_path 欄位
 
 class StorageManager:
     def __init__(self, db_path, repo_root, upload_dir):
@@ -24,27 +27,32 @@ class StorageManager:
         self._init_db()
         self._check_migration()
 
-    def _init_db(self):
-        """初始化資料庫與系統配置表"""
+    def _get_connection(self, timeout=30000):
+        """【併發優化】統一獲取連線，啟用 WAL 模式、Foreign Keys 與 Timeout"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=timeout/1000)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA foreign_keys=ON;")
+            conn.execute(f"PRAGMA busy_timeout={timeout};")
+            return conn
+        except Exception as e:
+            logger.error(f"獲取資料庫連線失敗: {e}")
+            raise
+
+    def _init_db(self):
+        conn = None
+        try:
+            conn = self._get_connection()
             cursor = conn.cursor()
-            
-            # 系統配置表 (用於版本控制)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS sys_config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            ''')
-            
-            # 檔案主表
+            cursor.execute('CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT)')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS files (
                     file_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     original_name TEXT,
                     temp_path TEXT,
                     final_path TEXT,
+                    moving_target_path TEXT,
                     file_hash TEXT UNIQUE,
                     file_type TEXT,
                     standard_date TEXT,
@@ -55,128 +63,192 @@ class StorageManager:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
             cursor.execute('CREATE TABLE IF NOT EXISTS tags (tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS file_tags (
                     file_id INTEGER, tag_id INTEGER, confidence REAL,
                     PRIMARY KEY (file_id, tag_id),
-                    FOREIGN KEY (file_id) REFERENCES files(file_id),
-                    FOREIGN KEY (tag_id) REFERENCES tags(tag_id)
+                    FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
                 )
             ''')
-
             cursor.execute('''
                 CREATE VIRTUAL TABLE IF NOT EXISTS file_content_fts USING fts5(
-                    file_id UNINDEXED,
+                    original_filename,
+                    title,
+                    summary,
                     content,
                     tokenize='unicode61'
                 )
             ''')
-            
-            # 初始化版本號
             cursor.execute('INSERT OR IGNORE INTO sys_config (key, value) VALUES (?, ?)', ('schema_version', str(CURRENT_SCHEMA_VERSION)))
-            
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"資料庫初始化失敗: {e}")
             raise
+        finally:
+            if conn: conn.close()
 
     def _check_migration(self):
-        """簡單的 Schema Migration 策略"""
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('SELECT value FROM sys_config WHERE key = "schema_version"')
             row = cursor.fetchone()
             version = int(row[0]) if row else 1
             
-            if version < 2:
-                logger.info(f"執行 Migration: v{version} -> v2")
-                # 範例：如果 v2 新增了欄位，可以在這裡執行 ALTER TABLE
-                # cursor.execute('ALTER TABLE files ADD COLUMN new_col TEXT')
+            if version < CURRENT_SCHEMA_VERSION:
+                logger.info(f"執行資料庫 Migration: V{version} -> V{CURRENT_SCHEMA_VERSION}")
+                
+                # 補齊 files 表欄位 (通用邏輯)
+                cursor.execute("PRAGMA table_info(files)")
+                columns = [col[1] for col in cursor.fetchall()]
+                new_cols = [
+                    ('temp_path', 'TEXT'), ('final_path', 'TEXT'), ('moving_target_path', 'TEXT'),
+                    ('file_type', 'TEXT'), ('standard_date', 'TEXT'), ('main_topic', 'TEXT'), 
+                    ('summary', 'TEXT'), ('is_scanned', 'INTEGER DEFAULT 0'), ('status', "TEXT DEFAULT 'PENDING'")
+                ]
+                for col_name, col_type in new_cols:
+                    if col_name not in columns:
+                        cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
+                
+                # V6/V7: 強化 FTS 欄位與 Cascade (如果之前沒做成功)
+                if version < 7:
+                    try:
+                        # 1. 處理 file_tags 的 Cascade
+                        cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
+                        cursor.execute("DROP TABLE IF EXISTS file_tags")
+                        cursor.execute('''
+                            CREATE TABLE file_tags (
+                                file_id INTEGER, tag_id INTEGER, confidence REAL,
+                                PRIMARY KEY (file_id, tag_id),
+                                FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+                                FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+                            )
+                        ''')
+                        cursor.execute("INSERT INTO file_tags SELECT * FROM file_tags_backup")
+                        cursor.execute("DROP TABLE file_tags_backup")
+
+                        # 2. 擴充 FTS 表欄位並安全遷移數據
+                        cursor.execute("CREATE TABLE IF NOT EXISTS fts_migration_backup(rowid INTEGER PRIMARY KEY, content TEXT)")
+                        cursor.execute("PRAGMA table_info(file_content_fts)")
+                        fts_cols = [c[1] for c in cursor.fetchall()]
+                        if 'content' in fts_cols:
+                            cursor.execute("INSERT OR REPLACE INTO fts_migration_backup(rowid, content) SELECT rowid, content FROM file_content_fts")
+                        
+                        cursor.execute("DROP TABLE IF EXISTS file_content_fts")
+                        cursor.execute('''
+                            CREATE VIRTUAL TABLE file_content_fts USING fts5(
+                                original_filename, title, summary, content, tokenize='unicode61'
+                            )
+                        ''')
+                        cursor.execute('''
+                            INSERT INTO file_content_fts(rowid, original_filename, title, summary, content)
+                            SELECT f.file_id, f.original_name, f.main_topic, f.summary, COALESCE(b.content, '')
+                            FROM files f
+                            LEFT JOIN fts_migration_backup b ON f.file_id = b.rowid
+                        ''')
+                        cursor.execute("DROP TABLE fts_migration_backup")
+                    except Exception as mig_err:
+                        logger.warning(f"V7 Migration 部分失敗: {mig_err}")
+
                 cursor.execute('UPDATE sys_config SET value = ? WHERE key = "schema_version"', (str(CURRENT_SCHEMA_VERSION),))
                 conn.commit()
-            
-            conn.close()
         except Exception as e:
-            logger.error(f"Migration 檢查失敗: {e}")
+            logger.error(f"Migration 執行失敗: {e}")
+        finally:
+            if conn: conn.close()
 
     def create_temp_file(self, uploaded_file_name, file_content, file_hash, file_type):
-        """
-        【路徑封裝】UI 不再自己組路徑。
-        傳入原始檔名與內容，由 Storage 決定存哪裡，並回傳 file_id。
-        """
+        """【原子化上傳防護】使用 .part 檔案與 os.replace 避免 Race Condition"""
+        temp_path = None
+        part_path = None
+        conn = None
+        wrote_file = False
         try:
-            # 檔名安全處理 (由 Storage 層確保)
-            from core import FileProcessor
-            safe_name = FileProcessor().sanitize_filename(uploaded_file_name)
-            temp_path = self.upload_dir / safe_name
+            safe_name = FileUtils.sanitize_filename(uploaded_file_name)
+            unique_temp_name = f"{file_hash[:8]}_{safe_name}"
+            temp_path = self.upload_dir / unique_temp_name
+            part_path = self.upload_dir / f"{unique_temp_name}.{uuid.uuid4().hex}.part"
             
-            # 寫入實體檔案
-            with open(temp_path, "wb") as f:
-                f.write(file_content)
+            if not temp_path.exists():
+                with open(part_path, "wb") as f:
+                    f.write(file_content)
+                os.replace(part_path, temp_path)
+                wrote_file = True
             
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO files (original_name, temp_path, file_hash, file_type, status)
-                VALUES (?, ?, ?, ?, 'PENDING')
-            ''', (uploaded_file_name, str(temp_path), file_hash, file_type))
-            file_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-            return file_id
+            try:
+                cursor.execute('''
+                    INSERT INTO files (original_name, temp_path, file_hash, file_type, status)
+                    VALUES (?, ?, ?, ?, 'PENDING')
+                ''', (uploaded_file_name, str(temp_path), file_hash, file_type))
+                file_id = cursor.lastrowid
+                conn.commit()
+                return {"success": True, "file_id": file_id}
+            except sqlite3.IntegrityError:
+                cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
+                row = cursor.fetchone()
+                db_temp_path = row[3]
+                
+                if wrote_file and temp_path and temp_path.exists() and str(temp_path) != db_temp_path:
+                    try:
+                        os.remove(temp_path)
+                        logger.info(f"已清理重複上傳產生的孤兒暫存檔: {temp_path}")
+                    except Exception as rm_err:
+                        logger.warning(f"清理重複上傳的暫存檔失敗: {rm_err}")
+                
+                return {
+                    "success": False, "reason": "DUPLICATE", "file_id": row[0], 
+                    "status": row[1], "final_path": row[2]
+                }
         except Exception as e:
             logger.error(f"建立暫存檔案失敗: {e}")
-            return None
+            if part_path and part_path.exists():
+                try: os.remove(part_path)
+                except: pass
+            return {"success": False, "reason": "ERROR", "message": str(e)}
+        finally:
+            if conn: conn.close()
 
     def get_file_path(self, file_id):
-        """
-        【路徑封裝】UI 只傳 file_id，Storage 回傳目前可用的路徑 (優先回傳 final_path)。
-        """
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('SELECT final_path, temp_path FROM files WHERE file_id = ?', (file_id,))
             row = cursor.fetchone()
-            conn.close()
             if row:
                 return row[0] if row[0] else row[1]
             return None
         except Exception as e:
             logger.error(f"獲取檔案路徑失敗: {e}")
             return None
-
-    def check_duplicate(self, file_hash):
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT file_id, final_path FROM files WHERE file_hash = ? AND status = "COMPLETED"', (file_hash,))
-            result = cursor.fetchone()
-            conn.close()
-            return result
-        except Exception as e:
-            logger.error(f"重複檢查失敗: {e}")
-            return None
+        finally:
+            if conn: conn.close()
 
     def get_file_by_id(self, file_id):
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM files WHERE file_id = ?', (file_id,))
             row = cursor.fetchone()
-            conn.close()
             return dict(row) if row else None
         except Exception as e:
             logger.error(f"獲取檔案資訊失敗: {e}")
             return None
+        finally:
+            if conn: conn.close()
 
     def update_file_metadata(self, file_id, metadata):
+        """【v2.7 修正】FTS 同步更新，防止 content 被洗空"""
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE files 
@@ -185,18 +257,33 @@ class StorageManager:
             ''', (metadata['standard_date'], metadata['main_topic'], metadata.get('summary', ''), 
                   1 if metadata.get('is_scanned') else 0, file_id))
             
-            if metadata.get('content'):
-                cursor.execute('INSERT OR REPLACE INTO file_content_fts (file_id, content) VALUES (?, ?)', 
-                               (file_id, metadata['content']))
+            cursor.execute("SELECT content FROM file_content_fts WHERE rowid = ?", (file_id,))
+            fts_row = cursor.fetchone()
+            old_content = fts_row[0] if fts_row else ""
+            
+            cursor.execute("SELECT original_name FROM files WHERE file_id = ?", (file_id,))
+            file_row = cursor.fetchone()
+            original_name = file_row[0] if file_row else ""
+
+            content = metadata.get('content', '') or old_content
+            title = metadata.get('main_topic', '')
+            summary = metadata.get('summary', '')
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO file_content_fts (rowid, original_filename, title, summary, content)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (file_id, original_name, title, summary, content))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"更新中繼資料失敗: {e}")
             raise
+        finally:
+            if conn: conn.close()
 
     def add_tags_to_file(self, file_id, tags_with_confidence):
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             for tag_name, confidence in tags_with_confidence.items():
                 cursor.execute('INSERT OR IGNORE INTO tags (tag_name) VALUES (?)', (tag_name,))
@@ -205,57 +292,124 @@ class StorageManager:
                 cursor.execute('INSERT OR REPLACE INTO file_tags (file_id, tag_id, confidence) VALUES (?, ?, ?)', 
                                (file_id, tag_id, confidence))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"添加標籤失敗: {e}")
+        finally:
+            if conn: conn.close()
 
-    def finalize_organization(self, file_id, target_path):
-        """執行最終移動並更新 final_path，清理 temp_path"""
+    def finalize_organization(self, file_id, standard_date, main_topic, original_name):
+        """【v2.7 究極加固】基於 moving_target_path 的完整狀態機 Recovery"""
+        conn = None
         try:
             file_info = self.get_file_by_id(file_id)
-            if not file_info or not file_info['temp_path'] or not os.path.exists(file_info['temp_path']):
-                raise FileNotFoundError(f"找不到暫存檔案: {file_info.get('temp_path') if file_info else 'Unknown'}")
+            if not file_info:
+                raise ValueError(f"找不到檔案 ID: {file_id}")
+            
+            # 冪等性檢查
+            if file_info.get("status") == "COMPLETED" and file_info.get("final_path"):
+                if os.path.exists(file_info["final_path"]):
+                    return file_info["final_path"]
 
-            # 確保目標目錄存在
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            # --- Recovery 補償檢查 ---
+            if file_info.get("status") == "MOVING" and file_info.get("moving_target_path"):
+                moving_target = file_info["moving_target_path"]
+                if os.path.exists(moving_target):
+                    logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (ID: {file_id})")
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
+                        WHERE file_id = ?
+                    ''', (moving_target, file_id))
+                    conn.commit()
+                    return moving_target
+                elif file_info.get("temp_path") and os.path.exists(file_info["temp_path"]):
+                    logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                    conn.commit()
+                    # 繼續執行後面的正常流程
+
+            # 計算目標路徑
+            if not standard_date or standard_date == "UnknownDate":
+                year, month = "UnknownYear", "UnknownMonth"
+            else:
+                year = standard_date.split('-')[0] if '-' in standard_date else "UnknownYear"
+                month = standard_date[:7] if len(standard_date) >= 7 else "UnknownMonth"
             
-            # 移動檔案
-            shutil.move(file_info['temp_path'], target_path)
+            target_dir = self.repo_root / year / month
+            target_dir.mkdir(parents=True, exist_ok=True)
             
-            conn = sqlite3.connect(self.db_path)
+            base_filename = FileUtils.sanitize_filename(f"{standard_date}_{main_topic}_{original_name}")
+            target_path = str(FileUtils.get_unique_path(target_dir / base_filename))
+
+            if not file_info['temp_path'] or not os.path.exists(file_info['temp_path']):
+                raise FileNotFoundError(f"找不到暫存檔案: {file_info.get('temp_path')}")
+
+            temp_path = file_info['temp_path']
+
+            # --- 三階段狀態機流程 ---
+            # 1️⃣ 標記為 MOVING 並持久化預定目標路徑
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE files SET final_path = ?, temp_path = NULL, status = 'COMPLETED' WHERE file_id = ?
+                UPDATE files SET status = 'MOVING', moving_target_path = ? WHERE file_id = ?
             ''', (target_path, file_id))
             conn.commit()
-            conn.close()
+
+            # 2️⃣ 執行搬移
+            try:
+                shutil.move(temp_path, target_path)
+            except Exception as move_err:
+                # 搬移失敗，若目標檔不存在，回滾狀態
+                if not os.path.exists(target_path):
+                    cursor.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                    conn.commit()
+                raise move_err
+
+            # 3️⃣ 標記為 COMPLETED
+            cursor.execute('''
+                UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
+                WHERE file_id = ?
+            ''', (target_path, file_id))
+            conn.commit()
+            
             return target_path
+                
         except Exception as e:
             logger.error(f"整理檔案失敗: {file_id}, 錯誤: {e}")
             raise
+        finally:
+            if conn: conn.close()
 
     def search_content(self, query):
+        """【防禦性 API】內部強制執行 FTS 轉義"""
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            safe_query = FileUtils.escape_fts_query(query)
+            conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT f.*, snippet(file_content_fts, 1, '<b>', '</b>', '...', 20) as snippet
-                FROM file_content_fts fts
-                JOIN files f ON fts.file_id = f.file_id
+                SELECT f.*, snippet(file_content_fts, 3, '<b>', '</b>', '...', 20) as snippet
+                FROM file_content_fts
+                JOIN files f ON file_content_fts.rowid = f.file_id
                 WHERE file_content_fts MATCH ?
                 ORDER BY bm25(file_content_fts)
-            ''', (query,))
+            ''', (safe_query,))
             rows = cursor.fetchall()
-            conn.close()
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"全文檢索失敗: {e}")
             return []
+        finally:
+            if conn: conn.close()
 
     def get_all_records(self):
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
@@ -267,27 +421,60 @@ class StorageManager:
                 ORDER BY f.created_at DESC
             ''')
             rows = cursor.fetchall()
-            conn.close()
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"獲取紀錄失敗: {e}")
             return []
+        finally:
+            if conn: conn.close()
 
-    def cleanup_orphaned_uploads(self):
-        """清理資料庫中不存在或已完成的暫存檔"""
+    def cleanup_orphaned_uploads(self, preview_ttl_days=7):
+        """【v2.7 強化】安全邊界清理，支援 PNG 預覽圖"""
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('SELECT temp_path FROM files WHERE temp_path IS NOT NULL')
             valid_temp_paths = set(row[0] for row in cursor.fetchall())
-            conn.close()
-
-            for filename in os.listdir(self.upload_dir):
-                file_path = str(self.upload_dir / filename)
-                if os.path.isfile(file_path) and file_path not in valid_temp_paths:
-                    # 排除 previews 目錄
-                    if 'previews' in file_path: continue
-                    os.remove(file_path)
-                    logger.info(f"已清理孤立暫存檔: {file_path}")
+            # 【v2.7 修正】改用精確檔名比對
+            valid_temp_names = {Path(v).name for v in valid_temp_paths}
         except Exception as e:
-            logger.error(f"清理暫存檔失敗: {e}")
+            logger.error(f"清理暫存檔失敗(讀 DB): {e}")
+            return
+        finally:
+            if conn: conn.close()
+
+        now = time.time()
+        ttl_sec = preview_ttl_days * 24 * 3600
+
+        for p in self.upload_dir.glob("*"):
+            if p.is_file():
+                p_str = str(p)
+                if p_str not in valid_temp_paths:
+                    try:
+                        p.unlink()
+                        logger.info(f"已清理孤立暫存檔: {p_str}")
+                    except Exception as e:
+                        logger.warning(f"刪除暫存檔失敗 {p_str}: {e}")
+
+        preview_dir = self.upload_dir / "previews"
+        if preview_dir.exists():
+            for pattern in ("*.png", "*.jpg", "*.jpeg"):
+                for p in preview_dir.glob(pattern):
+                    p_str = str(p)
+                    temp_basename = p.name.replace("preview_", "").replace(".png", "").replace(".jpg", "").replace(".jpeg", "")
+                    
+                    try:
+                        too_old = (now - p.stat().st_mtime) > ttl_sec
+                    except:
+                        too_old = True
+                    
+                    # 【v2.7 修正】精確比對檔名
+                    is_orphan = temp_basename not in valid_temp_names
+                    
+                    if too_old or is_orphan:
+                        try:
+                            p.unlink()
+                            logger.info(f"已清理孤立預覽圖: {p_str}")
+                        except Exception as e:
+                            logger.warning(f"刪除預覽圖失敗 {p_str}: {e}")
