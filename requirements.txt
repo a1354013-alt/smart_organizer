@@ -6,3 +6,4 @@ pandas>=2.2,<3
 pdf2image>=1.17,<2
 openai>=1.14,<2
 pytesseract>=0.3.10,<1
+matplotlib>=3.8,<4

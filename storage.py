@@ -313,7 +313,12 @@ class StorageManager:
             # --- Recovery 補償檢查 ---
             if file_info.get("status") == "MOVING" and file_info.get("moving_target_path"):
                 moving_target = file_info["moving_target_path"]
-                if os.path.exists(moving_target):
+                temp_path = file_info.get("temp_path")
+                temp_exists = temp_path and os.path.exists(temp_path)
+                target_exists = os.path.exists(moving_target)
+
+                if target_exists and not temp_exists:
+                    # 【v2.7.1 強化】只有目標存在且來源不存在時，才視為安全完成
                     logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (ID: {file_id})")
                     conn = self._get_connection()
                     cursor = conn.cursor()
@@ -323,13 +328,19 @@ class StorageManager:
                     ''', (moving_target, file_id))
                     conn.commit()
                     return moving_target
-                elif file_info.get("temp_path") and os.path.exists(file_info["temp_path"]):
-                    logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
+                elif temp_exists:
+                    # 【v2.7.1 強化】若來源仍存在，不論目標是否存在，皆回退至 PROCESSED 以確保完整性
+                    if target_exists:
+                        logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，回退至 PROCESSED 供重新檢查")
+                    else:
+                        logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
+                    
                     conn = self._get_connection()
                     cursor = conn.cursor()
                     cursor.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
                     conn.commit()
-                    # 繼續執行後面的正常流程
+                    # 重新獲取更新後的資訊以利後續流程
+                    file_info = self.get_file_by_id(file_id)
 
             # 計算目標路徑
             if not standard_date or standard_date == "UnknownDate":
@@ -462,7 +473,11 @@ class StorageManager:
             for pattern in ("*.png", "*.jpg", "*.jpeg"):
                 for p in preview_dir.glob(pattern):
                     p_str = str(p)
-                    temp_basename = p.name.replace("preview_", "").replace(".png", "").replace(".jpg", "").replace(".jpeg", "")
+                    # 【v2.7 修正】精確還原暫存檔名，避免 replace 誤傷檔名中的副檔名字串
+                    name = p.name
+                    if name.startswith("preview_"):
+                        name = name[len("preview_"):]
+                    temp_basename = Path(name).stem
                     
                     try:
                         too_old = (now - p.stat().st_mtime) > ttl_sec
