@@ -1,4 +1,4 @@
-# 📁 智慧檔案整理助理 (v2.7.1 Steel-Fortified Hotfix)
+# 📁 智慧檔案整理助理 (v2.7.2 Steel-Fortified Final)
 
 這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF 與照片進行分類、命名與整理。
 
@@ -6,7 +6,7 @@
 - **智慧分類**：系統主要透過**規則引擎**進行主題分類（發票、合約、截圖等），並可選擇使用 **LLM 生成文件摘要與輔助標籤**。
 - **視覺化預覽**：支援照片縮圖與 PDF 第一頁自動轉圖預覽。
 - **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
-- **掃描檔補強**：自動偵測掃秘 PDF 並執行第一頁 OCR，確保可搜尋性。
+- **掃描檔補強**：自動偵測掃描 PDF 並執行第一頁 OCR，確保可搜尋性。
 - **架構加固**：路徑操作完全封裝於 Storage 層，資料庫驅動的檔案生命週期管理。
 
 ## 🛠️ 安裝說明
@@ -46,6 +46,12 @@ streamlit run app.py
 - `smart_organizer.db`: SQLite 資料庫。
 
 ## 📜 更新日誌 (Changelog)
+
+### v2.7.2 Steel-Fortified Final - 2026-03-14
+- **徹底消除 Race Condition**：`create_temp_file` 改為「先查後寫」並搭配 `BEGIN IMMEDIATE` 交易鎖定，確保極致併發安全。
+- **收窄清理安全邊界**：`cleanup_orphaned_uploads` 加入正則表達式檢查，僅清理符合規則的暫存檔，排除日誌或鎖定檔。
+- **FTS 註解校正**：修正 `core.py` 中關於 FTS5 轉義邏輯的描述。
+- **文檔 Typo 修正**：修正 README 中「掃描檔補強」的文字錯誤。
 
 ### v2.7.1 Steel-Fortified Hotfix - 2026-03-14
 - **缺失依賴補全**：在 `requirements.txt` 中新增 `matplotlib`，修復部署時的 `ModuleNotFoundError`。

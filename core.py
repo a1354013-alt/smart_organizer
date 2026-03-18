@@ -58,7 +58,7 @@ class FileUtils:
         # 移除 FTS5 特殊語法字元，防止 SQL 報錯
         # 僅保留基本文字與空白
         clean_query = re.sub(r'[":\-*()]', " ", query)
-        # 將空白拆詞後用 AND 組合 (FTS5 預設空白即為分詞)
+        # 將輸入拆成多個詞並以空白連接，交由 FTS5 做多詞匹配 (空白在 FTS5 隱含 AND 行為)
         words = [f'"{w}"' for w in clean_query.split() if w]
         return " ".join(words)
 

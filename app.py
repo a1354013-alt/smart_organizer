@@ -22,8 +22,8 @@ processor = FileProcessor()
 storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
 
 st.set_page_config(page_title="智慧檔案整理助理", layout="wide")
-st.title("📁 智慧檔案整理助理 (v2.7.1 Steel-Fortified Hotfix)")
-st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘修正版**\n- 強化 Recovery 邏輯 | 補全依賴 | 預覽圖清理優化 | OpenAI Timeout")
+st.title("📁 智慧檔案整理助理 (v2.7.2 Steel-Fortified Final)")
+st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘最終版**\n- 徹底消除 Race Condition | 強化清理安全邊界 | 狀態機 Recovery | OpenAI Timeout")
 
 # ========== Sidebar 配置 ==========
 st.sidebar.header("⚙️ 設定與維護")
@@ -333,4 +333,4 @@ with tab5:
         st.info("目前尚無處理紀錄")
 
 st.divider()
-st.caption("智慧檔案整理助理 v2.7.1 Steel-Fortified Hotfix | Powered by Python & Streamlit")
+st.caption("智慧檔案整理助理 v2.7.2 Steel-Fortified Final | Powered by Python & Streamlit")

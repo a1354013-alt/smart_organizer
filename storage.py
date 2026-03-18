@@ -161,26 +161,47 @@ class StorageManager:
             if conn: conn.close()
 
     def create_temp_file(self, uploaded_file_name, file_content, file_hash, file_type):
-        """【原子化上傳防護】使用 .part 檔案與 os.replace 避免 Race Condition"""
+        """【v2.7.2 鋼鐵加固】先查後寫 + BEGIN IMMEDIATE 交易，徹底消除 Race Condition"""
         temp_path = None
         part_path = None
         conn = None
-        wrote_file = False
         try:
+            # 1. 先檢查 Hash 是否已存在 (快速路徑)
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "success": False, "reason": "DUPLICATE", "file_id": row[0], 
+                    "status": row[1], "final_path": row[2]
+                }
+
+            # 2. 準備寫入檔案
             safe_name = FileUtils.sanitize_filename(uploaded_file_name)
             unique_temp_name = f"{file_hash[:8]}_{safe_name}"
             temp_path = self.upload_dir / unique_temp_name
             part_path = self.upload_dir / f"{unique_temp_name}.{uuid.uuid4().hex}.part"
             
+            # 3. 寫入 .part 檔並原子替換
             if not temp_path.exists():
                 with open(part_path, "wb") as f:
                     f.write(file_content)
                 os.replace(part_path, temp_path)
-                wrote_file = True
             
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            # 4. 使用 BEGIN IMMEDIATE 確保交易原子性
             try:
+                cursor.execute("BEGIN IMMEDIATE")
+                # 再次檢查 (Double Check)
+                cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
+                row = cursor.fetchone()
+                if row:
+                    conn.rollback()
+                    return {
+                        "success": False, "reason": "DUPLICATE", "file_id": row[0], 
+                        "status": row[1], "final_path": row[2]
+                    }
+                
                 cursor.execute('''
                     INSERT INTO files (original_name, temp_path, file_hash, file_type, status)
                     VALUES (?, ?, ?, ?, 'PENDING')
@@ -189,17 +210,10 @@ class StorageManager:
                 conn.commit()
                 return {"success": True, "file_id": file_id}
             except sqlite3.IntegrityError:
+                conn.rollback()
+                # 雖然有 Double Check，但為了極致安全仍保留 IntegrityError 處理
                 cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
                 row = cursor.fetchone()
-                db_temp_path = row[3]
-                
-                if wrote_file and temp_path and temp_path.exists() and str(temp_path) != db_temp_path:
-                    try:
-                        os.remove(temp_path)
-                        logger.info(f"已清理重複上傳產生的孤兒暫存檔: {temp_path}")
-                    except Exception as rm_err:
-                        logger.warning(f"清理重複上傳的暫存檔失敗: {rm_err}")
-                
                 return {
                     "success": False, "reason": "DUPLICATE", "file_id": row[0], 
                     "status": row[1], "final_path": row[2]
@@ -438,9 +452,9 @@ class StorageManager:
             return []
         finally:
             if conn: conn.close()
-
     def cleanup_orphaned_uploads(self, preview_ttl_days=7):
-        """【v2.7 強化】安全邊界清理，支援 PNG 預覽圖"""
+        """【v2.7.2 強化】收窄安全邊界，僅清理符合命名規則的暫存檔"""
+        import re
         conn = None
         try:
             conn = self._get_connection()
@@ -458,10 +472,14 @@ class StorageManager:
         now = time.time()
         ttl_sec = preview_ttl_days * 24 * 3600
 
+        # 暫存檔命名規則: hash8_filename
+        temp_pattern = re.compile(r"^[a-f0-9]{8}_.+")
+
         for p in self.upload_dir.glob("*"):
             if p.is_file():
                 p_str = str(p)
-                if p_str not in valid_temp_paths:
+                # 【v2.7.2 強化】僅清理符合規則且不在 DB 中的檔案，排除 .part, .lock 等
+                if temp_pattern.match(p.name) and p_str not in valid_temp_paths:
                     try:
                         p.unlink()
                         logger.info(f"已清理孤立暫存檔: {p_str}")
