@@ -172,6 +172,7 @@ class StorageManager:
             cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
             row = cursor.fetchone()
             if row:
+                # 【v2.7.3 強化】快速路徑併發清理：若檔案已存在且檔名不同，則不執行後續寫入
                 return {
                     "success": False, "reason": "DUPLICATE", "file_id": row[0], 
                     "status": row[1], "final_path": row[2]
@@ -197,6 +198,11 @@ class StorageManager:
                 row = cursor.fetchone()
                 if row:
                     conn.rollback()
+                    # 【v2.7.3 強化】併發清理：若本次新寫入的 temp_path 與 DB 記錄的不一致，則刪除本次產生的孤兒檔
+                    db_temp_path = row[3]
+                    if temp_path and temp_path.exists() and str(temp_path) != db_temp_path:
+                        try: temp_path.unlink()
+                        except: pass
                     return {
                         "success": False, "reason": "DUPLICATE", "file_id": row[0], 
                         "status": row[1], "final_path": row[2]
@@ -214,6 +220,12 @@ class StorageManager:
                 # 雖然有 Double Check，但為了極致安全仍保留 IntegrityError 處理
                 cursor.execute('SELECT file_id, status, final_path, temp_path FROM files WHERE file_hash = ?', (file_hash,))
                 row = cursor.fetchone()
+                # 【v2.7.3 強化】併發清理
+                if row:
+                    db_temp_path = row[3]
+                    if temp_path and temp_path.exists() and str(temp_path) != db_temp_path:
+                        try: temp_path.unlink()
+                        except: pass
                 return {
                     "success": False, "reason": "DUPLICATE", "file_id": row[0], 
                     "status": row[1], "final_path": row[2]
@@ -311,52 +323,64 @@ class StorageManager:
         finally:
             if conn: conn.close()
 
-    def finalize_organization(self, file_id, standard_date, main_topic, original_name):
-        """【v2.7 究極加固】基於 moving_target_path 的完整狀態機 Recovery"""
+    def _recover_moving_file(self, file_id, file_info):
+        """【v2.7.3 重構】專門處理 MOVING 狀態的 Recovery 邏輯"""
+        if file_info.get("status") != "MOVING" or not file_info.get("moving_target_path"):
+            return None
+            
+        moving_target = file_info["moving_target_path"]
+        temp_path = file_info.get("temp_path")
+        temp_exists = temp_path and os.path.exists(temp_path)
+        target_exists = os.path.exists(moving_target)
+        
         conn = None
+        try:
+            if target_exists and not temp_exists:
+                logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (ID: {file_id})")
+                conn = self._get_connection()
+                conn.execute('''
+                    UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
+                    WHERE file_id = ?
+                ''', (moving_target, file_id))
+                conn.commit()
+                return moving_target
+            elif temp_exists:
+                if target_exists:
+                    logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，回退至 PROCESSED 供重新檢查")
+                else:
+                    logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
+                
+                conn = self._get_connection()
+                conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                conn.commit()
+            return None
+        except Exception as e:
+            logger.error(f"Recovery 執行失敗 (ID: {file_id}): {e}")
+            return None
+        finally:
+            if conn: conn.close()
+
+    def finalize_organization(self, file_id, standard_date, main_topic, original_name):
+        """【v2.7.3 重構】基於狀態機的檔案整理終端化流程"""
         try:
             file_info = self.get_file_by_id(file_id)
             if not file_info:
                 raise ValueError(f"找不到檔案 ID: {file_id}")
             
-            # 冪等性檢查
+            # 1. 冪等性檢查
             if file_info.get("status") == "COMPLETED" and file_info.get("final_path"):
                 if os.path.exists(file_info["final_path"]):
                     return file_info["final_path"]
+            
+            # 2. Recovery 檢查
+            recovered_path = self._recover_moving_file(file_id, file_info)
+            if recovered_path:
+                return recovered_path
+            
+            # 重新獲取資訊 (若 Recovery 執行了回退)
+            file_info = self.get_file_by_id(file_id)
 
-            # --- Recovery 補償檢查 ---
-            if file_info.get("status") == "MOVING" and file_info.get("moving_target_path"):
-                moving_target = file_info["moving_target_path"]
-                temp_path = file_info.get("temp_path")
-                temp_exists = temp_path and os.path.exists(temp_path)
-                target_exists = os.path.exists(moving_target)
-
-                if target_exists and not temp_exists:
-                    # 【v2.7.1 強化】只有目標存在且來源不存在時，才視為安全完成
-                    logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (ID: {file_id})")
-                    conn = self._get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
-                        WHERE file_id = ?
-                    ''', (moving_target, file_id))
-                    conn.commit()
-                    return moving_target
-                elif temp_exists:
-                    # 【v2.7.1 強化】若來源仍存在，不論目標是否存在，皆回退至 PROCESSED 以確保完整性
-                    if target_exists:
-                        logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，回退至 PROCESSED 供重新檢查")
-                    else:
-                        logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
-                    
-                    conn = self._get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
-                    conn.commit()
-                    # 重新獲取更新後的資訊以利後續流程
-                    file_info = self.get_file_by_id(file_id)
-
-            # 計算目標路徑
+            # 3. 計算目標路徑
             if not standard_date or standard_date == "UnknownDate":
                 year, month = "UnknownYear", "UnknownMonth"
             else:
@@ -374,39 +398,37 @@ class StorageManager:
 
             temp_path = file_info['temp_path']
 
-            # --- 三階段狀態機流程 ---
-            # 1️⃣ 標記為 MOVING 並持久化預定目標路徑
+            # 4. 三階段狀態機流程
             conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE files SET status = 'MOVING', moving_target_path = ? WHERE file_id = ?
-            ''', (target_path, file_id))
-            conn.commit()
-
-            # 2️⃣ 執行搬移
             try:
-                shutil.move(temp_path, target_path)
-            except Exception as move_err:
-                # 搬移失敗，若目標檔不存在，回滾狀態
-                if not os.path.exists(target_path):
-                    cursor.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
-                    conn.commit()
-                raise move_err
+                # 階段一: 標記為 MOVING
+                conn.execute('''
+                    UPDATE files SET status = 'MOVING', moving_target_path = ? WHERE file_id = ?
+                ''', (target_path, file_id))
+                conn.commit()
 
-            # 3️⃣ 標記為 COMPLETED
-            cursor.execute('''
-                UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
-                WHERE file_id = ?
-            ''', (target_path, file_id))
-            conn.commit()
-            
-            return target_path
+                # 階段二: 執行搬移
+                try:
+                    shutil.move(temp_path, target_path)
+                except Exception as move_err:
+                    if not os.path.exists(target_path):
+                        conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                        conn.commit()
+                    raise move_err
+
+                # 階段三: 標記為 COMPLETED
+                conn.execute('''
+                    UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
+                    WHERE file_id = ?
+                ''', (target_path, file_id))
+                conn.commit()
+                return target_path
+            finally:
+                if conn: conn.close()
                 
         except Exception as e:
             logger.error(f"整理檔案失敗: {file_id}, 錯誤: {e}")
             raise
-        finally:
-            if conn: conn.close()
 
     def search_content(self, query):
         """【防禦性 API】內部強制執行 FTS 轉義"""
@@ -478,11 +500,16 @@ class StorageManager:
         for p in self.upload_dir.glob("*"):
             if p.is_file():
                 p_str = str(p)
-                # 【v2.7.2 強化】僅清理符合規則且不在 DB 中的檔案，排除 .part, .lock 等
-                if temp_pattern.match(p.name) and p_str not in valid_temp_paths:
+                # 【v2.7.3 強化】年齡保護：僅清理建立超過 5 分鐘 (300秒) 的孤兒暫存檔，避免踩到進行中流程
+                try:
+                    age_sec = now - p.stat().st_mtime
+                except:
+                    age_sec = 0
+                
+                if age_sec > 300 and temp_pattern.match(p.name) and p_str not in valid_temp_paths:
                     try:
                         p.unlink()
-                        logger.info(f"已清理孤立暫存檔: {p_str}")
+                        logger.info(f"已清理孤立暫存檔: {p_str} (年齡: {int(age_sec)}s)")
                     except Exception as e:
                         logger.warning(f"刪除暫存檔失敗 {p_str}: {e}")
 

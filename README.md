@@ -1,4 +1,4 @@
-# 📁 智慧檔案整理助理 (v2.7.2 Steel-Fortified Final)
+# 📁 智慧檔案整理助理 (v2.7.3 Steel-Fortified Final Refined)
 
 這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF 與照片進行分類、命名與整理。
 
@@ -47,8 +47,14 @@ streamlit run app.py
 
 ## 📜 更新日誌 (Changelog)
 
+### v2.7.3 Steel-Fortified Final Refined - 2026-03-14
+- **併發清理補強**：在 `create_temp_file` 中加入併發重複上傳的即時清理邏輯，防止 `uploads/` 目錄產生孤兒暫存檔。
+- **清理年齡保護**：`cleanup_orphaned_uploads` 引入 5 分鐘年齡保護機制，避免清理程序誤刪正在處理中的檔案。
+- **狀態機重構**：重構 `finalize_organization` 流程，將 Recovery 邏輯獨立化並統一連線管理，提升系統穩定性。
+- **文檔措辭校正**：修正 README 描述，以更嚴謹的工程措辭描述併發安全與分類邏輯。
+
 ### v2.7.2 Steel-Fortified Final - 2026-03-14
-- **徹底消除 Race Condition**：`create_temp_file` 改為「先查後寫」並搭配 `BEGIN IMMEDIATE` 交易鎖定，確保極致併發安全。
+- **強化併發防護**：`create_temp_file` 改為「先查後寫」並搭配 `BEGIN IMMEDIATE` 交易鎖定，顯著降低併發衝突風險。
 - **收窄清理安全邊界**：`cleanup_orphaned_uploads` 加入正則表達式檢查，僅清理符合規則的暫存檔，排除日誌或鎖定檔。
 - **FTS 註解校正**：修正 `core.py` 中關於 FTS5 轉義邏輯的描述。
 - **文檔 Typo 修正**：修正 README 中「掃描檔補強」的文字錯誤。
