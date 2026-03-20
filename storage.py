@@ -353,6 +353,12 @@ class StorageManager:
                 conn = self._get_connection()
                 conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
                 conn.commit()
+            else:
+                # 【v2.7.4 強化】雙失蹤處理：來源與目標皆不存在，強制回退狀態避免卡死
+                logger.warning(f"偵測到嚴重異常: 來源與目標皆不存在 (ID: {file_id})，強制回退狀態")
+                conn = self._get_connection()
+                conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                conn.commit()
             return None
         except Exception as e:
             logger.error(f"Recovery 執行失敗 (ID: {file_id}): {e}")
@@ -435,6 +441,9 @@ class StorageManager:
         conn = None
         try:
             safe_query = FileUtils.escape_fts_query(query)
+            # 【v2.7.4 強化】空查詢防禦：若轉義後為空字串，直接回傳空列表
+            if not safe_query or not safe_query.strip():
+                return []
             conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

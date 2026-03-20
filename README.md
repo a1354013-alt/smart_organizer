@@ -1,4 +1,4 @@
-# 📁 智慧檔案整理助理 (v2.7.3 Steel-Fortified Final Refined)
+# 📁 智慧檔案整理助理 (v2.7.4 Steel-Fortified Final Ultimate)
 
 這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF 與照片進行分類、命名與整理。
 
@@ -46,6 +46,12 @@ streamlit run app.py
 - `smart_organizer.db`: SQLite 資料庫。
 
 ## 📜 更新日誌 (Changelog)
+
+### v2.7.4 Steel-Fortified Final Ultimate - 2026-03-14
+- **狀態機收斂補強**：優化 `_recover_moving_file` 邏輯，加入「雙失蹤」異常處理，確保在極端情況下狀態能自動回退而不卡死。
+- **FTS 查詢防禦**：在 `search_content` 中加入空查詢與特殊字元過濾，提升全文檢索的魯棒性。
+- **極致乾淨打包**：優化發佈流程，徹底排除所有測試目錄、資料庫殘留與開發暫存檔。
+- **代碼精煉**：移除 `app.py` 中未使用的引用，保持專案結構俐落。
 
 ### v2.7.3 Steel-Fortified Final Refined - 2026-03-14
 - **併發清理補強**：在 `create_temp_file` 中加入併發重複上傳的即時清理邏輯，防止 `uploads/` 目錄產生孤兒暫存檔。

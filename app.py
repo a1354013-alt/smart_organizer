@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from core import FileProcessor, FileUtils, DOCUMENT_TAGS, PHOTO_TAGS
+from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
 from storage import StorageManager
 
 # ========== 路徑配置 (集中管理) ==========
@@ -22,8 +22,8 @@ processor = FileProcessor()
 storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
 
 st.set_page_config(page_title="智慧檔案整理助理", layout="wide")
-st.title("📁 智慧檔案整理助理 (v2.7.3 Steel-Fortified Final Refined)")
-st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘最終精煉版**\n- 併發清理補強 | 清理年齡保護 | 狀態機重構 | OpenAI Timeout")
+st.title("📁 智慧檔案整理助理 (v2.7.4 Steel-Fortified Final Ultimate)")
+st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘最終究極版**\n- 狀態機收斂補強 | FTS 查詢防禦 | 極致乾淨打包 | OpenAI Timeout")
 
 # ========== Sidebar 配置 ==========
 st.sidebar.header("⚙️ 設定與維護")
@@ -333,4 +333,4 @@ with tab5:
         st.info("目前尚無處理紀錄")
 
 st.divider()
-st.caption("智慧檔案整理助理 v2.7.3 Steel-Fortified Final Refined | Powered by Python & Streamlit")
+st.caption("智慧檔案整理助理 v2.7.4 Steel-Fortified Final Ultimate | Powered by Python & Streamlit")
