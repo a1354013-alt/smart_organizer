@@ -3,6 +3,7 @@ import re
 import datetime
 import hashlib
 import logging
+from pathlib import Path
 from PIL import Image
 import exifread
 from pypdf import PdfReader
@@ -18,6 +19,11 @@ PHOTO_TAGS = ['人物', '美食', '旅行', '文件/收據', '工作', '截圖',
 
 class FileUtils:
     """純工具函式類別，不涉及業務邏輯與昂貴初始化"""
+    DEFAULT_UNKNOWN_DATE = "UnknownDate"
+    DEFAULT_UNKNOWN_YEAR = "UnknownYear"
+    DEFAULT_UNKNOWN_MONTH = "UnknownMonth"
+    ALLOWED_UPLOAD_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
+
     @staticmethod
     def sanitize_filename(filename, max_length=200):
         # 先分離檔名與副檔名
@@ -62,6 +68,55 @@ class FileUtils:
         words = [f'"{w}"' for w in clean_query.split() if w]
         return " ".join(words)
 
+    @staticmethod
+    def normalize_standard_date(raw_value):
+        if raw_value is None:
+            return FileUtils.DEFAULT_UNKNOWN_DATE
+
+        value = str(raw_value).strip()
+        if not value or value == FileUtils.DEFAULT_UNKNOWN_DATE:
+            return FileUtils.DEFAULT_UNKNOWN_DATE
+
+        candidates = [value]
+        trimmed = value.replace("T", " ").split(" ")[0]
+        if trimmed != value:
+            candidates.append(trimmed)
+
+        normalized = re.sub(r"[./_]", "-", trimmed)
+        if normalized != trimmed:
+            candidates.append(normalized)
+
+        for candidate in candidates:
+            try:
+                parsed = datetime.date.fromisoformat(candidate)
+                return parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+
+        match = re.fullmatch(r"(\d{4})[-/._](\d{1,2})[-/._](\d{1,2})", value)
+        if match:
+            try:
+                parsed = datetime.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                return parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                return FileUtils.DEFAULT_UNKNOWN_DATE
+
+        return FileUtils.DEFAULT_UNKNOWN_DATE
+
+    @staticmethod
+    def get_date_directory_parts(raw_value):
+        normalized = FileUtils.normalize_standard_date(raw_value)
+        if normalized == FileUtils.DEFAULT_UNKNOWN_DATE:
+            return normalized, FileUtils.DEFAULT_UNKNOWN_YEAR, FileUtils.DEFAULT_UNKNOWN_MONTH
+        return normalized, normalized[:4], normalized[:7]
+
+    @staticmethod
+    def build_preview_path(file_path):
+        source_path = Path(file_path)
+        preview_dir = source_path.parent / "previews"
+        preview_filename = f"preview_{source_path.name}.png"
+        return str(preview_dir / preview_filename)
+
 class FileProcessor:
     def __init__(self):
         try:
@@ -72,6 +127,10 @@ class FileProcessor:
             logger.warning(f"OpenAI Client 初始化失敗: {e}")
             self.client = None
             self.model = "gpt-4.1-mini"
+        try:
+            self.pdf_ocr_max_pages = max(1, min(int(os.getenv("PDF_OCR_MAX_PAGES", "3")), 5))
+        except ValueError:
+            self.pdf_ocr_max_pages = 3
 
     def get_file_hash(self, file_path):
         sha256_hash = hashlib.sha256()
@@ -94,7 +153,7 @@ class FileProcessor:
         ext = os.path.splitext(file_path)[1].lower()
         metadata = {
             'file_type': 'unknown',
-            'standard_date': None,
+            'standard_date': FileUtils.DEFAULT_UNKNOWN_DATE,
             'extracted_text': '',
             'is_scanned': False,
             'preview_path': None,
@@ -116,14 +175,15 @@ class FileProcessor:
                 metadata['preview_path'] = self._generate_pdf_preview(file_path)
                 
                 # 掃描檔補強
-                if not metadata['extracted_text'].strip() and metadata['preview_path']:
+                if not metadata['extracted_text'].strip():
                     metadata['is_scanned'] = True
-                    text, err = self._ocr_image(metadata['preview_path'])
+                    text, err = self._ocr_pdf_sample(file_path, max_pages=self.pdf_ocr_max_pages)
                     metadata['extracted_text'] = text
                     metadata['ocr_error'] = err
             
-            if not metadata['standard_date']:
-                metadata['standard_date'] = self._get_file_mtime(file_path)
+            metadata['standard_date'] = FileUtils.normalize_standard_date(metadata['standard_date'])
+            if metadata['standard_date'] == FileUtils.DEFAULT_UNKNOWN_DATE:
+                metadata['standard_date'] = FileUtils.normalize_standard_date(self._get_file_mtime(file_path))
         except Exception as e:
             logger.error(f"提取中繼資料失敗 ({file_path}): {e}")
             
@@ -144,10 +204,8 @@ class FileProcessor:
 
     def _generate_pdf_preview(self, file_path):
         try:
-            preview_dir = os.path.join(os.path.dirname(file_path), 'previews')
-            os.makedirs(preview_dir, exist_ok=True)
-            preview_filename = "preview_" + os.path.basename(file_path) + ".png"
-            preview_path = os.path.join(preview_dir, preview_filename)
+            preview_path = FileUtils.build_preview_path(file_path)
+            os.makedirs(os.path.dirname(preview_path), exist_ok=True)
             
             if not os.path.exists(preview_path):
                 images = convert_from_path(file_path, first_page=1, last_page=1)
@@ -164,7 +222,7 @@ class FileProcessor:
                 tags = exifread.process_file(f, stop_tag='DateTimeOriginal')
                 if 'EXIF DateTimeOriginal' in tags:
                     date_str = str(tags['EXIF DateTimeOriginal'])
-                    return date_str.split(' ')[0].replace(':', '-')
+                    return FileUtils.normalize_standard_date(date_str.split(' ')[0].replace(':', '-'))
         except Exception as e:
             logger.debug(f"EXIF 讀取失敗: {e}")
         return None
@@ -188,6 +246,34 @@ class FileProcessor:
         except Exception as e:
             logger.error(f"PDF 文字提取錯誤: {e}")
         return text
+
+    def _ocr_pdf_sample(self, file_path, max_pages=3):
+        collected_text = []
+        errors = []
+        try:
+            images = convert_from_path(file_path, first_page=1, last_page=max_pages)
+            for image in images:
+                try:
+                    text = pytesseract.image_to_string(image, lang='chi_tra+eng').strip()
+                    if text:
+                        collected_text.append(text)
+                except Exception as e:
+                    errors.append(str(e))
+            if collected_text:
+                return "\n".join(collected_text).strip(), None
+        except Exception as e:
+            errors.append(str(e))
+
+        if not errors:
+            return "", None
+
+        err_msg = errors[0]
+        logger.error(f"PDF OCR 失敗: {err_msg}")
+        if "tesseract is not installed" in err_msg.lower():
+            return "", "系統未安裝 Tesseract OCR 引擎"
+        if "chi_tra" in err_msg.lower():
+            return "", "系統缺少繁體中文 OCR 語言包 (chi_tra)"
+        return "", f"PDF OCR 錯誤: {err_msg[:50]}"
 
     def get_llm_summary(self, text, file_type):
         if not self.client or not text.strip():
@@ -252,3 +338,20 @@ class FileProcessor:
         if not results: results[default_tag] = 1.0
         main_topic = max(results, key=results.get)
         return main_topic, results
+
+    def sync_manual_topic(self, main_topic, tag_scores, file_type):
+        normalized_scores = dict(tag_scores or {})
+        if not main_topic:
+            return normalized_scores
+
+        allowed_topics = DOCUMENT_TAGS if file_type == 'document' else PHOTO_TAGS
+        if main_topic not in allowed_topics:
+            return normalized_scores
+
+        if not normalized_scores:
+            normalized_scores[main_topic] = 1.0
+            return normalized_scores
+
+        current_max = max(normalized_scores.values(), default=0.0)
+        normalized_scores[main_topic] = max(normalized_scores.get(main_topic, 0.0), current_max, 1.0)
+        return normalized_scores

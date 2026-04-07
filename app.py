@@ -4,8 +4,9 @@ import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
-from storage import StorageManager
+from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, FileUtils
+from logging_config import setup_logging
+from storage import StorageManager, SearchContentError
 
 # ========== 路徑配置 (集中管理) ==========
 PROJECT_ROOT = Path(__file__).parent
@@ -14,7 +15,7 @@ REPO_ROOT = PROJECT_ROOT / "repo"
 DB_PATH = PROJECT_ROOT / "smart_organizer.db"
 
 # 設定 Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # 初始化
@@ -102,8 +103,7 @@ with tab1:
                     metadata = processor.extract_metadata(temp_file_path)
                     main_topic, tag_scores = processor.classify_multi_tag(metadata, uploaded_file.name)
                     
-                    if metadata['standard_date'] is None:
-                        metadata['standard_date'] = 'UnknownDate'
+                    metadata['standard_date'] = FileUtils.normalize_standard_date(metadata['standard_date'])
                     
                     analysis_results.append({
                         'file_id': file_id,
@@ -157,7 +157,7 @@ with tab2:
                         try:
                             from PIL import Image
                             img = Image.open(result['preview_path'])
-                            st.image(img, use_column_width=True)
+                            st.image(img, use_container_width=True)
                         except Exception as e:
                             st.warning(f"預覽失敗: {e}")
                     else:
@@ -170,7 +170,7 @@ with tab2:
                     st.write(f"**日期**: {result['standard_date']}")
                     
                     if result['is_scanned']:
-                        st.warning("⚠️ 掃描 PDF - 已執行第一頁 OCR，可進行搜尋與分類")
+                        st.warning("⚠️ 掃描 PDF - 已執行前 1 到 3 頁 OCR 抽樣，可進行搜尋與分類")
                         if result['metadata'].get('ocr_error'):
                             st.error(f"❌ OCR 提示: {result['metadata']['ocr_error']}")
                     
@@ -186,6 +186,11 @@ with tab2:
                         key=f"topic_{idx}"
                     )
                     result['main_topic'] = new_topic
+                    result['tag_scores'] = processor.sync_manual_topic(
+                        new_topic,
+                        result.get('tag_scores'),
+                        result['file_type']
+                    )
                     
                     if st.button(f"🤖 生成 AI 摘要", key=f"summary_{idx}"):
                         with st.spinner("正在生成摘要..."):
@@ -226,11 +231,10 @@ with tab3:
                         'main_topic': result['main_topic'],
                         'summary': result.get('summary', ''),
                         'content': result['metadata'].get('extracted_text', ''),
-                        'is_scanned': result.get('is_scanned', False)
+                        'is_scanned': result.get('is_scanned', False),
+                        'preview_path': result.get('preview_path'),
+                        'tag_scores': result.get('tag_scores', {})
                     })
-                    
-                    # 添加標籤
-                    storage.add_tags_to_file(result['file_id'], result['tag_scores'])
                     
                     # 執行最終整理
                     final_path = storage.finalize_organization(
@@ -298,6 +302,9 @@ with tab4:
                                     )
                 else:
                     st.info("🔍 找不到相關檔案，請嘗試其他關鍵字")
+            except SearchContentError as e:
+                logger.error(f"搜尋失敗: {e}")
+                st.error(f"❌ 搜尋失敗: {e}")
             except Exception as e:
                 logger.error(f"搜尋失敗: {e}")
                 st.error(f"❌ 搜尋失敗: {e}")

@@ -4,15 +4,17 @@ import shutil
 import logging
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 from core import FileUtils
 
-# 設定 Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 7  # 再次升級版本以引入 moving_target_path 欄位
+CURRENT_SCHEMA_VERSION = 8
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+class SearchContentError(RuntimeError):
+    pass
 
 class StorageManager:
     def __init__(self, db_path, repo_root, upload_dir):
@@ -52,6 +54,7 @@ class StorageManager:
                     original_name TEXT,
                     temp_path TEXT,
                     final_path TEXT,
+                    preview_path TEXT,
                     moving_target_path TEXT,
                     file_hash TEXT UNIQUE,
                     file_type TEXT,
@@ -105,7 +108,7 @@ class StorageManager:
                 cursor.execute("PRAGMA table_info(files)")
                 columns = [col[1] for col in cursor.fetchall()]
                 new_cols = [
-                    ('temp_path', 'TEXT'), ('final_path', 'TEXT'), ('moving_target_path', 'TEXT'),
+                    ('temp_path', 'TEXT'), ('final_path', 'TEXT'), ('preview_path', 'TEXT'), ('moving_target_path', 'TEXT'),
                     ('file_type', 'TEXT'), ('standard_date', 'TEXT'), ('main_topic', 'TEXT'), 
                     ('summary', 'TEXT'), ('is_scanned', 'INTEGER DEFAULT 0'), ('status', "TEXT DEFAULT 'PENDING'")
                 ]
@@ -160,12 +163,74 @@ class StorageManager:
         finally:
             if conn: conn.close()
 
+    def _normalize_uploaded_bytes(self, file_content):
+        if isinstance(file_content, memoryview):
+            return file_content.tobytes()
+        if isinstance(file_content, bytearray):
+            return bytes(file_content)
+        if isinstance(file_content, bytes):
+            return file_content
+        return bytes(file_content)
+
+    def _detect_extension(self, filename):
+        return Path(filename or "").suffix.lower()
+
+    def _validate_upload(self, uploaded_file_name, file_content):
+        safe_name = FileUtils.sanitize_filename(Path(uploaded_file_name or "").name)
+        ext = self._detect_extension(safe_name)
+        payload = self._normalize_uploaded_bytes(file_content)
+
+        if not safe_name.strip():
+            raise ValueError("檔名不可為空")
+        if ext not in FileUtils.ALLOWED_UPLOAD_EXTENSIONS:
+            raise ValueError(f"不支援的檔案格式: {ext or 'unknown'}")
+        if not payload:
+            raise ValueError("檔案不可為空")
+        if len(payload) > MAX_UPLOAD_BYTES:
+            raise ValueError(f"檔案大小超過上限 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+
+        if ext == ".pdf" and not payload.startswith(b"%PDF-"):
+            raise ValueError("PDF 檔案簽章不正確")
+        if ext == ".png" and not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("PNG 檔案簽章不正確")
+        if ext in {".jpg", ".jpeg"} and not payload.startswith(b"\xff\xd8\xff"):
+            raise ValueError("JPEG 檔案簽章不正確")
+
+        return safe_name, payload
+
+    def _merge_main_topic_into_tags(self, main_topic, tags_with_confidence):
+        merged = {}
+        for tag_name, confidence in (tags_with_confidence or {}).items():
+            if tag_name:
+                try:
+                    merged[tag_name] = float(confidence)
+                except (TypeError, ValueError):
+                    merged[tag_name] = 0.0
+
+        if main_topic:
+            current_max = max(merged.values(), default=0.0)
+            merged[main_topic] = max(merged.get(main_topic, 0.0), current_max, 1.0)
+
+        return merged
+
+    def _replace_file_tags(self, cursor, file_id, tags_with_confidence):
+        cursor.execute('DELETE FROM file_tags WHERE file_id = ?', (file_id,))
+        for tag_name, confidence in tags_with_confidence.items():
+            cursor.execute('INSERT OR IGNORE INTO tags (tag_name) VALUES (?)', (tag_name,))
+            cursor.execute('SELECT tag_id FROM tags WHERE tag_name = ?', (tag_name,))
+            tag_id = cursor.fetchone()[0]
+            cursor.execute(
+                'INSERT INTO file_tags (file_id, tag_id, confidence) VALUES (?, ?, ?)',
+                (file_id, tag_id, confidence)
+            )
+
     def create_temp_file(self, uploaded_file_name, file_content, file_hash, file_type):
         """【v2.7.2 鋼鐵加固】先查後寫 + BEGIN IMMEDIATE 交易，徹底消除 Race Condition"""
         temp_path = None
         part_path = None
         conn = None
         try:
+            safe_name, payload = self._validate_upload(uploaded_file_name, file_content)
             # 1. 先檢查 Hash 是否已存在 (快速路徑)
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -179,7 +244,6 @@ class StorageManager:
                 }
 
             # 2. 準備寫入檔案
-            safe_name = FileUtils.sanitize_filename(uploaded_file_name)
             unique_temp_name = f"{file_hash[:8]}_{safe_name}"
             temp_path = self.upload_dir / unique_temp_name
             part_path = self.upload_dir / f"{unique_temp_name}.{uuid.uuid4().hex}.part"
@@ -187,7 +251,7 @@ class StorageManager:
             # 3. 寫入 .part 檔並原子替換
             if not temp_path.exists():
                 with open(part_path, "wb") as f:
-                    f.write(file_content)
+                    f.write(payload)
                 os.replace(part_path, temp_path)
             
             # 4. 使用 BEGIN IMMEDIATE 確保交易原子性
@@ -276,12 +340,22 @@ class StorageManager:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
+            normalized_date = FileUtils.normalize_standard_date(metadata.get('standard_date'))
+            main_topic = metadata.get('main_topic', '')
+            preview_path = metadata.get('preview_path')
+            tag_scores = self._merge_main_topic_into_tags(main_topic, metadata.get('tag_scores'))
             cursor.execute('''
                 UPDATE files 
-                SET standard_date = ?, main_topic = ?, summary = ?, is_scanned = ?, status = 'PROCESSED'
+                SET standard_date = ?, main_topic = ?, summary = ?, preview_path = ?, is_scanned = ?, status = 'PROCESSED'
                 WHERE file_id = ?
-            ''', (metadata['standard_date'], metadata['main_topic'], metadata.get('summary', ''), 
-                  1 if metadata.get('is_scanned') else 0, file_id))
+            ''', (
+                normalized_date,
+                main_topic,
+                metadata.get('summary', ''),
+                preview_path,
+                1 if metadata.get('is_scanned') else 0,
+                file_id
+            ))
             
             cursor.execute("SELECT content FROM file_content_fts WHERE rowid = ?", (file_id,))
             fts_row = cursor.fetchone()
@@ -292,13 +366,15 @@ class StorageManager:
             original_name = file_row[0] if file_row else ""
 
             content = metadata.get('content', '') or old_content
-            title = metadata.get('main_topic', '')
+            title = main_topic
             summary = metadata.get('summary', '')
 
             cursor.execute('''
                 INSERT OR REPLACE INTO file_content_fts (rowid, original_filename, title, summary, content)
                 VALUES (?, ?, ?, ?, ?)
             ''', (file_id, original_name, title, summary, content))
+            if tag_scores:
+                self._replace_file_tags(cursor, file_id, tag_scores)
             conn.commit()
         except Exception as e:
             logger.error(f"更新中繼資料失敗: {e}")
@@ -306,20 +382,17 @@ class StorageManager:
         finally:
             if conn: conn.close()
 
-    def add_tags_to_file(self, file_id, tags_with_confidence):
+    def add_tags_to_file(self, file_id, tags_with_confidence, main_topic=None):
         conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            for tag_name, confidence in tags_with_confidence.items():
-                cursor.execute('INSERT OR IGNORE INTO tags (tag_name) VALUES (?)', (tag_name,))
-                cursor.execute('SELECT tag_id FROM tags WHERE tag_name = ?', (tag_name,))
-                tag_id = cursor.fetchone()[0]
-                cursor.execute('INSERT OR REPLACE INTO file_tags (file_id, tag_id, confidence) VALUES (?, ?, ?)', 
-                               (file_id, tag_id, confidence))
+            merged_tags = self._merge_main_topic_into_tags(main_topic, tags_with_confidence)
+            self._replace_file_tags(cursor, file_id, merged_tags)
             conn.commit()
         except Exception as e:
             logger.error(f"添加標籤失敗: {e}")
+            raise
         finally:
             if conn: conn.close()
 
@@ -387,16 +460,12 @@ class StorageManager:
             file_info = self.get_file_by_id(file_id)
 
             # 3. 計算目標路徑
-            if not standard_date or standard_date == "UnknownDate":
-                year, month = "UnknownYear", "UnknownMonth"
-            else:
-                year = standard_date.split('-')[0] if '-' in standard_date else "UnknownYear"
-                month = standard_date[:7] if len(standard_date) >= 7 else "UnknownMonth"
+            normalized_date, year, month = FileUtils.get_date_directory_parts(standard_date)
             
             target_dir = self.repo_root / year / month
             target_dir.mkdir(parents=True, exist_ok=True)
             
-            base_filename = FileUtils.sanitize_filename(f"{standard_date}_{main_topic}_{original_name}")
+            base_filename = FileUtils.sanitize_filename(f"{normalized_date}_{main_topic}_{original_name}")
             target_path = str(FileUtils.get_unique_path(target_dir / base_filename))
 
             if not file_info['temp_path'] or not os.path.exists(file_info['temp_path']):
@@ -458,7 +527,7 @@ class StorageManager:
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"全文檢索失敗: {e}")
-            return []
+            raise SearchContentError(f"全文搜尋失敗，請檢查資料庫或 FTS 索引狀態: {e}") from e
         finally:
             if conn: conn.close()
 
@@ -483,6 +552,24 @@ class StorageManager:
             return []
         finally:
             if conn: conn.close()
+
+    def _is_preview_referenced(self, preview_path, valid_preview_paths, valid_temp_names, valid_hash_prefixes):
+        if preview_path in valid_preview_paths:
+            return True
+
+        preview_name = Path(preview_path).name
+        source_name = preview_name[len("preview_"):] if preview_name.startswith("preview_") else preview_name
+        source_basename = Path(source_name).stem
+
+        if source_basename in valid_temp_names:
+            return True
+
+        hash_prefix = source_basename.split("_", 1)[0].lower()
+        if len(hash_prefix) == 8 and hash_prefix in valid_hash_prefixes:
+            return True
+
+        return False
+
     def cleanup_orphaned_uploads(self, preview_ttl_days=7):
         """【v2.7.2 強化】收窄安全邊界，僅清理符合命名規則的暫存檔"""
         import re
@@ -490,10 +577,23 @@ class StorageManager:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('SELECT temp_path FROM files WHERE temp_path IS NOT NULL')
-            valid_temp_paths = set(row[0] for row in cursor.fetchall())
-            # 【v2.7 修正】改用精確檔名比對
-            valid_temp_names = {Path(v).name for v in valid_temp_paths}
+            cursor.execute('''
+                SELECT temp_path, final_path, preview_path, file_hash
+                FROM files
+                WHERE temp_path IS NOT NULL OR final_path IS NOT NULL OR preview_path IS NOT NULL
+            ''')
+            valid_temp_paths = set()
+            valid_temp_names = set()
+            valid_preview_paths = set()
+            valid_hash_prefixes = set()
+            for temp_path, final_path, preview_path, file_hash in cursor.fetchall():
+                if temp_path:
+                    valid_temp_paths.add(temp_path)
+                    valid_temp_names.add(Path(temp_path).name)
+                if preview_path:
+                    valid_preview_paths.add(preview_path)
+                if file_hash:
+                    valid_hash_prefixes.add(file_hash[:8].lower())
         except Exception as e:
             logger.error(f"清理暫存檔失敗(讀 DB): {e}")
             return
@@ -527,21 +627,22 @@ class StorageManager:
             for pattern in ("*.png", "*.jpg", "*.jpeg"):
                 for p in preview_dir.glob(pattern):
                     p_str = str(p)
-                    # 【v2.7 修正】精確還原暫存檔名，避免 replace 誤傷檔名中的副檔名字串
-                    name = p.name
-                    if name.startswith("preview_"):
-                        name = name[len("preview_"):]
-                    temp_basename = Path(name).stem
-                    
                     try:
                         too_old = (now - p.stat().st_mtime) > ttl_sec
-                    except:
+                    except OSError:
                         too_old = True
                     
-                    # 【v2.7 修正】精確比對檔名
-                    is_orphan = temp_basename not in valid_temp_names
+                    # 以資料庫中仍然存在的有效檔案紀錄作為準則，優先比對持久化 preview_path，
+                    # 其次回退到 temp basename 與 file_hash 前綴，避免 finalized 後 preview 被誤刪。
+                    is_referenced = self._is_preview_referenced(
+                        p_str,
+                        valid_preview_paths,
+                        valid_temp_names,
+                        valid_hash_prefixes
+                    )
+                    is_orphan = not is_referenced
                     
-                    if too_old or is_orphan:
+                    if too_old and is_orphan:
                         try:
                             p.unlink()
                             logger.info(f"已清理孤立預覽圖: {p_str}")
