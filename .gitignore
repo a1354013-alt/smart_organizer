@@ -28,6 +28,7 @@ dist/
 build/
 release/
 release_test/
+release_tmp/
 
 Thumbs.db
 .DS_Store

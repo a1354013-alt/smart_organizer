@@ -92,6 +92,13 @@ class StorageManager:
             return
         shutil.move(src, dst)
 
+    def _copy_path(self, src, dst):
+        """統一複製檔案：支援實體路徑與 mem:// 路徑。"""
+        if self._mem_files is not None and self._is_mem_path(src) and self._is_mem_path(dst):
+            self._mem_files[dst] = bytes(self._mem_files.get(src, b""))
+            return
+        shutil.copy2(src, dst)
+
     def _remove_path(self, path_value):
         """統一刪除檔案：支援實體路徑與 mem:// 路徑。"""
         if not path_value:
@@ -106,6 +113,32 @@ class StorageManager:
             os.remove(path_value)
         except FileNotFoundError:
             return
+
+    def _merge_last_error(self, existing, addition, max_len=400):
+        """合併 last_error 訊息：保留既有診斷，不重複灌水，並限制長度。"""
+        addition = (addition or "").strip()
+        if not addition:
+            return (existing or "").strip()[:max_len] or None
+
+        existing_str = (existing or "").strip()
+        if not existing_str:
+            merged = addition
+        else:
+            if addition in existing_str:
+                merged = existing_str
+            else:
+                merged = f"{existing_str} | {addition}"
+
+        if len(merged) > max_len:
+            merged = merged[:max_len] + "..."
+        return merged
+
+    def _recovery_diag(self, summary):
+        """統一 Recovery 類診斷訊息格式（對使用者可見，避免 traceback 細節）。"""
+        summary = (summary or "").strip()
+        if not summary:
+            return None
+        return f"Recovery: {summary}"
 
     def _init_db(self):
         conn = None
@@ -532,6 +565,7 @@ class StorageManager:
         temp_path = file_info.get("temp_path")
         temp_exists = temp_path and self._path_exists(temp_path)
         target_exists = self._path_exists(moving_target)
+        existing_last_error = file_info.get("last_error")
         
         conn = None
         try:
@@ -546,18 +580,43 @@ class StorageManager:
                 return moving_target
             elif temp_exists:
                 if target_exists:
-                    logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，回退至 PROCESSED 供重新檢查")
+                    logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，嘗試清理目標殘留後回退至 PROCESSED 供重新檢查")
+                    # 第二層防護：若目標殘留仍存在，優先清理目標，保留 temp 作為可重試來源
+                    cleanup_failed = False
+                    try:
+                        self._remove_path(moving_target)
+                        logger.warning(f"Recovery 已清理目標殘留 (ID: {file_id}): {moving_target}")
+                    except Exception:
+                        cleanup_failed = True
+                        logger.warning(f"Recovery 清理目標殘留失敗 (ID: {file_id}): {moving_target}", exc_info=True)
                 else:
                     logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
-                
+                 
                 conn = self._get_connection()
-                conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                # 可觀測性：若 recovery 清理目標殘留失敗，寫入簡潔摘要到 last_error（不塞 traceback）
+                if target_exists and cleanup_failed:
+                    diag = self._recovery_diag(f"目標殘留清理失敗（請人工處理）：{Path(moving_target).name}")
+                    merged = self._merge_last_error(existing_last_error, diag)
+                    conn.execute(
+                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                        (merged, file_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?",
+                        (file_id,),
+                    )
                 conn.commit()
             else:
                 # 【v2.7.4 強化】雙失蹤處理：來源與目標皆不存在，強制回退狀態避免卡死
                 logger.warning(f"偵測到嚴重異常: 來源與目標皆不存在 (ID: {file_id})，強制回退狀態")
                 conn = self._get_connection()
-                conn.execute("UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?", (file_id,))
+                diag = self._recovery_diag("來源與目標皆不存在（可能檔案遺失或被移除），已回退 PROCESSED 供重試/修復")
+                merged = self._merge_last_error(existing_last_error, diag)
+                conn.execute(
+                    "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                    (merged, file_id),
+                )
                 conn.commit()
             return None
         except Exception as e:
@@ -633,10 +692,31 @@ class StorageManager:
                     self._move_path(temp_path, target_path)
                 except PermissionError as move_err:
                     # 受限環境可能禁止 rename/move；降級為 copy + (盡力)刪除原檔
-                    logger.warning(f"搬移權限不足，改用 copy2: {move_err}")
-                    shutil.copy2(temp_path, target_path)
+                    # 注意：mem:// 與實體路徑都必須走 abstraction，避免混用 shutil/os API。
+                    logger.warning(f"搬移權限不足，改用 copy: {move_err}")
                     try:
-                        os.remove(temp_path)
+                        self._copy_path(temp_path, target_path)
+                    except Exception as copy_err:
+                        # partial copy failure 保護：若 target 已寫出一部分，避免留下髒 target 造成後續 recovery/重試混亂
+                        logger.error("copy fallback 失敗", exc_info=True)
+                        if self._path_exists(target_path):
+                            try:
+                                self._remove_path(target_path)
+                                logger.warning(f"已清理 partial target: {target_path}")
+                            except Exception:
+                                logger.warning("清理 partial target 失敗（忽略）", exc_info=True)
+
+                        msg = str(copy_err)
+                        if len(msg) > 400:
+                            msg = msg[:400] + "..."
+                        conn.execute(
+                            "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                            (msg, file_id),
+                        )
+                        conn.commit()
+                        raise copy_err
+                    try:
+                        self._remove_path(temp_path)
                     except Exception:
                         pass
                 except Exception as move_err:

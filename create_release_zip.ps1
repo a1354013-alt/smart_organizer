@@ -10,7 +10,8 @@ $projectName = Split-Path -Leaf $projectRoot
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 if ([string]::IsNullOrWhiteSpace($ZipName)) {
-    $ZipName = "$projectName-release-$timestamp.zip"
+    # 正式交付為 runtime/demo package（不含 tests），避免把 workspace 快照誤當 release
+    $ZipName = "$projectName-runtime-demo-$timestamp.zip"
 }
 
 $outputRoot = Join-Path $projectRoot $OutputDir
@@ -42,30 +43,16 @@ function Copy-IncludePath {
         return
     }
 
-    if ((Get-Item -LiteralPath $src).PSIsContainer) {
-        # tests/：只拷貝檔案，排除 tests/_tmp、__pycache__、*.pyc 等臨時輸出
-        Get-ChildItem -LiteralPath $src -Recurse -Force -File | ForEach-Object {
-            $rel = $_.FullName.Substring($src.Length).TrimStart('\')
-            $relNorm = $rel -replace '/', '\'
-            # 排除 tests/_tmp、tests/_tmp_write_test 等所有以 `_tmp` 開頭的測試暫存資料夾
-            if ($relNorm -match '(^|\\)_tmp[^\\]*(\\|$)') { return }
-            if ($relNorm -match '(^|\\)__pycache__(\\|$)') { return }
-            if ($_.Name -like '*.pyc' -or $_.Name -like '*.pyo') { return }
-
-            $target = Join-Path $dst $rel
-            $targetDir = Split-Path -Parent $target
-            if (-not (Test-Path $targetDir)) {
-                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-            }
-            Copy-Item -LiteralPath $_.FullName -Destination $target -Force
-        }
-    } else {
-        $targetDir = Split-Path -Parent $dst
-        if (-not (Test-Path $targetDir)) {
-            New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-        }
-        Copy-Item -LiteralPath $src -Destination $dst -Force
+    $item = Get-Item -LiteralPath $src
+    if ($item.PSIsContainer) {
+        throw "Official runtime/demo release must not include directories. Refusing to package folder: $RelativePath"
     }
+
+    $targetDir = Split-Path -Parent $dst
+    if (-not (Test-Path $targetDir)) {
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    }
+    Copy-Item -LiteralPath $src -Destination $dst -Force
 }
 
 foreach ($p in $includePaths) {

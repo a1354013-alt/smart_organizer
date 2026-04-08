@@ -39,6 +39,8 @@ brew install poppler tesseract tesseract-lang
 pip install -r requirements.txt
 ```
 
+> 重要：`streamlit` 是 **App 啟動必要依賴**。若缺少 `streamlit`，App 無法啟動；但 OCR/PDF 預覽等「附加功能」可在缺少系統依賴時自動降級跳過。
+
 ### 3. （可選）開發與測試依賴
 ```bash
 pip install -r requirements-dev.txt
@@ -49,6 +51,13 @@ pytest -q
 ## 📦 Release 交付包（正式包不附 tests）
 - 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
 - 若需要驗證測試，請使用 source repo 執行 `pytest -q`。
+- 請勿直接把整個工作目錄壓縮上傳（workspace 快照可能包含 `.git/`、`__pycache__/`、`.db`、暫存檔等殘留）。正式交付以 release zip 為準。
+ - 正式 release zip 是 **runtime/demo package**，不是 source-development package。
+
+## 🧯 整理失敗與重試（last_error）
+- 若「執行整理」失敗，系統會把錯誤摘要寫入資料庫欄位 `last_error`，並在「查看紀錄」表格中顯示，方便診斷。
+- 多數情況可直接重試：修正檔案權限/路徑、補齊系統依賴（如 poppler/tesseract）後再執行整理。
+- 若檔案已遺失（暫存檔不存在），需要重新上傳或先用「重新整理檔案位置」檢查紀錄。
 
 ## 🔎 全文檢索（重要規格）
 - `search_content()` 會先將輸入做 FTS 安全轉義；若轉義後變成空字串（例如只輸入括號、引號等特殊符號），會直接回傳空結果 `[]`（不走 metadata fallback），以避免 SQLite FTS5 例外並維持行為可預期。

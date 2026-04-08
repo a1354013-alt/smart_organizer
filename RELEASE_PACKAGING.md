@@ -18,6 +18,13 @@ The release zip is created from an **allowlist** (not a blocklist). Only these p
 - `requirements.txt`
 
 This is an **official runtime/demo package** and intentionally **does not include tests**.
+It also intentionally excludes workspace artifacts such as `.git/`, `__pycache__/`, `*.pyc`, `*.db`, `release/`, `.pytest_cache/`, temp folders, etc.
+
+This zip is a **runtime/demo package**, not a source-development package.
+
+By default, the zip file name includes `runtime-demo` to reduce the chance that a workspace snapshot is mistaken for the official release.
+
+The script also refuses to package folders (directories) to avoid accidentally including `tests/` or other workspace trees.
 
 After unpacking, install and run:
 
