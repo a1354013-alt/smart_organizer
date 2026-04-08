@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 *.sqlite
 *.db
+*.db-*
+*.sqlite-*
 *.log
 *.zip
 
@@ -9,17 +11,27 @@ uploads/
 repo/
 test_uploads/
 test_repo/
+test_files/
 repo_v1/
 smart_org_regression_*/
 tests/_tmp/
+tests/_tmp_write_test/
+tests/tmpdel_*/
 frontend/node_modules/
 
 .pytest_cache/
+.pytest_tmp/
+pytest-cache-files-*/
 .mypy_cache/
 .coverage
 dist/
 build/
 release/
+release_test/
 
 Thumbs.db
 .DS_Store
+
+# local sandbox artifacts
+del_file_test.txt
+tmp_del/

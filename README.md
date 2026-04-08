@@ -6,13 +6,17 @@
 - **智慧分類**：系統主要透過**規則引擎**進行主題分類（發票、合約、截圖等），並可選擇使用 **LLM 生成文件摘要與輔助標籤**。
 - **視覺化預覽**：支援照片縮圖與 PDF 第一頁自動轉圖預覽。
 - **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
-- **掃描檔補強**：自動偵測掃描 PDF 並執行第一頁 OCR，確保可搜尋性。
+- **掃描檔補強**：自動偵測掃描 PDF 並進行「抽樣頁數」OCR（預設最多 3 頁，可用 `PDF_OCR_MAX_PAGES` 調整），提升可搜尋性。
 - **架構加固**：路徑操作完全封裝於 Storage 層，資料庫驅動的檔案生命週期管理。
 
 ## 🛠️ 安裝說明
 
 ### 1. 系統級依賴 (OS Dependencies)
 本專案需要以下系統工具支援 PDF 處理與 OCR：
+
+> 重要：本專案已做「缺少依賴時的功能降級」：
+> - 缺少 poppler（`pdftoppm`/`pdftocairo`）時：PDF 預覽會跳過，但其餘流程仍可運作。
+> - 缺少 tesseract 或語言包時：OCR 會停用/跳過，仍可整理與搜尋（若 PDF 本身可抽到文字）。
 
 **Ubuntu/Debian:**
 ```bash
@@ -25,17 +29,49 @@ sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra
 brew install poppler tesseract tesseract-lang
 ```
 
+**Windows:**
+- 安裝 Poppler（提供 `pdftoppm`）：確保 `pdftoppm.exe` 在 PATH 內，或設定環境變數 `POPPLER_PATH` 指向 Poppler 的 `bin` 目錄。
+- 安裝 Tesseract（提供 `tesseract.exe`）：確保 `tesseract.exe` 在 PATH 內，並安裝繁中語言包（常見名稱 `chi_tra`）。
+
 ### 2. Python 環境設定
 建議使用虛擬環境：
 ```bash
 pip install -r requirements.txt
 ```
 
+### 3. （可選）開發與測試依賴
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+> 提示：本專案已在 `tests/conftest.py` 補上測試路徑處理，直接在專案根目錄執行 `pytest -q` 不需要額外設定 `PYTHONPATH`。
+
+## 📦 Release 交付包（正式包不附 tests）
+- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
+- 若需要驗證測試，請使用 source repo 執行 `pytest -q`。
+
+## 🔎 全文檢索（重要規格）
+- `search_content()` 會先將輸入做 FTS 安全轉義；若轉義後變成空字串（例如只輸入括號、引號等特殊符號），會直接回傳空結果 `[]`（不走 metadata fallback），以避免 SQLite FTS5 例外並維持行為可預期。
+
 ## 🚀 執行方式
 在專案根目錄執行：
 ```bash
 streamlit run app.py
 ```
+
+## 🔐 AI 摘要（安全開關）
+- UI 預設 **不啟用** AI 摘要（不送出任何內容）。
+- 需要時請在側邊欄手動開啟「啟用 AI 摘要」，並在環境中設定 `OPENAI_API_KEY`。
+
+## ⚙️ 重要環境變數
+- `OPENAI_API_KEY`: 啟用 AI 摘要所需
+- `OPENAI_MODEL`: 預設 `gpt-4.1-mini`
+- `OPENAI_TIMEOUT_SECONDS`: 預設 30
+- `OPENAI_MAX_CHARS`: 送出摘要的文字最大字元數（預設 6000，會自動截斷）
+- `POPPLER_PATH`: （Windows 常用）Poppler `bin` 路徑
+- `PDF_TEXT_MAX_PAGES`: PDF 文字抽取頁數上限（預設 10）
+- `PDF_OCR_MAX_PAGES`: PDF OCR 抽樣頁數上限（預設 3，上限 5）
+- `MAX_HEAVY_PROCESS_MB`: OCR/預覽等「耗時處理」的檔案大小上限（預設 15MB，避免卡死 UI）
 
 ## 📂 專案結構
 - `app.py`: Streamlit UI 介面，負責流程調度。

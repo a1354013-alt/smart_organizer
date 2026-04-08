@@ -8,22 +8,27 @@ Use the PowerShell packaging script instead:
 .\create_release_zip.ps1
 ```
 
-The generated release zip excludes:
+The release zip is created from an **allowlist** (not a blocklist). Only these paths are included:
 
-- `.git/`
-- `__pycache__/`, `*.pyc`, `*.pyo`
-- `uploads/`, `repo/`, `repo_v1/`
-- `test_uploads/`, `test_repo/`, `tests/_tmp/`
-- `frontend/node_modules/` and other `node_modules/`
-- `*.db`, `*.sqlite`, `*.log`, previous `release/*.zip`
-- local regression folders such as `smart_org_regression_*/`
+- `app.py`
+- `core.py`
+- `storage.py`
+- `logging_config.py`
+- `README.md`
+- `requirements.txt`
 
-If a frontend exists, the delivery package should keep dependency manifests such as `package.json` and `package-lock.json`, but should not include `node_modules/`.
+This is an **official runtime/demo package** and intentionally **does not include tests**.
 
-After unpacking, install and verify dependencies again:
+After unpacking, install and run:
 
 ```bash
-npm install
-npm run build
-npm test
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+To run tests, use the source repo (not the release zip):
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
 ```
