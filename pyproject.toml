@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+  ".git",
+  ".pytest_cache",
+  "__pycache__",
+  "release",
+  "release_test",
+  "release_tmp",
+]
+
+[tool.ruff.lint]
+# Minimal, stable checks (avoid style bikeshedding; focus on real bugs).
+select = ["F", "E9"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = false
+

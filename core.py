@@ -5,6 +5,7 @@ import hashlib
 import logging
 import shutil
 from pathlib import Path
+from contracts import ExtractedMetadata
 
 try:
     from PIL import Image  # type: ignore
@@ -242,7 +243,7 @@ class FileProcessor:
             logger.error(f"計算 Hash 失敗: {e}")
             raise
 
-    def extract_metadata(self, file_path, options=None):
+    def extract_metadata(self, file_path, options=None) -> ExtractedMetadata:
         ext = os.path.splitext(file_path)[1].lower()
         opts = dict(options or {})
         enable_ocr = bool(opts.get("enable_ocr", True))
@@ -252,7 +253,7 @@ class FileProcessor:
         pdf_ocr_max_pages = int(opts.get("pdf_ocr_max_pages", self.pdf_ocr_max_pages))
         pdf_preview_max_pages = int(opts.get("pdf_preview_max_pages", self.pdf_preview_max_pages))
 
-        metadata = {
+        metadata: ExtractedMetadata = {
             "file_type": "unknown",
             "standard_date": FileUtils.DEFAULT_UNKNOWN_DATE,
             "extracted_text": "",

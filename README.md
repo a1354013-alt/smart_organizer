@@ -1,4 +1,4 @@
-# 📁 智慧檔案整理助理 (v2.7.4 Steel-Fortified Final Ultimate)
+# 📁 智慧檔案整理助理 (v2.8.1)
 
 這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF 與照片進行分類、命名與整理。
 
@@ -7,7 +7,9 @@
 - **視覺化預覽**：支援照片縮圖與 PDF 第一頁自動轉圖預覽。
 - **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
 - **掃描檔補強**：自動偵測掃描 PDF 並進行「抽樣頁數」OCR（預設最多 3 頁，可用 `PDF_OCR_MAX_PAGES` 調整），提升可搜尋性。
-- **架構加固**：路徑操作完全封裝於 Storage 層，資料庫驅動的檔案生命週期管理。
+- **可交付與可診斷**：路徑與狀態完全封裝於 Storage 層，並以 `last_error` 提供可重試與可追查的錯誤摘要。
+
+支援上傳格式：PDF、JPG/JPEG、PNG。
 
 ## 🛠️ 安裝說明
 
@@ -45,19 +47,23 @@ pip install -r requirements.txt
 ```bash
 pip install -r requirements-dev.txt
 pytest -q
+ruff check .
+mypy version.py contracts.py services.py
 ```
 > 提示：本專案已在 `tests/conftest.py` 補上測試路徑處理，直接在專案根目錄執行 `pytest -q` 不需要額外設定 `PYTHONPATH`。
 
 ## 📦 Release 交付包（正式包不附 tests）
 - 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
+- zip 檔名預設包含專案版本（來自 `version.py`）與 `runtime-demo`，避免 workspace 快照被誤認為正式交付包。
 - 若需要驗證測試，請使用 source repo 執行 `pytest -q`。
 - 請勿直接把整個工作目錄壓縮上傳（workspace 快照可能包含 `.git/`、`__pycache__/`、`.db`、暫存檔等殘留）。正式交付以 release zip 為準。
- - 正式 release zip 是 **runtime/demo package**，不是 source-development package。
+- 正式 release zip 是 **runtime/demo package**，不是 source-development package。
 
-## 🧯 整理失敗與重試（last_error）
+## 🧯 整理失敗與重試（last_error / decision history）
 - 若「執行整理」失敗，系統會把錯誤摘要寫入資料庫欄位 `last_error`，並在「查看紀錄」表格中顯示，方便診斷。
 - 多數情況可直接重試：修正檔案權限/路徑、補齊系統依賴（如 poppler/tesseract）後再執行整理。
 - 若檔案已遺失（暫存檔不存在），需要重新上傳或先用「重新整理檔案位置」檢查紀錄。
+- 人工覆寫主題時，會額外記錄 `decision_source / decision_updated_at / last_manual_topic / last_manual_reason`，重分類不會洗掉人工修正痕跡。
 
 ## 🔎 全文檢索（重要規格）
 - `search_content()` 會先將輸入做 FTS 安全轉義；若轉義後變成空字串（例如只輸入括號、引號等特殊符號），會直接回傳空結果 `[]`（不走 metadata fallback），以避免 SQLite FTS5 例外並維持行為可預期。
@@ -81,16 +87,28 @@ streamlit run app.py
 - `PDF_TEXT_MAX_PAGES`: PDF 文字抽取頁數上限（預設 10）
 - `PDF_OCR_MAX_PAGES`: PDF OCR 抽樣頁數上限（預設 3，上限 5）
 - `MAX_HEAVY_PROCESS_MB`: OCR/預覽等「耗時處理」的檔案大小上限（預設 15MB，避免卡死 UI）
+- `LOG_LEVEL`: logging 等級（預設 `INFO`）
+- `LOG_FILE`: 若設定，會額外輸出檔案 log，方便交付後追查單檔生命週期問題
 
 ## 📂 專案結構
-- `app.py`: Streamlit UI 介面，負責流程調度。
-- `core.py`: 核心處理模組，包含 OCR、PDF 處理與 AI 邏輯。
-- `storage.py`: 資料庫與檔案管理層，負責路徑封裝與 FTS5 搜尋。
+- `app.py`: Streamlit UI 介面（薄層），負責互動與呼叫 usecase/service。
+- `services.py`: 可測試的流程函式（分析/整理/重新分類/手動覆寫決策）與資料契約收斂。
+- `core.py`: 核心處理模組，包含 OCR、PDF 處理與 AI 邏輯（AI 為 opt-in）。
+- `storage.py`: 資料庫與檔案管理層，負責路徑封裝、狀態機與 FTS5 搜尋。
+- `version.py`: 版本單一來源（UI/README/release zip 命名由測試強制一致）。
+- `contracts.py`: 跨模組資料契約（TypedDict），避免 magic key 漂移。
+- `logging_config.py`: logging 設定（可用 `LOG_LEVEL` 調整）。
 - `uploads/`: 暫存上傳檔案。
 - `repo/`: 整理後的檔案儲存庫。
 - `smart_organizer.db`: SQLite 資料庫。
 
 ## 📜 更新日誌 (Changelog)
+
+### v2.8.0 - 2026-04-09
+- **UI 薄層化**：核心流程（分析/整理/重新分類/手動覆寫決策）移到 `services.py`，`app.py` 專注互動與顯示。
+- **資料契約收斂**：新增 `contracts.py`（`ExtractedMetadata` TypedDict），減少 magic key 與鬆散欄位傳遞。
+- **決策歷史可觀測**：新增 `decision_source / decision_updated_at / last_manual_topic / last_manual_reason`，重分類不會洗掉人工修正痕跡。
+- **工具鏈與 CI**：新增 ruff/mypy/pytest-cov 與 GitHub Actions 基本檢查，提升可重現與可維護性。
 
 ### v2.7.4 Steel-Fortified Final Ultimate - 2026-03-14
 - **狀態機收斂補強**：優化 `_recover_moving_file` 邏輯，加入「雙失蹤」異常處理，確保在極端情況下狀態能自動回退而不卡死。

@@ -9,9 +9,29 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectName = Split-Path -Leaf $projectRoot
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
+function Get-ProjectVersion {
+    $versionFile = Join-Path $projectRoot "version.py"
+    if (-not (Test-Path $versionFile)) {
+        return "unknown"
+    }
+    try {
+        $content = Get-Content -LiteralPath $versionFile -Raw
+        # Use single-quoted PowerShell string to avoid escaping issues.
+        # Match: __version__ = "2.7.5"  or  __version__='2.7.5'
+        $m = [regex]::Match($content, '__version__\s*=\s*["'']([^"''\r\n]+)["'']')
+        if ($m.Success) {
+            return $m.Groups[1].Value
+        }
+    } catch {
+        return "unknown"
+    }
+    return "unknown"
+}
+
 if ([string]::IsNullOrWhiteSpace($ZipName)) {
     # 正式交付為 runtime/demo package（不含 tests），避免把 workspace 快照誤當 release
-    $ZipName = "$projectName-runtime-demo-$timestamp.zip"
+    $version = Get-ProjectVersion
+    $ZipName = "$projectName-v$version-runtime-demo-$timestamp.zip"
 }
 
 $outputRoot = Join-Path $projectRoot $OutputDir
@@ -21,8 +41,11 @@ $zipPath = Join-Path $outputRoot $ZipName
 $includePaths = @(
     "app.py",
     "core.py",
+    "services.py",
     "storage.py",
     "logging_config.py",
+    "version.py",
+    "contracts.py",
     "README.md",
     "requirements.txt"
 )

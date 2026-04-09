@@ -9,7 +9,7 @@ from core import FileUtils
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
@@ -205,23 +205,25 @@ class StorageManager:
             row = cursor.fetchone()
             version = int(row[0]) if row else 1
             
+            # 補齊 files 表欄位（必做）：避免新 DB 已標記最新 schema_version 但欄位缺失造成 runtime 崩潰。
+            cursor.execute("PRAGMA table_info(files)")
+            columns = [col[1] for col in cursor.fetchall()]
+            new_cols = [
+                ('safe_name', 'TEXT'), ('final_name', 'TEXT'), ('classification_reason', 'TEXT'), ('final_decision_reason', 'TEXT'),
+                ('temp_path', 'TEXT'), ('final_path', 'TEXT'), ('preview_path', 'TEXT'), ('moving_target_path', 'TEXT'),
+                ('file_type', 'TEXT'), ('standard_date', 'TEXT'), ('main_topic', 'TEXT'),
+                ('summary', 'TEXT'), ('is_scanned', 'INTEGER DEFAULT 0'), ('status', "TEXT DEFAULT 'PENDING'"),
+                ('last_error', 'TEXT'), ('manual_override', 'INTEGER DEFAULT 0'),
+                ('decision_source', 'TEXT'), ('decision_updated_at', 'TEXT'),
+                ('last_manual_topic', 'TEXT'), ('last_manual_reason', 'TEXT'),
+            ]
+            for col_name, col_type in new_cols:
+                if col_name not in columns:
+                    cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
+
             if version < CURRENT_SCHEMA_VERSION:
                 logger.info(f"執行資料庫 Migration: V{version} -> V{CURRENT_SCHEMA_VERSION}")
-                
-                # 補齊 files 表欄位 (通用邏輯)
-                cursor.execute("PRAGMA table_info(files)")
-                columns = [col[1] for col in cursor.fetchall()]
-                new_cols = [
-                    ('safe_name', 'TEXT'), ('final_name', 'TEXT'), ('classification_reason', 'TEXT'), ('final_decision_reason', 'TEXT'),
-                    ('temp_path', 'TEXT'), ('final_path', 'TEXT'), ('preview_path', 'TEXT'), ('moving_target_path', 'TEXT'),
-                    ('file_type', 'TEXT'), ('standard_date', 'TEXT'), ('main_topic', 'TEXT'), 
-                    ('summary', 'TEXT'), ('is_scanned', 'INTEGER DEFAULT 0'), ('status', "TEXT DEFAULT 'PENDING'"),
-                    ('last_error', 'TEXT'), ('manual_override', 'INTEGER DEFAULT 0')
-                ]
-                for col_name, col_type in new_cols:
-                    if col_name not in columns:
-                        cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
-                
+
                 # V6/V7: 強化 FTS 欄位與 Cascade (如果之前沒做成功)
                 if version < 7:
                     try:
@@ -245,7 +247,7 @@ class StorageManager:
                         fts_cols = [c[1] for c in cursor.fetchall()]
                         if 'content' in fts_cols:
                             cursor.execute("INSERT OR REPLACE INTO fts_migration_backup(rowid, content) SELECT rowid, content FROM file_content_fts")
-                        
+
                         cursor.execute("DROP TABLE IF EXISTS file_content_fts")
                         cursor.execute('''
                             CREATE VIRTUAL TABLE file_content_fts USING fts5(
@@ -263,7 +265,8 @@ class StorageManager:
                         logger.warning(f"V7 Migration 部分失敗: {mig_err}")
 
                 cursor.execute('UPDATE sys_config SET value = ? WHERE key = "schema_version"', (str(CURRENT_SCHEMA_VERSION),))
-                conn.commit()
+
+            conn.commit()
         except Exception as e:
             logger.error(f"Migration 執行失敗: {e}")
         finally:
@@ -331,6 +334,25 @@ class StorageManager:
                 (file_id, tag_id, confidence)
             )
 
+    def path_exists(self, path):
+        """Public wrapper: check existence for both filesystem paths and mem:// paths."""
+        return self._path_exists(path)
+
+    def _infer_file_type(self, filename, provided=None):
+        """
+        Storage/domain must not blindly trust UI-provided file_type.
+        Infer from filename extension; fall back to provided only if safe.
+        """
+        name = str(filename or "")
+        ext = os.path.splitext(name)[1].lower()
+        if ext in {".jpg", ".jpeg", ".png"}:
+            return "photo"
+        if ext == ".pdf":
+            return "document"
+        if provided in {"photo", "document"}:
+            return str(provided)
+        return "document"
+
     def create_temp_file(self, uploaded_file_name, file_content, file_hash, file_type):
         """【v2.7.2 鋼鐵加固】先查後寫 + BEGIN IMMEDIATE 交易，徹底消除 Race Condition"""
         temp_path = None
@@ -338,6 +360,7 @@ class StorageManager:
         conn = None
         try:
             original_name, safe_name, payload = self._validate_upload(uploaded_file_name, file_content)
+            final_file_type = self._infer_file_type(original_name, file_type)
             # 1. 先檢查 Hash 是否已存在 (快速路徑)
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -417,7 +440,7 @@ class StorageManager:
                 cursor.execute('''
                     INSERT INTO files (original_name, safe_name, temp_path, file_hash, file_type, status)
                     VALUES (?, ?, ?, ?, ?, 'PENDING')
-                ''', (original_name, safe_name, str(temp_path), file_hash, file_type))
+                ''', (original_name, safe_name, str(temp_path), file_hash, final_file_type))
                 file_id = cursor.lastrowid
                 conn.commit()
                 return {"success": True, "file_id": file_id}
@@ -490,6 +513,15 @@ class StorageManager:
             tag_scores = self._merge_main_topic_into_tags(main_topic, metadata.get('tag_scores'))
             manual_override = metadata.get("manual_override")
             manual_override_val = None if manual_override is None else (1 if manual_override else 0)
+
+            # Decision history / observability (minimal, schema-added via migration)
+            decision_source = metadata.get("decision_source")
+            last_manual_topic = metadata.get("last_manual_topic")
+            last_manual_reason = metadata.get("last_manual_reason")
+            if manual_override_val == 1:
+                decision_source = decision_source or "MANUAL_OVERRIDE"
+                last_manual_topic = last_manual_topic or main_topic
+                last_manual_reason = last_manual_reason or metadata.get("final_decision_reason")
             cursor.execute('''
                 UPDATE files 
                 SET standard_date = ?,
@@ -499,6 +531,10 @@ class StorageManager:
                     classification_reason = COALESCE(?, classification_reason),
                     final_decision_reason = COALESCE(?, final_decision_reason),
                     manual_override = COALESCE(?, manual_override),
+                    decision_source = COALESCE(?, decision_source),
+                    decision_updated_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE decision_updated_at END,
+                    last_manual_topic = COALESCE(?, last_manual_topic),
+                    last_manual_reason = COALESCE(?, last_manual_reason),
                     is_scanned = ?,
                     status = CASE
                         WHEN status = 'COMPLETED' THEN 'COMPLETED'
@@ -513,6 +549,10 @@ class StorageManager:
                 metadata.get('classification_reason'),
                 metadata.get('final_decision_reason'),
                 manual_override_val,
+                decision_source,
+                decision_source,
+                last_manual_topic,
+                last_manual_reason,
                 1 if metadata.get('is_scanned') else 0,
                 file_id
             ))
@@ -537,7 +577,7 @@ class StorageManager:
                 self._replace_file_tags(cursor, file_id, tag_scores)
             conn.commit()
         except Exception as e:
-            logger.error(f"更新中繼資料失敗: {e}")
+            logger.error(f"更新中繼資料失敗 (file_id={file_id}): {e}")
             raise
         finally:
             if conn: conn.close()
@@ -570,7 +610,7 @@ class StorageManager:
         conn = None
         try:
             if target_exists and not temp_exists:
-                logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (ID: {file_id})")
+                logger.info(f"偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (file_id={file_id})")
                 conn = self._get_connection()
                 conn.execute('''
                     UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED' 
@@ -580,17 +620,17 @@ class StorageManager:
                 return moving_target
             elif temp_exists:
                 if target_exists:
-                    logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (ID: {file_id})，嘗試清理目標殘留後回退至 PROCESSED 供重新檢查")
+                    logger.warning(f"偵測到異常狀態: 來源與目標同時存在 (file_id={file_id})，嘗試清理目標殘留後回退至 PROCESSED 供重新檢查")
                     # 第二層防護：若目標殘留仍存在，優先清理目標，保留 temp 作為可重試來源
                     cleanup_failed = False
                     try:
                         self._remove_path(moving_target)
-                        logger.warning(f"Recovery 已清理目標殘留 (ID: {file_id}): {moving_target}")
+                        logger.warning(f"Recovery 已清理目標殘留 (file_id={file_id}): {moving_target}")
                     except Exception:
                         cleanup_failed = True
-                        logger.warning(f"Recovery 清理目標殘留失敗 (ID: {file_id}): {moving_target}", exc_info=True)
+                        logger.warning(f"Recovery 清理目標殘留失敗 (file_id={file_id}): {moving_target}", exc_info=True)
                 else:
-                    logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (ID: {file_id})")
+                    logger.info(f"偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (file_id={file_id})")
                  
                 conn = self._get_connection()
                 # 可觀測性：若 recovery 清理目標殘留失敗，寫入簡潔摘要到 last_error（不塞 traceback）
@@ -609,7 +649,7 @@ class StorageManager:
                 conn.commit()
             else:
                 # 【v2.7.4 強化】雙失蹤處理：來源與目標皆不存在，強制回退狀態避免卡死
-                logger.warning(f"偵測到嚴重異常: 來源與目標皆不存在 (ID: {file_id})，強制回退狀態")
+                logger.warning(f"偵測到嚴重異常: 來源與目標皆不存在 (file_id={file_id})，強制回退狀態")
                 conn = self._get_connection()
                 diag = self._recovery_diag("來源與目標皆不存在（可能檔案遺失或被移除），已回退 PROCESSED 供重試/修復")
                 merged = self._merge_last_error(existing_last_error, diag)
@@ -693,7 +733,7 @@ class StorageManager:
                 except PermissionError as move_err:
                     # 受限環境可能禁止 rename/move；降級為 copy + (盡力)刪除原檔
                     # 注意：mem:// 與實體路徑都必須走 abstraction，避免混用 shutil/os API。
-                    logger.warning(f"搬移權限不足，改用 copy: {move_err}")
+                    logger.warning(f"搬移權限不足，改用 copy (file_id={file_id}): {move_err}")
                     try:
                         self._copy_path(temp_path, target_path)
                     except Exception as copy_err:
@@ -702,7 +742,7 @@ class StorageManager:
                         if self._path_exists(target_path):
                             try:
                                 self._remove_path(target_path)
-                                logger.warning(f"已清理 partial target: {target_path}")
+                                logger.warning(f"已清理 partial target (file_id={file_id}): {target_path}")
                             except Exception:
                                 logger.warning("清理 partial target 失敗（忽略）", exc_info=True)
 
@@ -748,7 +788,7 @@ class StorageManager:
                 if conn: conn.close()
                 
         except Exception as e:
-            logger.error(f"整理檔案失敗: {file_id}, 錯誤: {e}")
+            logger.error(f"整理檔案失敗 (file_id={file_id}): {e}")
             try:
                 conn2 = self._get_connection()
                 try:
@@ -769,6 +809,25 @@ class StorageManager:
 
     def _escape_like(self, s):
         return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    # 搜尋排序權重（保持穩定可預期，測試鎖住）
+    _META_SCORE_ORIGINAL_NAME = 2.0
+    _META_SCORE_MAIN_TOPIC = 1.2
+    _META_SCORE_SUMMARY = 1.0
+    _META_SCORE_TAG = 0.8
+
+    def _score_metadata_row(self, q_lower, row_dict):
+        """metadata fallback 的可預期 scoring（避免散落硬編碼權重）。"""
+        score = 0.0
+        if q_lower in (row_dict.get("original_name") or "").lower():
+            score += self._META_SCORE_ORIGINAL_NAME
+        if q_lower in (row_dict.get("main_topic") or "").lower():
+            score += self._META_SCORE_MAIN_TOPIC
+        if q_lower in (row_dict.get("summary") or "").lower():
+            score += self._META_SCORE_SUMMARY
+        if q_lower in (row_dict.get("all_tags") or "").lower():
+            score += self._META_SCORE_TAG
+        return score
 
     def search_content(self, query, limit=50):
         """搜尋：FTS5 先做主查詢（不 join tags、不 group by），再用第二段查 tags，最後再做 metadata fallback。"""
@@ -871,15 +930,7 @@ class StorageManager:
             q_lower = q.lower()
             for row in cursor.fetchall():
                 d = dict(row)
-                score = 0.0
-                if q_lower in (d.get("original_name") or "").lower():
-                    score += 2.0
-                if q_lower in (d.get("main_topic") or "").lower():
-                    score += 1.2
-                if q_lower in (d.get("summary") or "").lower():
-                    score += 1.0
-                if q_lower in (d.get("all_tags") or "").lower():
-                    score += 0.8
+                score = self._score_metadata_row(q_lower, d)
 
                 if d["file_id"] in merged:
                     merged[d["file_id"]]["_score"] = merged[d["file_id"]].get("_score", 0.0) + score

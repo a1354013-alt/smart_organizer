@@ -12,9 +12,18 @@ try:
 except Exception:  # pragma: no cover
     plt = None  # type: ignore
 from pathlib import Path
-from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, FileUtils
+from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
 from logging_config import setup_logging
 from storage import StorageManager, SearchContentError
+from version import APP_NAME, APP_TITLE, __version__
+from services import (
+    UploadedFileData,
+    AnalysisResult,
+    analyze_one_upload,
+    finalize_one_file,
+    reclassify_record,
+    apply_manual_topic_override,
+)
 
 # ========== 路徑配置 (集中管理) ==========
 PROJECT_ROOT = Path(__file__).parent
@@ -26,19 +35,30 @@ DB_PATH = PROJECT_ROOT / "smart_organizer.db"
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# 初始化
-processor = FileProcessor()
-storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
+@st.cache_resource
+def _bootstrap_services():
+    # Streamlit rerun-safe: cache expensive/side-effectful init once per session.
+    processor = FileProcessor()
+    storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
+    return processor, storage
 
-st.set_page_config(page_title="智慧檔案整理助理", layout="wide")
-st.title("📁 智慧檔案整理助理 (v2.7.4 Steel-Fortified Final Ultimate)")
-st.markdown("**資料庫驅動的檔案生命週期管理系統 - 鋼鐵堡壘最終究極版**\n- 狀態機收斂補強 | FTS 查詢防禦 | 極致乾淨打包 | OpenAI Timeout")
+
+processor, storage = _bootstrap_services()
+
+st.set_page_config(page_title=APP_NAME, layout="wide")
+st.title(f"📁 {APP_TITLE}")
+st.markdown("**資料庫驅動的檔案生命週期管理系統**\n- 規則分類 | OCR/PDF 可降級 | 全文檢索 | 可重試與可診斷（last_error）")
 
 def _init_session_state():
     st.session_state.setdefault("analysis_results", [])
     st.session_state.setdefault("confirmed_results", [])
     st.session_state.setdefault("execution_results", [])
     st.session_state.setdefault("cleanup_actions", [])
+    st.session_state.setdefault("review_summaries", {})
+
+
+def _reset_review_state():
+    st.session_state.review_summaries = {}
 
 
 def _render_sidebar():
@@ -108,7 +128,7 @@ _render_sidebar()
 # ========== 主流程 ==========
 def render_upload_tab():
     st.header("步驟 1：上傳檔案")
-    st.markdown("支援格式：PDF、JPG、PNG")
+    st.markdown("支援格式：PDF、JPG/JPEG、PNG")
 
     uploaded_files = st.file_uploader(
         "選擇檔案",
@@ -125,9 +145,10 @@ def render_upload_tab():
     if not st.button("🔍 開始分析", key="analyze_button"):
         return
 
+    _reset_review_state()
     progress_bar = st.progress(0)
     status_text = st.empty()
-    analysis_results = []
+    analysis_results: list[AnalysisResult] = []
     duplicates = []
 
     for idx, uploaded_file in enumerate(uploaded_files):
@@ -135,67 +156,25 @@ def render_upload_tab():
         progress_bar.progress(progress)
         status_text.text(f"分析中... {idx + 1}/{len(uploaded_files)}")
 
-        try:
-            file_hash = processor.get_file_hash(uploaded_file)
-
-            result = storage.create_temp_file(
-                uploaded_file.name,
-                uploaded_file.getbuffer(),
-                file_hash,
-                "photo" if uploaded_file.type.startswith("image") else "document",
-            )
-
-            if not result["success"]:
-                if result.get("reason") == "DUPLICATE":
-                    dup_status = result.get("status", "UNKNOWN")
-                    dup_name = uploaded_file.name
-                    if dup_status == "COMPLETED":
-                        duplicates.append({
-                            "filename": uploaded_file.name,
-                            "status": "COMPLETED",
-                            "path": result.get("final_path", "已整理"),
-                            "display": f"{dup_name} (已整理)",
-                        })
-                    else:
-                        duplicates.append({
-                            "filename": uploaded_file.name,
-                            "status": "PENDING",
-                            "display": f"{dup_name} (已在待整理清單)",
-                        })
-                else:
-                    st.error(f"❌ 建立暫存檔失敗: {uploaded_file.name} - {result.get('message')}")
-                continue
-
-            file_id = result["file_id"]
-            temp_file_path = storage.get_file_path(file_id)
-
-            metadata = processor.extract_metadata(temp_file_path, st.session_state.get("processing_options"))
-            main_topic, tag_scores, classification_reason = processor.classify_multi_tag(
-                metadata,
-                uploaded_file.name,
-                return_reason=True,
-            )
-
-            metadata["standard_date"] = FileUtils.normalize_standard_date(metadata["standard_date"])
-
-            analysis_results.append({
-                "file_id": file_id,
-                "original_name": uploaded_file.name,
-                "file_type": metadata["file_type"],
-                "standard_date": metadata["standard_date"],
-                "main_topic": main_topic,
-                "suggested_main_topic": main_topic,
-                "tag_scores": tag_scores,
-                "classification_reason": classification_reason,
-                "final_decision_reason": "採用規則建議",
-                "metadata": metadata,
-                "preview_path": metadata.get("preview_path"),
-                "is_scanned": metadata.get("is_scanned", False),
-            })
-
-        except Exception as e:
-            logger.error(f"分析失敗 ({uploaded_file.name}): {e}")
-            st.error(f"❌ 分析失敗: {uploaded_file.name} - {e}")
+        uploaded = UploadedFileData(
+            name=uploaded_file.name,
+            content=bytes(uploaded_file.getbuffer()),
+            mime_type=str(getattr(uploaded_file, "type", "") or ""),
+        )
+        analyzed, dup, err = analyze_one_upload(
+            uploaded,
+            processor=processor,
+            storage=storage,
+            processing_options=st.session_state.get("processing_options"),
+        )
+        if dup is not None:
+            duplicates.append(dup)
+            continue
+        if err is not None:
+            st.error(f"❌ {err}")
+            continue
+        if analyzed is not None:
+            analysis_results.append(analyzed)
 
     progress_bar.progress(1.0)
     status_text.text("✅ 分析完成！")
@@ -203,10 +182,10 @@ def render_upload_tab():
     if duplicates:
         st.warning(f"⚠️ 發現 {len(duplicates)} 個重複檔案，已跳過")
         for dup in duplicates:
-            if dup["status"] == "COMPLETED":
-                st.info(f"📁 {dup['display']} → {dup.get('path', '已整理')}")
+            if getattr(dup, "status", "") == "COMPLETED":
+                st.info(f"📁 {dup.display} → {dup.final_path or '已整理'}")
             else:
-                st.info(f"⏳ {dup['display']}")
+                st.info(f"⏳ {dup.display}")
 
     st.session_state.analysis_results = analysis_results
 
@@ -223,20 +202,22 @@ def render_review_tab():
         st.info("請先在『上傳與分析』頁籤上傳檔案。")
         return
 
-    analysis_results = st.session_state.analysis_results
+    analysis_results: list[AnalysisResult] = st.session_state.analysis_results
     st.markdown("在下方預覽每個檔案，並確認分類結果。")
 
+    computed_confirmed: list[AnalysisResult] = []
+
     for idx, result in enumerate(analysis_results):
-        with st.expander(f"📄 {result['original_name']}", expanded=(idx == 0)):
+        with st.expander(f"📄 {result.original_name}", expanded=(idx == 0)):
             col1, col2 = st.columns([1, 2])
 
             with col1:
                 st.subheader("預覽")
-                if result["preview_path"] and os.path.exists(result["preview_path"]):
+                if result.preview_path and storage.path_exists(result.preview_path):
                     try:
                         from PIL import Image  # type: ignore
 
-                        img = Image.open(result["preview_path"])
+                        img = Image.open(result.preview_path)
                         st.image(img, use_container_width=True)
                     except Exception as e:
                         st.warning(f"預覽失敗: {e}")
@@ -245,49 +226,42 @@ def render_review_tab():
 
             with col2:
                 st.subheader("詳細資訊")
-                st.write(f"**檔名**: {result['original_name']}")
-                st.write(f"**類型**: {result['file_type']}")
-                st.write(f"**日期**: {result['standard_date']}")
+                st.write(f"**檔名**: {result.original_name}")
+                st.write(f"**類型**: {result.file_type}")
+                st.write(f"**日期**: {result.standard_date}")
 
-                if result["is_scanned"]:
+                if result.is_scanned:
                     st.warning("⚠️ 掃描 PDF - 文字不足，已視情況嘗試 OCR 抽樣（可於側邊欄調整/停用）")
-                    if result["metadata"].get("ocr_error"):
-                        st.error(f"❌ OCR 提示: {result['metadata']['ocr_error']}")
+                    if (result.metadata or {}).get("ocr_error"):
+                        st.error(f"❌ OCR 提示: {result.metadata['ocr_error']}")
 
-                if result["metadata"].get("notes"):
-                    st.info("處理提示：\n- " + "\n- ".join(result["metadata"]["notes"]))
+                if (result.metadata or {}).get("notes"):
+                    st.info("處理提示：\n- " + "\n- ".join(result.metadata["notes"]))
 
                 st.write("**建議標籤**:")
-                tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in result["tag_scores"].items()])
+                tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in (result.tag_scores or {}).items()])
                 st.write(tag_str)
 
-                tag_options = DOCUMENT_TAGS if result["file_type"] == "document" else PHOTO_TAGS
+                tag_options = DOCUMENT_TAGS if result.file_type == "document" else PHOTO_TAGS
                 new_topic = st.selectbox(
                     "選擇主題",
                     tag_options,
-                    index=tag_options.index(result["main_topic"]) if result["main_topic"] in tag_options else 0,
+                    index=tag_options.index(result.main_topic) if result.main_topic in tag_options else 0,
                     key=f"topic_{idx}",
                 )
-
-                suggested = result.get("suggested_main_topic", result["main_topic"])
-                if new_topic != suggested:
-                    result["final_decision_reason"] = f"手動覆寫：選擇「{new_topic}」（規則建議「{suggested}」）"
-                    result["manual_override"] = True
-                else:
-                    result["final_decision_reason"] = "採用規則建議"
-                    result["manual_override"] = False
-
-                result["main_topic"] = new_topic
-                result["tag_scores"] = processor.sync_manual_topic(
-                    new_topic,
-                    result.get("tag_scores"),
-                    result["file_type"],
+                # UI 不直接修改 AnalysisResult 決策欄位；將覆寫決策交給 service/usecase。
+                computed = apply_manual_topic_override(
+                    result,
+                    processor=processor,
+                    chosen_topic=new_topic,
+                    summary=st.session_state.review_summaries.get(result.file_id),
                 )
+                computed_confirmed.append(computed)
 
                 st.caption("規則推論原因（rule_reason）：")
-                st.code(result.get("classification_reason") or "")
+                st.code(computed.classification_reason or "")
                 st.caption("最終採用原因（final_decision）：")
-                st.code(result.get("final_decision_reason") or "")
+                st.code(computed.final_decision_reason or "")
 
                 if st.button("🤖 生成 AI 摘要", key=f"summary_{idx}"):
                     if not st.session_state.get("ai_enabled"):
@@ -296,18 +270,19 @@ def render_review_tab():
 
                     with st.spinner("正在生成摘要..."):
                         summary, llm_tags = processor.get_llm_summary(
-                            result["metadata"].get("extracted_text", ""),
-                            result["file_type"],
+                            (result.metadata or {}).get("extracted_text", ""),
+                            result.file_type,
                             enabled=True,
                         )
                         st.info(f"**摘要**: {summary}")
                         if llm_tags:
                             st.caption("AI 建議標籤僅供參考，不會自動套用到分類/標籤。")
                             st.write(f"**AI 建議標籤**: {', '.join(llm_tags)}")
-                        result["summary"] = summary
+                        st.session_state.review_summaries[result.file_id] = summary
 
     if st.button("✅ 確認無誤，進行整理", key="confirm_button"):
-        st.session_state.confirmed_results = analysis_results
+        # 以本次 render 計算出的 confirmed 結果為準（避免 mutable object 多處原地修改）。
+        st.session_state.confirmed_results = computed_confirmed
         st.success("✅ 已確認！請前往「執行整理」頁籤。")
 
 
@@ -331,39 +306,8 @@ def render_execute_tab():
         progress_bar.progress(progress)
         status_text.text(f"整理中... {idx + 1}/{len(confirmed_results)}")
 
-        try:
-            storage.update_file_metadata(result["file_id"], {
-                "standard_date": result["standard_date"],
-                "main_topic": result["main_topic"],
-                "summary": result.get("summary", ""),
-                "content": result["metadata"].get("extracted_text", ""),
-                "is_scanned": result.get("is_scanned", False),
-                "preview_path": result.get("preview_path"),
-                "classification_reason": result.get("classification_reason"),
-                "final_decision_reason": result.get("final_decision_reason"),
-                "manual_override": result.get("manual_override"),
-                "tag_scores": result.get("tag_scores", {}),
-            })
-
-            final_path = storage.finalize_organization(
-                result["file_id"],
-                result["standard_date"],
-                result["main_topic"],
-                result["original_name"],
-            )
-
-            execution_results.append({
-                "original_name": result["original_name"],
-                "new_path": final_path,
-                "status": "SUCCESS",
-            })
-        except Exception as e:
-            logger.error(f"整理失敗 ({result['file_id']}): {e}")
-            execution_results.append({
-                "original_name": result["original_name"],
-                "file_id": result.get("file_id"),
-                "status": "FAILED",
-            })
+        exec_res = finalize_one_file(result, storage=storage)
+        execution_results.append(exec_res)
 
     progress_bar.progress(1.0)
     status_text.text("✅ 整理完成！")
@@ -371,12 +315,13 @@ def render_execute_tab():
     st.session_state.execution_results = execution_results
     st.session_state.analysis_results = []
     st.session_state.confirmed_results = []
+    _reset_review_state()
 
     for res in execution_results:
-        if res["status"] == "SUCCESS":
-            st.success(f"✅ {res['original_name']} → {res['new_path']}")
+        if res.status == "SUCCESS":
+            st.success(f"✅ {res.original_name} → {res.new_path}")
         else:
-            st.error(f"❌ {res['original_name']} 整理失敗（可重試）。詳細原因已記錄在「查看紀錄」的 last_error。")
+            st.error(f"❌ {res.original_name} 整理失敗（可重試）。詳細原因已記錄在「查看紀錄」的 last_error。")
 
 
 def render_search_tab():
@@ -401,7 +346,7 @@ def render_search_tab():
                             st.write(f"**標籤**: {result['all_tags']}")
                         st.markdown(f"**內容片段**: ...{result.get('snippet', '')}...")
 
-                        if result.get("final_path") and os.path.exists(result["final_path"]):
+                        if result.get("final_path") and storage.path_exists(result["final_path"]):
                             with open(result["final_path"], "rb") as f:
                                 st.download_button(
                                     "下載檔案",
@@ -461,33 +406,19 @@ def render_records_tab():
         selected_file_id = st.selectbox("選擇 file_id", file_id_options, index=0, key="reclassify_file_id")
         if st.button("🏷️ 重新分類（不使用 AI）", key="do_reclassify"):
             with st.spinner("重新分類中..."):
-                info = storage.get_file_by_id(int(selected_file_id))
-                if not info:
-                    st.error("找不到該筆紀錄")
-                else:
-                    path = info.get("final_path") or info.get("temp_path")
-                    if not path or not storage._path_exists(path):
-                        st.error("檔案不存在（可能已遺失），請先用「重新整理檔案位置」檢查。")
-                    else:
-                        metadata = processor.extract_metadata(path, st.session_state.get("processing_options"))
-                        main_topic, tag_scores, reason = processor.classify_multi_tag(
-                            metadata,
-                            info.get("original_name") or os.path.basename(path),
-                            return_reason=True,
-                        )
-                        storage.update_file_metadata(int(selected_file_id), {
-                            "standard_date": metadata.get("standard_date"),
-                            "main_topic": main_topic,
-                            "summary": info.get("summary") or "",
-                            "content": metadata.get("extracted_text") or "",
-                            "is_scanned": metadata.get("is_scanned") or False,
-                            "preview_path": metadata.get("preview_path"),
-                            "classification_reason": reason,
-                            "final_decision_reason": "重新分類（規則引擎）",
-                            "manual_override": False,
-                            "tag_scores": tag_scores,
-                        })
-                        st.success(f"重新分類完成：{main_topic}")
+                try:
+                    main_topic = reclassify_record(
+                        storage=storage,
+                        processor=processor,
+                        file_id=int(selected_file_id),
+                        processing_options=st.session_state.get("processing_options"),
+                    )
+                    st.success(f"重新分類完成：{main_topic}")
+                except FileNotFoundError:
+                    st.error("檔案不存在（可能已遺失），請先用「重新整理檔案位置」檢查。")
+                except Exception as e:
+                    logger.error(f"重新分類失敗: {e}")
+                    st.error("重新分類失敗，請稍後再試。")
     else:
         st.info("沒有可重新分類的紀錄")
 
@@ -529,4 +460,4 @@ with tab5:
     render_records_tab()
 
 st.divider()
-st.caption("智慧檔案整理助理 v2.7.4 Steel-Fortified Final Ultimate | Powered by Python & Streamlit")
+st.caption(f"{APP_NAME} v{__version__} | Powered by Python & Streamlit")
