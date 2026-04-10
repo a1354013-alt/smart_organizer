@@ -21,6 +21,9 @@ frontend/node_modules/
 
 .pytest_cache/
 .pytest_tmp/
+.pycache_tmp/
+tests/_tmp_pytest/
+tests/_pycache_tmp/
 pytest-cache-files-*/
 .mypy_cache/
 .coverage

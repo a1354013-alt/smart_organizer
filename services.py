@@ -3,13 +3,18 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
-from contracts import ExtractedMetadata
+from contracts import ExtractedMetadata, validate_extracted_metadata
 from core import FileProcessor, FileUtils
 from storage import StorageManager
 
 logger = logging.getLogger(__name__)
+
+
+def _log_context(**fields: object) -> str:
+    parts = [f"{key}={value}" for key, value in fields.items() if value not in (None, "", [])]
+    return f" [{', '.join(parts)}]" if parts else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +56,19 @@ class ExecutionResult:
     status: str  # "SUCCESS" | "FAILED"
     new_path: str | None = None
     file_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SummarySuggestion:
+    summary: str
+    llm_tags: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class BatchAnalysisOutcome:
+    results: list[AnalysisResult]
+    duplicates: list[DuplicateInfo]
+    errors: list[str]
 
 
 def analyze_one_upload(
@@ -109,7 +127,9 @@ def analyze_one_upload(
         if not temp_path:
             return None, None, f"找不到暫存檔路徑：{uploaded.name}"
 
-        metadata = processor.extract_metadata(temp_path, dict(processing_options or {}))
+        metadata = validate_extracted_metadata(
+            processor.extract_metadata(temp_path, dict(processing_options or {}))
+        )
         main_topic, tag_scores, classification_reason = processor.classify_multi_tag(
             metadata, uploaded.name, return_reason=True
         )
@@ -137,8 +157,46 @@ def analyze_one_upload(
             None,
         )
     except Exception:
-        logger.error("analyze_one_upload failed", exc_info=True)
+        logger.error("analyze_one_upload failed%s", _log_context(original_name=uploaded.name), exc_info=True)
         return None, None, f"分析失敗：{uploaded.name}"
+
+
+def analyze_upload_batch(
+    uploads: Iterable[UploadedFileData],
+    *,
+    processor: FileProcessor,
+    storage: StorageManager,
+    processing_options: Mapping[str, Any] | None = None,
+    progress_callback: Callable[[int, int, UploadedFileData], None] | None = None,
+) -> BatchAnalysisOutcome:
+    upload_list = list(uploads)
+    total = len(upload_list)
+    logger.info("analyze_upload_batch start%s", _log_context(files=total))
+    results: list[AnalysisResult] = []
+    duplicates: list[DuplicateInfo] = []
+    errors: list[str] = []
+
+    for index, uploaded in enumerate(upload_list, start=1):
+        if progress_callback is not None:
+            progress_callback(index, total, uploaded)
+        analyzed, dup, err = analyze_one_upload(
+            uploaded,
+            processor=processor,
+            storage=storage,
+            processing_options=processing_options,
+        )
+        if analyzed is not None:
+            results.append(analyzed)
+        if dup is not None:
+            duplicates.append(dup)
+        if err is not None:
+            errors.append(err)
+
+    logger.info(
+        "analyze_upload_batch done%s",
+        _log_context(files=total, analyzed=len(results), duplicates=len(duplicates), errors=len(errors)),
+    )
+    return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)
 
 
 def persist_confirmed_metadata(
@@ -172,6 +230,15 @@ def persist_confirmed_metadata(
             "tag_scores": result.tag_scores or {},
         },
     )
+    logger.info(
+        "persist_confirmed_metadata%s",
+        _log_context(
+            file_id=result.file_id,
+            original_name=result.original_name,
+            decision_source=decision_source,
+            main_topic=result.main_topic,
+        ),
+    )
 
 
 def apply_manual_topic_override(
@@ -199,7 +266,7 @@ def apply_manual_topic_override(
 
     synced = processor.sync_manual_topic(chosen_topic, result.tag_scores, result.file_type)
 
-    return AnalysisResult(
+    updated = AnalysisResult(
         file_id=result.file_id,
         original_name=result.original_name,
         file_type=result.file_type,
@@ -215,6 +282,62 @@ def apply_manual_topic_override(
         summary=summary if summary is not None else result.summary,
         manual_override=manual,
     )
+    logger.info(
+        "apply_manual_topic_override%s",
+        _log_context(
+            file_id=result.file_id,
+            original_name=result.original_name,
+            suggested=result.suggested_main_topic,
+            chosen_topic=chosen_topic,
+            manual_override=manual,
+        ),
+    )
+    return updated
+
+
+def build_confirmed_results(
+    analysis_results: Iterable[AnalysisResult],
+    *,
+    processor: FileProcessor,
+    selected_topics: Mapping[int, str],
+    summaries: Mapping[int, str],
+) -> list[AnalysisResult]:
+    confirmed: list[AnalysisResult] = []
+    for result in analysis_results:
+        confirmed.append(
+            apply_manual_topic_override(
+                result,
+                processor=processor,
+                chosen_topic=selected_topics.get(result.file_id, result.main_topic),
+                summary=summaries.get(result.file_id) or result.summary,
+            )
+        )
+    return confirmed
+
+
+def generate_summary_suggestion(
+    result: AnalysisResult,
+    *,
+    processor: FileProcessor,
+) -> SummarySuggestion:
+    extracted_text = (result.metadata or {}).get("extracted_text", "")
+    summary, llm_tags = processor.get_llm_summary(
+        extracted_text,
+        result.file_type,
+        enabled=True,
+    )
+    suggestion = SummarySuggestion(summary=summary, llm_tags=list(llm_tags or []))
+    logger.info(
+        "generate_summary_suggestion%s",
+        _log_context(
+            file_id=result.file_id,
+            original_name=result.original_name,
+            file_type=result.file_type,
+            summary_chars=len(suggestion.summary),
+            llm_tags=len(suggestion.llm_tags),
+        ),
+    )
+    return suggestion
 
 
 def finalize_one_file(
@@ -230,12 +353,50 @@ def finalize_one_file(
             result.main_topic,
             result.original_name,
         )
+        logger.info(
+            "finalize_one_file success%s",
+            _log_context(
+                file_id=result.file_id,
+                original_name=result.original_name,
+                status="SUCCESS",
+                path=new_path,
+            ),
+        )
         return ExecutionResult(original_name=result.original_name, status="SUCCESS", new_path=new_path)
     except Exception:
-        logger.error("finalize_one_file failed", exc_info=True)
+        logger.error(
+            "finalize_one_file failed%s",
+            _log_context(file_id=result.file_id, original_name=result.original_name, status="FAILED"),
+            exc_info=True,
+        )
         return ExecutionResult(
             original_name=result.original_name, status="FAILED", file_id=result.file_id, new_path=None
         )
+
+
+def finalize_batch(
+    results: Iterable[AnalysisResult],
+    *,
+    storage: StorageManager,
+    progress_callback: Callable[[int, int, AnalysisResult], None] | None = None,
+) -> list[ExecutionResult]:
+    result_list = list(results)
+    execution_results: list[ExecutionResult] = []
+    total = len(result_list)
+    logger.info("finalize_batch start%s", _log_context(files=total))
+    for index, result in enumerate(result_list, start=1):
+        if progress_callback is not None:
+            progress_callback(index, total, result)
+        execution_results.append(finalize_one_file(result, storage=storage))
+    logger.info(
+        "finalize_batch done%s",
+        _log_context(
+            files=total,
+            success=sum(1 for item in execution_results if item.status == "SUCCESS"),
+            failed=sum(1 for item in execution_results if item.status != "SUCCESS"),
+        ),
+    )
+    return execution_results
 
 
 def reclassify_record(
@@ -257,7 +418,7 @@ def reclassify_record(
     if not path or not storage.path_exists(path):
         raise FileNotFoundError("file not found")
 
-    metadata = processor.extract_metadata(path, dict(processing_options or {}))
+    metadata = validate_extracted_metadata(processor.extract_metadata(path, dict(processing_options or {})))
     main_topic, tag_scores, reason = processor.classify_multi_tag(
         metadata,
         info.get("original_name") or str(path),
@@ -279,5 +440,9 @@ def reclassify_record(
             "decision_source": "RULE_RECLASSIFY",
             "tag_scores": tag_scores,
         },
+    )
+    logger.info(
+        "reclassify_record%s",
+        _log_context(file_id=file_id, path=path, decision_source="RULE_RECLASSIFY", main_topic=main_topic),
     )
     return main_topic

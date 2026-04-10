@@ -47,6 +47,7 @@ $includePaths = @(
     "version.py",
     "contracts.py",
     "README.md",
+    "RUN_RELEASE.md",
     "requirements.txt"
 )
 

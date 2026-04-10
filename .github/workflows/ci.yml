@@ -19,7 +19,7 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
       - name: Syntax check
         run: |
-          python -m py_compile app.py core.py services.py storage.py logging_config.py version.py contracts.py
+          python -c "from pathlib import Path; files = ['app.py','core.py','services.py','storage.py','logging_config.py','version.py','contracts.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]"
       - name: Ruff (minimal)
         run: |
           ruff check .

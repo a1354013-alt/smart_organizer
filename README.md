@@ -55,6 +55,7 @@ mypy version.py contracts.py services.py
 ## 📦 Release 交付包（正式包不附 tests）
 - 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
 - zip 檔名預設包含專案版本（來自 `version.py`）與 `runtime-demo`，避免 workspace 快照被誤認為正式交付包。
+- 正式包內另外提供 `RUN_RELEASE.md`，專門說明 runtime/demo 包的安裝與啟動方式。
 - 若需要驗證測試，請使用 source repo 執行 `pytest -q`。
 - 請勿直接把整個工作目錄壓縮上傳（workspace 快照可能包含 `.git/`、`__pycache__/`、`.db`、暫存檔等殘留）。正式交付以 release zip 為準。
 - 正式 release zip 是 **runtime/demo package**，不是 source-development package。
@@ -98,11 +99,18 @@ streamlit run app.py
 - `version.py`: 版本單一來源（UI/README/release zip 命名由測試強制一致）。
 - `contracts.py`: 跨模組資料契約（TypedDict），避免 magic key 漂移。
 - `logging_config.py`: logging 設定（可用 `LOG_LEVEL` 調整）。
+- `RUN_RELEASE.md`: 正式 release 包啟動說明（僅針對 runtime/demo package）。
+- `docs/`: 報告、規劃與展示輔助文件。
 - `uploads/`: 暫存上傳檔案。
 - `repo/`: 整理後的檔案儲存庫。
 - `smart_organizer.db`: SQLite 資料庫。
 
 ## 📜 更新日誌 (Changelog)
+
+### v2.8.1 - 2026-04-10
+- **app.py 再薄化**：批次分析、批次整理、confirmed result 建立改交給 `services.py`，UI 只維持互動與顯示。
+- **單檔追蹤 log 補強**：create/update/finalize/reclassify 等關鍵流程補上更一致的 contextual logging。
+- **交付入口更完整**：新增正式包啟動說明 `RUN_RELEASE.md`，並將報告/規劃文件移到 `docs/`。
 
 ### v2.8.0 - 2026-04-09
 - **UI 薄層化**：核心流程（分析/整理/重新分類/手動覆寫決策）移到 `services.py`，`app.py` 專注互動與顯示。
@@ -142,3 +150,16 @@ streamlit run app.py
 - **Schema Cascade**：為 `file_tags` 加入 `ON DELETE CASCADE`，確保刪除檔案時關聯標籤一併清除。
 - **OpenAI 可配置化**：支援 `OPENAI_MODEL` 環境變數配置，並加入 30 秒請求超時控制。
 - **依賴版本鎖定**：`requirements.txt` 已鎖定主要版本號，提升部署穩定性。
+
+## Architecture Notes (v2.8.1)
+
+- `app.py` now mainly owns Streamlit rendering, widget wiring, and session-state lifecycle.
+- `services.py` owns upload analysis orchestration, AI summary generation, review confirmation assembly, finalize execution, and reclassification flows.
+- `storage.py` owns persistence, crash/recovery safety, finalization, and search ranking/fallback behavior.
+- `contracts.py` defines the cross-module metadata contract. Shared fields must live at the top level of `ExtractedMetadata`; `extra` is only for backward-compatible local extensions.
+
+## Release / Source Repo Boundary
+
+- Use `RUN_RELEASE.md` after unzipping the official runtime/demo package.
+- Use the source repository when you need `pytest`, `ruff`, `mypy`, CI, or development-only documents.
+- The official release zip is intentionally smaller than the source repo and is not meant to replace it for development work.

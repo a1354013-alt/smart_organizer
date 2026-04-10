@@ -16,6 +16,11 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 class SearchContentError(RuntimeError):
     pass
 
+
+def _log_context(**fields):
+    parts = [f"{key}={value}" for key, value in fields.items() if value not in (None, "", [])]
+    return f" [{', '.join(parts)}]" if parts else ""
+
 class StorageManager:
     def __init__(self, db_path, repo_root, upload_dir):
         self.db_path = db_path
@@ -443,6 +448,15 @@ class StorageManager:
                 ''', (original_name, safe_name, str(temp_path), file_hash, final_file_type))
                 file_id = cursor.lastrowid
                 conn.commit()
+                logger.info(
+                    "create_temp_file success%s",
+                    _log_context(
+                        file_id=file_id,
+                        original_name=original_name,
+                        file_type=final_file_type,
+                        temp_path=str(temp_path),
+                    ),
+                )
                 return {"success": True, "file_id": file_id}
             except sqlite3.IntegrityError:
                 conn.rollback()
@@ -462,7 +476,11 @@ class StorageManager:
                     "status": row[1], "final_path": row[2]
                 }
         except Exception as e:
-            logger.error(f"建立暫存檔案失敗: {e}")
+            logger.error(
+                "建立暫存檔案失敗%s: %s",
+                _log_context(original_name=uploaded_file_name, file_hash=str(file_hash)[:8]),
+                e,
+            )
             if part_path and part_path.exists():
                 try: os.remove(part_path)
                 except: pass
@@ -576,8 +594,26 @@ class StorageManager:
             if tag_scores:
                 self._replace_file_tags(cursor, file_id, tag_scores)
             conn.commit()
+            cursor.execute("SELECT status FROM files WHERE file_id = ?", (file_id,))
+            status_row = cursor.fetchone()
+            current_status = status_row[0] if status_row else None
+            logger.info(
+                "update_file_metadata success%s",
+                _log_context(
+                    file_id=file_id,
+                    status=current_status,
+                    main_topic=main_topic,
+                    decision_source=decision_source,
+                    preview_path=preview_path,
+                ),
+            )
+
         except Exception as e:
-            logger.error(f"更新中繼資料失敗 (file_id={file_id}): {e}")
+            logger.error(
+                "更新中繼資料失敗%s: %s",
+                _log_context(file_id=file_id, main_topic=main_topic, decision_source=decision_source),
+                e,
+            )
             raise
         finally:
             if conn: conn.close()
@@ -783,6 +819,15 @@ class StorageManager:
                     WHERE file_id = ?
                 ''', (final_name, target_path, file_id))
                 conn.commit()
+                logger.info(
+                    "finalize_organization success%s",
+                    _log_context(
+                        file_id=file_id,
+                        status="COMPLETED",
+                        temp_path=temp_path,
+                        final_path=target_path,
+                    ),
+                )
                 return target_path
             finally:
                 if conn: conn.close()

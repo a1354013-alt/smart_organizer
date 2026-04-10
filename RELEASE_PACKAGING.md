@@ -18,6 +18,7 @@ The release zip is created from an **allowlist** (not a blocklist). Only these p
 - `version.py`
 - `contracts.py`
 - `README.md`
+- `RUN_RELEASE.md`
 - `requirements.txt`
 
 This is an **official runtime/demo package** and intentionally **does not include tests**.
@@ -45,3 +46,6 @@ pytest -q
 ruff check .
 mypy version.py contracts.py services.py
 ```
+
+After unpacking the official zip, follow `RUN_RELEASE.md` for runtime/demo startup steps.
+Do not treat the release zip as a replacement for the full source repository.

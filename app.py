@@ -19,10 +19,12 @@ from version import APP_NAME, APP_TITLE, __version__
 from services import (
     UploadedFileData,
     AnalysisResult,
-    analyze_one_upload,
-    finalize_one_file,
+    analyze_upload_batch,
+    build_confirmed_results,
+    finalize_batch,
     reclassify_record,
     apply_manual_topic_override,
+    generate_summary_suggestion,
 )
 
 # ========== 路徑配置 (集中管理) ==========
@@ -59,6 +61,17 @@ def _init_session_state():
 
 def _reset_review_state():
     st.session_state.review_summaries = {}
+
+
+def _build_uploaded_file_batch(uploaded_files) -> list[UploadedFileData]:
+    return [
+        UploadedFileData(
+            name=uploaded_file.name,
+            content=bytes(uploaded_file.getbuffer()),
+            mime_type=str(getattr(uploaded_file, "type", "") or ""),
+        )
+        for uploaded_file in uploaded_files
+    ]
 
 
 def _render_sidebar():
@@ -148,49 +161,37 @@ def render_upload_tab():
     _reset_review_state()
     progress_bar = st.progress(0)
     status_text = st.empty()
-    analysis_results: list[AnalysisResult] = []
-    duplicates = []
+    uploaded_batch = _build_uploaded_file_batch(uploaded_files)
+    def _on_progress(index: int, total: int, uploaded: UploadedFileData):
+        progress_bar.progress(index / total)
+        status_text.text(f"分析中... {index}/{total} - {uploaded.name}")
 
-    for idx, uploaded_file in enumerate(uploaded_files):
-        progress = (idx + 1) / len(uploaded_files)
-        progress_bar.progress(progress)
-        status_text.text(f"分析中... {idx + 1}/{len(uploaded_files)}")
-
-        uploaded = UploadedFileData(
-            name=uploaded_file.name,
-            content=bytes(uploaded_file.getbuffer()),
-            mime_type=str(getattr(uploaded_file, "type", "") or ""),
-        )
-        analyzed, dup, err = analyze_one_upload(
-            uploaded,
-            processor=processor,
-            storage=storage,
-            processing_options=st.session_state.get("processing_options"),
-        )
-        if dup is not None:
-            duplicates.append(dup)
-            continue
-        if err is not None:
-            st.error(f"❌ {err}")
-            continue
-        if analyzed is not None:
-            analysis_results.append(analyzed)
+    outcome = analyze_upload_batch(
+        uploaded_batch,
+        processor=processor,
+        storage=storage,
+        processing_options=st.session_state.get("processing_options"),
+        progress_callback=_on_progress,
+    )
 
     progress_bar.progress(1.0)
     status_text.text("✅ 分析完成！")
 
-    if duplicates:
-        st.warning(f"⚠️ 發現 {len(duplicates)} 個重複檔案，已跳過")
-        for dup in duplicates:
+    for err in outcome.errors:
+        st.error(f"❌ {err}")
+
+    if outcome.duplicates:
+        st.warning(f"⚠️ 發現 {len(outcome.duplicates)} 個重複檔案，已跳過")
+        for dup in outcome.duplicates:
             if getattr(dup, "status", "") == "COMPLETED":
                 st.info(f"📁 {dup.display} → {dup.final_path or '已整理'}")
             else:
                 st.info(f"⏳ {dup.display}")
 
-    st.session_state.analysis_results = analysis_results
+    st.session_state.analysis_results = outcome.results
 
-    if analysis_results:
-        st.success(f"✅ 成功分析 {len(analysis_results)} 個檔案，請前往『預覽與確認』頁籤")
+    if outcome.results:
+        st.success(f"✅ 成功分析 {len(outcome.results)} 個檔案，請前往『預覽與確認』頁籤")
     else:
         st.warning("⚠️ 未有新檔案可分析")
 
@@ -205,7 +206,7 @@ def render_review_tab():
     analysis_results: list[AnalysisResult] = st.session_state.analysis_results
     st.markdown("在下方預覽每個檔案，並確認分類結果。")
 
-    computed_confirmed: list[AnalysisResult] = []
+    selected_topics: dict[int, str] = {}
 
     for idx, result in enumerate(analysis_results):
         with st.expander(f"📄 {result.original_name}", expanded=(idx == 0)):
@@ -244,45 +245,49 @@ def render_review_tab():
 
                 tag_options = DOCUMENT_TAGS if result.file_type == "document" else PHOTO_TAGS
                 new_topic = st.selectbox(
-                    "選擇主題",
+                    "????",
                     tag_options,
                     index=tag_options.index(result.main_topic) if result.main_topic in tag_options else 0,
                     key=f"topic_{idx}",
                 )
-                # UI 不直接修改 AnalysisResult 決策欄位；將覆寫決策交給 service/usecase。
+                selected_topics[result.file_id] = new_topic
+
+                # Keep decision updates inside service/usecase instead of mutating AnalysisResult in UI.
                 computed = apply_manual_topic_override(
                     result,
                     processor=processor,
                     chosen_topic=new_topic,
                     summary=st.session_state.review_summaries.get(result.file_id),
                 )
-                computed_confirmed.append(computed)
 
-                st.caption("規則推論原因（rule_reason）：")
+                st.caption("??????")
                 st.code(computed.classification_reason or "")
-                st.caption("最終採用原因（final_decision）：")
+                st.caption("??????")
                 st.code(computed.final_decision_reason or "")
 
-                if st.button("🤖 生成 AI 摘要", key=f"summary_{idx}"):
+                if st.button("?? AI ??", key=f"summary_{idx}"):
                     if not st.session_state.get("ai_enabled"):
-                        st.warning("AI 摘要未啟用：為保護隱私，系統不會送出任何內容。請到側邊欄開啟後再試。")
+                        st.warning("AI ???????????????????")
                         continue
 
-                    with st.spinner("正在生成摘要..."):
-                        summary, llm_tags = processor.get_llm_summary(
-                            (result.metadata or {}).get("extracted_text", ""),
-                            result.file_type,
-                            enabled=True,
+                    with st.spinner("???? AI ??..."):
+                        suggestion = generate_summary_suggestion(
+                            computed,
+                            processor=processor,
                         )
-                        st.info(f"**摘要**: {summary}")
-                        if llm_tags:
-                            st.caption("AI 建議標籤僅供參考，不會自動套用到分類/標籤。")
-                            st.write(f"**AI 建議標籤**: {', '.join(llm_tags)}")
-                        st.session_state.review_summaries[result.file_id] = summary
+                        st.info(f"**??**: {suggestion.summary}")
+                        if suggestion.llm_tags:
+                            st.caption("AI ?????????????????????")
+                            st.write(f"**AI ????**: {', ' .join(suggestion.llm_tags)}")
+                        st.session_state.review_summaries[result.file_id] = suggestion.summary
 
     if st.button("✅ 確認無誤，進行整理", key="confirm_button"):
-        # 以本次 render 計算出的 confirmed 結果為準（避免 mutable object 多處原地修改）。
-        st.session_state.confirmed_results = computed_confirmed
+        st.session_state.confirmed_results = build_confirmed_results(
+            analysis_results,
+            processor=processor,
+            selected_topics=selected_topics,
+            summaries=st.session_state.review_summaries,
+        )
         st.success("✅ 已確認！請前往「執行整理」頁籤。")
 
 
@@ -299,19 +304,18 @@ def render_execute_tab():
     confirmed_results = st.session_state.confirmed_results
     progress_bar = st.progress(0)
     status_text = st.empty()
-    execution_results = []
 
-    for idx, result in enumerate(confirmed_results):
-        progress = (idx + 1) / len(confirmed_results)
-        progress_bar.progress(progress)
-        status_text.text(f"整理中... {idx + 1}/{len(confirmed_results)}")
+    def _on_execute_progress(index: int, total: int, result: AnalysisResult):
+        progress_bar.progress(index / total)
+        status_text.text(f"整理中... {index}/{total} - {result.original_name}")
 
-        exec_res = finalize_one_file(result, storage=storage)
-        execution_results.append(exec_res)
-
+    execution_results = finalize_batch(
+        confirmed_results,
+        storage=storage,
+        progress_callback=_on_execute_progress,
+    )
     progress_bar.progress(1.0)
     status_text.text("✅ 整理完成！")
-
     st.session_state.execution_results = execution_results
     st.session_state.analysis_results = []
     st.session_state.confirmed_results = []

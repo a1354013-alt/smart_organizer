@@ -10,7 +10,7 @@ from __future__ import annotations
 __all__ = ["__version__", "APP_NAME", "APP_TITLE"]
 
 # Semantic version of the project (runtime/demo release uses this string in its zip name)
-__version__ = "2.8.0"
+__version__ = "2.8.1"
 
 # User-facing app name/title
 APP_NAME = "智慧檔案整理助理"
