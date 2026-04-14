@@ -41,7 +41,7 @@ class DecisionHistory(TypedDict, total=False):
     last_manual_reason: str | None
 
 
-def validate_extracted_metadata(raw: dict[str, Any]) -> ExtractedMetadata:
+def validate_extracted_metadata(raw: ExtractedMetadata | dict[str, Any]) -> ExtractedMetadata:
     """
     Normalize and validate the cross-module metadata contract.
 

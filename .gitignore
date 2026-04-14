@@ -26,6 +26,8 @@ tests/_tmp_pytest/
 tests/_pycache_tmp/
 pytest-cache-files-*/
 .mypy_cache/
+.ruff_cache/
+.venv/
 .coverage
 dist/
 build/

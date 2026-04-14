@@ -5,37 +5,40 @@ import hashlib
 import logging
 import shutil
 from pathlib import Path
+from typing import Any
 from contracts import ExtractedMetadata
 
 try:
-    from PIL import Image  # type: ignore
+    from PIL import Image
 except Exception:  # pragma: no cover
-    Image = None  # type: ignore
+    Image = None  # type: ignore[assignment]
 
 try:
-    import exifread  # type: ignore
+    import exifread
 except Exception:  # pragma: no cover
-    exifread = None  # type: ignore
+    exifread = None  # type: ignore[assignment]
+
+PdfReader: Any
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover
+    PdfReader = None
 
 try:
-    from pypdf import PdfReader  # type: ignore
+    from pdf2image import convert_from_path
 except Exception:  # pragma: no cover
-    PdfReader = None  # type: ignore
+    convert_from_path = None  # type: ignore[assignment]
 
 try:
-    from pdf2image import convert_from_path  # type: ignore
+    import pytesseract
 except Exception:  # pragma: no cover
-    convert_from_path = None  # type: ignore
+    pytesseract = None
 
+OpenAI: Any
 try:
-    import pytesseract  # type: ignore
+    from openai import OpenAI
 except Exception:  # pragma: no cover
-    pytesseract = None  # type: ignore
-
-try:
-    from openai import OpenAI  # type: ignore
-except Exception:  # pragma: no cover
-    OpenAI = None  # type: ignore
+    OpenAI = None
 
 # 設定 Logging
 logger = logging.getLogger(__name__)
@@ -468,7 +471,7 @@ class FileProcessor:
                 response_format={"type": "json_object"},
             )
             content = (response.choices[0].message.content or "").strip()
-        except Exception as e:
+        except Exception:
             # 對使用者：友善訊息；詳細錯誤留在 log
             logger.error("LLM 摘要呼叫失敗", exc_info=True)
             return "AI 摘要暫時不可用，請稍後再試。", []

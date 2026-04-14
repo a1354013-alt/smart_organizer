@@ -22,7 +22,7 @@ The release zip is created from an **allowlist** (not a blocklist). Only these p
 - `requirements.txt`
 
 This is an **official runtime/demo package** and intentionally **does not include tests**.
-It also intentionally excludes workspace artifacts such as `.git/`, `__pycache__/`, `*.pyc`, `*.db`, `release/`, `.pytest_cache/`, temp folders, etc.
+It also intentionally excludes workspace artifacts such as `.git/`, `.venv/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `*.pyc`, `*.db`, `release/`, `.pytest_cache/`, temp folders, etc.
 
 This zip is a **runtime/demo package**, not a source-development package.
 
