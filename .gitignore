@@ -1,1 +1,49 @@
-Nothing should be ignored based on the provided file changes. The modified files (`core.py` and `storage.py`) are source code files that should not be added to `.gitignore`. Since there are no build artifacts, dependencies, temporary files, or other ignorable items in the changes, the `.gitignore` remains empty.
+```gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test directories
+tests/_tmp_pytest/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Coverage reports
+.coverage
+htmlcov/
+coverage/
+
+# IDE files
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+```

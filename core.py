@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 DOCUMENT_TAGS = ['發票', '合約', '報價', '請款', '證明文件', '會議紀錄', '掃描', '其他文件']
 PHOTO_TAGS = ['人物', '美食', '旅行', '文件/收據', '工作', '截圖', '風景', '其他照片']
+VIDEO_TAGS = ['影片']
 
 class FileUtils:
     """純工具函式類別，不涉及業務邏輯與昂貴初始化"""
@@ -718,8 +719,15 @@ class FileProcessor:
             reasons.append(f"{tag}: {why} (-{weight})")
 
         is_document = metadata.get("file_type") == "document" or ext == ".pdf"
+        is_video = metadata.get("file_type") == "video" or ext in FileUtils.VIDEO_EXTENSIONS
 
-        if is_document:
+        if is_video:
+            # Video files use simple tagging - just mark as video
+            scores = {tag: 0.0 for tag in VIDEO_TAGS}
+            scores["影片"] = 1.0
+            reasons.append("影片：自動標記為影片類別")
+            default_tag = "影片"
+        elif is_document:
             scores = {tag: 0.0 for tag in DOCUMENT_TAGS}
             rules = [
                 (["統一編號", "發票", "收據", "invoice", "receipt"], "發票", 0.9),
@@ -783,7 +791,13 @@ class FileProcessor:
         if not main_topic:
             return normalized_scores
 
-        allowed_topics = DOCUMENT_TAGS if file_type == 'document' else PHOTO_TAGS
+        if file_type == 'video':
+            allowed_topics = VIDEO_TAGS
+        elif file_type == 'document':
+            allowed_topics = DOCUMENT_TAGS
+        else:
+            allowed_topics = PHOTO_TAGS
+            
         if main_topic not in allowed_topics:
             return normalized_scores
 

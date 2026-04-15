@@ -12,7 +12,7 @@ try:
 except Exception:  # pragma: no cover
     plt = None  # type: ignore
 from pathlib import Path
-from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
+from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
 from storage import StorageManager, SearchContentError
 from version import APP_NAME, APP_TITLE, __version__
@@ -141,11 +141,11 @@ _render_sidebar()
 # ========== 主流程 ==========
 def render_upload_tab():
     st.header("步驟 1：上傳檔案")
-    st.markdown("支援格式：PDF、JPG/JPEG、PNG")
+    st.markdown("支援格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV")
 
     uploaded_files = st.file_uploader(
         "選擇檔案",
-        type=["pdf", "jpg", "jpeg", "png"],
+        type=["pdf", "jpg", "jpeg", "png", "mp4", "mov", "mkv"],
         accept_multiple_files=True,
     )
 
