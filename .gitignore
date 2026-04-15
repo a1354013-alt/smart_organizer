@@ -1,12 +1,9 @@
 ```
 # Compiled Python files
-__pycache__/
 *.pyc
+__pycache__/
 
-# Test temporary files and databases
-tests/_tmp_pytest/
+# Test files
 *.db
-
-# Coverage reports
-.coverage
+tmp_pytest/
 ```
