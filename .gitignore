@@ -1,4 +1,25 @@
 ```
-# Test temporary files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.ENV
+.ENV.*
+.venv.bak
+.env.bak
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database
+*.db
+*.db-journal
+
+# Temporary test files
 tests/_tmp_pytest/
 ```

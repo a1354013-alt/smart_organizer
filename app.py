@@ -235,7 +235,8 @@ def render_review_tab():
                     if is_video:
                         # Show video placeholder with ffmpeg warning
                         st.markdown("🎬 **Video**")
-                        if not processor.FFMPEG_AVAILABLE:
+                        from core import FFMPEG_AVAILABLE
+                        if not FFMPEG_AVAILABLE:
                             st.warning("**Video preview unavailable**\n\nThumbnail could not be generated\n\nPlease install ffmpeg to enable video thumbnails and metadata extraction")
                         else:
                             st.info("無縮圖（產生失敗）")
@@ -348,25 +349,25 @@ def render_review_tab():
                     summary=st.session_state.review_summaries.get(result.file_id),
                 )
 
-                st.caption("??????")
+                st.caption("📝 分類理由")
                 st.code(computed.classification_reason or "")
-                st.caption("??????")
+                st.caption("🎯 最終決策理由")
                 st.code(computed.final_decision_reason or "")
 
-                if st.button("?? AI ??", key=f"summary_{idx}"):
+                if st.button("✨ AI 建議摘要", key=f"summary_{idx}"):
                     if not st.session_state.get("ai_enabled"):
-                        st.warning("AI ???????????????????")
+                        st.warning("AI 功能未啟用，請在設定中開啟。")
                         continue
 
-                    with st.spinner("???? AI ??..."):
+                    with st.spinner("生成 AI 摘要建議中..."):
                         suggestion = generate_summary_suggestion(
                             computed,
                             processor=processor,
                         )
-                        st.info(f"**??**: {suggestion.summary}")
+                        st.info(f"**建議**: {suggestion.summary}")
                         if suggestion.llm_tags:
-                            st.caption("AI ?????????????????????")
-                            st.write(f"**AI ????**: {', ' .join(suggestion.llm_tags)}")
+                            st.caption("AI 同時建議了以下標籤供參考：")
+                            st.write(f"**AI 建議標籤**: {', '.join(suggestion.llm_tags)}")
                         st.session_state.review_summaries[result.file_id] = suggestion.summary
 
     if st.button("✅ 確認無誤，進行整理", key="confirm_button"):

@@ -20,7 +20,7 @@ class ExtractedMetadata(TypedDict):
     Keep keys stable to avoid "magic keys" drifting across core/services/app/storage.
     """
 
-    file_type: str  # "document" | "photo" | "unknown"
+    file_type: str  # "document" | "photo" | "video" | "unknown"
     standard_date: str
     extracted_text: str
     is_scanned: bool

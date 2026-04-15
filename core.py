@@ -734,9 +734,10 @@ class FileProcessor:
         if is_video:
             # Video files use simple tagging - just mark as video
             scores = {tag: 0.0 for tag in VIDEO_TAGS}
-            scores["影片"] = 1.0
-            reasons.append("影片：自動標記為影片類別")
-            default_tag = "影片"
+            # Use English topic to match VIDEO_TAGS
+            scores["Unclassified"] = 1.0
+            reasons.append("影片：自動標記為未分類（Unclassified）")
+            default_tag = "Unclassified"
         elif is_document:
             scores = {tag: 0.0 for tag in DOCUMENT_TAGS}
             rules = [
