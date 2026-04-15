@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover
 try:
     import exifread
 except Exception:  # pragma: no cover
-    exifread = None  # type: ignore[assignment]
+    exifread = None
 
 PdfReader: Any
 try:
@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover
 try:
     from pdf2image import convert_from_path
 except Exception:  # pragma: no cover
-    convert_from_path = None  # type: ignore[assignment]
+    convert_from_path = None
 
 try:
     import pytesseract

@@ -7,7 +7,6 @@ and graceful degradation handling.
 import os
 import subprocess
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -212,9 +211,7 @@ class TestGracefulDegradation:
             
             # Should still return metadata structure
             assert metadata['file_type'] == 'video'
-            # May have error in extra
-            extra = metadata.get('extra', {})
-            # Should not crash
+            # May have error in extra, but should not crash
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)

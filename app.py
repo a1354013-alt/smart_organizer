@@ -217,7 +217,6 @@ def render_review_tab():
                 
                 # Check if it's a video file
                 is_video = result.file_type == "video"
-                extra_metadata = (result.metadata or {}).get("extra", {})
                 
                 if result.preview_path and storage.path_exists(result.preview_path):
                     try:
