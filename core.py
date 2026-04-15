@@ -58,7 +58,17 @@ logger = logging.getLogger(__name__)
 
 DOCUMENT_TAGS = ['發票', '合約', '報價', '請款', '證明文件', '會議紀錄', '掃描', '其他文件']
 PHOTO_TAGS = ['人物', '美食', '旅行', '文件/收據', '工作', '截圖', '風景', '其他照片']
-VIDEO_TAGS = ['影片']
+VIDEO_TAGS = ['Unclassified', 'Screen Recording', 'Tutorial', 'Meeting', 'Promo', 'Raw Footage', 'Animation']
+
+# Video classification keywords (for batch scanning phase 2)
+VIDEO_KEYWORD_RULES = {
+    'Screen Recording': ['screen', 'record', 'screenshot', 'desktop', '螢幕', '錄製', '畫面'],
+    'Tutorial': ['tutorial', 'howto', 'how-to', 'guide', '教學', '入門', '技巧', 'lesson'],
+    'Meeting': ['meeting', 'conference', 'zoom', 'teams', 'hangout', '會議', '簡報', 'presentation'],
+    'Promo': ['promo', 'trailer', 'teaser', 'advertisement', '廣告', '宣傳', '預告'],
+    'Raw Footage': ['raw', 'footage', 'clip', 'rushes', '原始', '素材'],
+    'Animation': ['animation', 'animated', 'cartoon', 'anime', '動畫', '動漫'],
+}
 
 class FileUtils:
     """純工具函式類別，不涉及業務邏輯與昂貴初始化"""

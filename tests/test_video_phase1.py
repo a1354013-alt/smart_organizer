@@ -190,7 +190,10 @@ class TestVideoClassification:
     def test_video_tags_defined(self):
         """Test that VIDEO_TAGS is defined."""
         assert isinstance(VIDEO_TAGS, list)
-        assert '影片' in VIDEO_TAGS
+        # Updated for Phase 3: VIDEO_TAGS now contains English categories for batch scanning
+        assert len(VIDEO_TAGS) > 0
+        # Check that we have meaningful tags (not just a placeholder)
+        assert any(tag not in ['影片', 'Video'] for tag in VIDEO_TAGS) or 'Unclassified' in VIDEO_TAGS
 
 
 class TestGracefulDegradation:

@@ -1,49 +1,30 @@
-```gitignore
+```
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Test directories
-tests/_tmp_pytest/
-
-# Logs
+# Logs and temp files
 *.log
-
-# Temporary files
 *.tmp
-*.swp
 
-# Environment files
+# Environment
 .env
 .env.local
 *.env.*
 
-# Coverage reports
-.coverage
-htmlcov/
-coverage/
-
-# IDE files
+# Editors
 .vscode/
 .idea/
-
-# Build artifacts
-build/
-dist/
-*.so
-*.dylib
-*.dll
-*.exe
-*.out
 
 # Dependencies
 .venv/
 venv/
 node_modules/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Build artifacts
+dist/
+build/
+target/
 ```
