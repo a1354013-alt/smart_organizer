@@ -40,6 +40,19 @@ try:
 except Exception:  # pragma: no cover
     OpenAI = None
 
+# Video processing dependencies (optional, graceful degradation if missing)
+FFMPEG_AVAILABLE = False
+try:
+    import subprocess
+    _ffprobe_check = subprocess.run(
+        ["ffprobe", "-version"],
+        capture_output=True,
+        timeout=5,
+    )
+    FFMPEG_AVAILABLE = _ffprobe_check.returncode == 0
+except Exception:
+    FFMPEG_AVAILABLE = False
+
 # 設定 Logging
 logger = logging.getLogger(__name__)
 
@@ -51,7 +64,8 @@ class FileUtils:
     DEFAULT_UNKNOWN_DATE = "UnknownDate"
     DEFAULT_UNKNOWN_YEAR = "UnknownYear"
     DEFAULT_UNKNOWN_MONTH = "UnknownMonth"
-    ALLOWED_UPLOAD_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
+    ALLOWED_UPLOAD_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.mp4', '.mov', '.mkv'}
+    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv'}
     DEFAULT_LLM_TRUNCATE_CHARS = 6000
 
     @staticmethod
@@ -313,6 +327,22 @@ class FileProcessor:
                         metadata["extracted_text"] = text
                         metadata["ocr_error"] = err
 
+            elif ext in FileUtils.VIDEO_EXTENSIONS:
+                # Video file handling: extract metadata and generate thumbnail
+                metadata["file_type"] = "video"
+                metadata["standard_date"] = self._get_file_mtime(file_path)
+                video_info = self._extract_video_metadata(file_path)
+                if video_info.get("error"):
+                    metadata["notes"].append(f"影片解析提示：{video_info['error']}")
+                # Store video metadata in extra field
+                metadata.setdefault("extra", {}).update(video_info)
+                # Generate thumbnail (graceful degradation on failure)
+                thumb_path = self._generate_video_thumbnail(file_path)
+                if thumb_path:
+                    metadata["preview_path"] = thumb_path
+                else:
+                    metadata.setdefault("extra", {})["thumbnail_error"] = "縮圖產生失敗或 ffprobe 不可用"
+
             metadata["standard_date"] = FileUtils.normalize_standard_date(metadata["standard_date"])
             if metadata["standard_date"] == FileUtils.DEFAULT_UNKNOWN_DATE:
                 metadata["standard_date"] = FileUtils.normalize_standard_date(self._get_file_mtime(file_path))
@@ -379,6 +409,179 @@ class FileProcessor:
         except Exception as e:
             logger.error(f"獲取修改時間失敗: {e}")
             return datetime.datetime.now().strftime('%Y-%m-%d')
+
+
+    def _extract_video_metadata(self, file_path):
+        """
+        Extract video metadata using ffprobe.
+        Returns dict with: media_type, duration_seconds, width, height, fps, video_codec, file_size, created_at, modified_at.
+        Graceful degradation: returns partial data or error message if ffprobe unavailable.
+        """
+        result = {
+            "media_type": "video",
+            "duration_seconds": None,
+            "width": None,
+            "height": None,
+            "fps": None,
+            "video_codec": None,
+            "file_size": None,
+            "created_at": None,
+            "modified_at": None,
+        }
+        
+        if not FFMPEG_AVAILABLE:
+            result["error"] = "ffprobe 不可用，無法解析影片 metadata"
+            return result
+        
+        try:
+            import subprocess
+            import json
+            
+            # Get file size
+            try:
+                result["file_size"] = os.path.getsize(file_path)
+            except Exception:
+                pass
+            
+            # Get modification time
+            try:
+                mtime = os.path.getmtime(file_path)
+                result["modified_at"] = datetime.datetime.fromtimestamp(mtime).isoformat()
+            except Exception:
+                pass
+            
+            # Run ffprobe to get video stream info
+            cmd = [
+                "ffprobe",
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                file_path,
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if proc.returncode != 0:
+                result["error"] = f"ffprobe 執行失敗：{proc.stderr.strip()[:100]}"
+                return result
+            
+            data = json.loads(proc.stdout)
+            
+            # Find video stream
+            video_stream = None
+            for stream in data.get("streams", []):
+                if stream.get("codec_type") == "video":
+                    video_stream = stream
+                    break
+            
+            if video_stream:
+                result["width"] = video_stream.get("width")
+                result["height"] = video_stream.get("height")
+                result["video_codec"] = video_stream.get("codec_name")
+                
+                # FPS calculation
+                fps = video_stream.get("r_frame_rate")
+                if fps and "/" in fps:
+                    num, den = fps.split("/")
+                    try:
+                        result["fps"] = round(float(num) / float(den), 2) if float(den) != 0 else None
+                    except (ValueError, ZeroDivisionError):
+                        result["fps"] = None
+                elif fps:
+                    try:
+                        result["fps"] = float(fps)
+                    except ValueError:
+                        pass
+            
+            # Duration from format
+            fmt = data.get("format", {})
+            duration = fmt.get("duration")
+            if duration:
+                try:
+                    result["duration_seconds"] = round(float(duration), 2)
+                except ValueError:
+                    pass
+            
+            # Creation time if available
+            creation_time = fmt.get("tags", {}).get("creation_time")
+            if creation_time:
+                result["created_at"] = creation_time
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "ffprobe 超時（影片可能損毀或過大）"
+        except json.JSONDecodeError:
+            result["error"] = "ffprobe 輸出解析失敗"
+        except Exception as e:
+            logger.error(f"影片 metadata 抽取失敗 ({file_path}): {e}")
+            result["error"] = f"解析錯誤：{str(e)[:80]}"
+        
+        return result
+
+    def _generate_video_thumbnail(self, file_path, thumb_percent=0.5):
+        """
+        Generate a thumbnail for a video file by extracting a frame from the middle.
+        Returns thumbnail path on success, None on failure (graceful degradation).
+        """
+        if not FFMPEG_AVAILABLE:
+            return None
+        
+        try:
+            import subprocess
+            
+            # Get video duration first
+            cmd_duration = [
+                "ffprobe",
+                "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ]
+            proc = subprocess.run(cmd_duration, capture_output=True, text=True, timeout=10)
+            if proc.returncode != 0:
+                return None
+            
+            try:
+                duration = float(proc.stdout.strip())
+            except ValueError:
+                duration = 1.0
+            
+            # Pick a timestamp around the middle (avoid black frames at start)
+            thumb_time = max(1.0, duration * thumb_percent)
+            
+            # Build thumbnail path
+            source_path = Path(file_path)
+            thumb_dir = source_path.parent / "previews"
+            thumb_filename = f"thumb_{source_path.name}.jpg"
+            thumb_path = str(thumb_dir / thumb_filename)
+            
+            os.makedirs(str(thumb_dir), exist_ok=True)
+            
+            # Skip if already exists
+            if os.path.exists(thumb_path):
+                return thumb_path
+            
+            # Extract frame using ffmpeg
+            cmd = [
+                "ffmpeg",
+                "-ss", str(thumb_time),
+                "-i", file_path,
+                "-vframes", "1",
+                "-q:v", "2",
+                "-y",
+                thumb_path,
+            ]
+            proc = subprocess.run(cmd, capture_output=True, timeout=60)
+            if proc.returncode == 0 and os.path.exists(thumb_path):
+                return thumb_path
+            else:
+                logger.warning(f"縮圖產生失敗 ({file_path}): {proc.stderr.decode('utf-8', errors='ignore')[:200]}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            logger.warning(f"縮圖產生超時 ({file_path})")
+            return None
+        except Exception as e:
+            logger.error(f"縮圖產生異常 ({file_path}): {e}")
+            return None
 
     def _extract_pdf_text(self, file_path, max_pages=None):
         text = ""
