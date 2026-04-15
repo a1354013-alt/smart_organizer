@@ -1,9 +1,4 @@
 ```
-# Compiled Python files
-*.pyc
-__pycache__/
-
-# Test files
-*.db
-tmp_pytest/
+# Test temporary files
+tests/_tmp_pytest/
 ```
