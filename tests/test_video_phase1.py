@@ -263,8 +263,8 @@ class TestDuplicateDetectionWithVideo:
         
         file_hash = processor.get_file_hash(test_video_mp4)
         
-        # First upload
-        result1 = storage.create_temp_file(
+      # First upload
+        storage.create_temp_file(
             "test_video.mp4",
             content,
             file_hash,
