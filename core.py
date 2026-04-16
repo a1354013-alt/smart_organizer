@@ -714,7 +714,6 @@ class FileProcessor:
             )
             content = (response.choices[0].message.content or "").strip()
         except Exception:
-            # 對使用者：友善訊息；詳細錯誤留在 log
             logger.error("LLM 摘要呼叫失敗", exc_info=True)
             return "AI 摘要暫時不可用，請稍後再試。", []
 
@@ -731,7 +730,6 @@ class FileProcessor:
                 summary = f"{summary} {note}"
             return summary, tags
         except Exception:
-            # JSON 解析失敗：不噴底層錯誤到 UI，保留可理解訊息
             logger.warning("AI 回應 JSON 解析失敗（已改用保守提示）", exc_info=True)
             msg = "AI 回應格式異常（JSON 解析失敗），請稍後再試。"
             if note:
@@ -760,9 +758,7 @@ class FileProcessor:
         is_video = metadata.get("file_type") == "video" or ext in FileUtils.VIDEO_EXTENSIONS
 
         if is_video:
-            # Video files use simple tagging - just mark as video
             scores = {tag: 0.0 for tag in VIDEO_TAGS}
-            # Use English topic to match VIDEO_TAGS
             scores["Unclassified"] = 1.0
             reasons.append("影片：自動標記為未分類（Unclassified）")
             default_tag = "Unclassified"
@@ -786,7 +782,6 @@ class FileProcessor:
             if is_scanned:
                 add("掃描", 0.5, "偵測為掃描件（PDF 文字不足）")
 
-            # 負面規則：圖片副檔名降低文件信心（避免誤判）
             if ext in {".jpg", ".jpeg", ".png"}:
                 for t in DOCUMENT_TAGS:
                     sub(t, 0.2, "副檔名為圖片，降低文件類別信心")
@@ -807,14 +802,12 @@ class FileProcessor:
                 if any(k.lower() in text_lower for k in keywords):
                     add(tag, w * 0.6, f"OCR/內容包含關鍵字 {keywords}")
 
-            # 負面規則：PDF 不應落在照片分類
             if ext == ".pdf":
                 for t in PHOTO_TAGS:
                     sub(t, 0.5, "副檔名為 PDF，降低照片類別信心")
 
             default_tag = "其他照片"
 
-        # 只保留正分數並上限 1.0，避免 UI 顯示負分噪音
         results = {tag: min(max(score, 0.0), 1.0) for tag, score in scores.items() if score > 0.0}
         if not results:
             results[default_tag] = 1.0
