@@ -5,21 +5,53 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-env/
-venv/
-.venv/
-.ENV
-.ENV.*
-.venv.bak
-.env.bak
-.pytest_cache/
+*.so
 .coverage
+coverage/
 htmlcov/
 
-# Database
-*.db
-*.db-journal
+# Testing
+.tests/
+.pytest_cache/
+.hypothesis/
 
-# Temporary test files
-tests/_tmp_pytest/
+# Temporary files
+tmp/
+temp/
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*
+.venv/
+venv/
+ENV/
+
+# Build and distribution
+build/
+dist/
+*.egg
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 ```

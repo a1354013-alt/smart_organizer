@@ -15,26 +15,28 @@
 ## 🛠️ 安裝說明
 
 ### 1. 系統級依賴 (OS Dependencies)
-本專案需要以下系統工具支援 PDF 處理與 OCR：
+本專案需要以下系統工具支援 PDF 處理、OCR 與影片處理：
 
 > 重要：本專案已做「缺少依賴時的功能降級」：
 > - 缺少 poppler（`pdftoppm`/`pdftocairo`）時：PDF 預覽會跳過，但其餘流程仍可運作。
 > - 缺少 tesseract 或語言包時：OCR 會停用/跳過，仍可整理與搜尋（若 PDF 本身可抽到文字）。
+> - 缺少 ffmpeg（`ffprobe`/`ffmpeg`）時：影片縮圖與 metadata 提取會跳過，但影片仍可上傳與分類。
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get update
-sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra
+sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra ffmpeg
 ```
 
 **macOS (Homebrew):**
 ```bash
-brew install poppler tesseract tesseract-lang
+brew install poppler tesseract tesseract-lang ffmpeg
 ```
 
 **Windows:**
 - 安裝 Poppler（提供 `pdftoppm`）：確保 `pdftoppm.exe` 在 PATH 內，或設定環境變數 `POPPLER_PATH` 指向 Poppler 的 `bin` 目錄。
 - 安裝 Tesseract（提供 `tesseract.exe`）：確保 `tesseract.exe` 在 PATH 內，並安裝繁中語言包（常見名稱 `chi_tra`）。
+- 安裝 ffmpeg：下載 builds 並加入 PATH，或使用 `choco install ffmpeg`。
 
 ### 2. Python 環境設定
 建議使用虛擬環境：
@@ -54,7 +56,8 @@ mypy version.py contracts.py services.py
 > 提示：本專案已在 `tests/conftest.py` 補上測試路徑處理，直接在專案根目錄執行 `pytest -q` 不需要額外設定 `PYTHONPATH`。
 
 ## 📦 Release 交付包（正式包不附 tests）
-- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
+- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`、`.git/`、`__pycache__/`、`.coverage`、`tests/_tmp_pytest/` 等開發暫存檔**。
+- `.gitignore` 已設定自動忽略 Python 快取、測試暫存目錄、IDE 設定與發布產物。
 - zip 檔名預設包含專案版本（來自 `version.py`）與 `runtime-demo`，避免 workspace 快照被誤認為正式交付包。
 - 正式包內另外提供 `RUN_RELEASE.md`，專門說明 runtime/demo 包的安裝與啟動方式。
 - 若需要驗證測試，請使用 source repo 執行 `pytest -q`。

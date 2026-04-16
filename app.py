@@ -234,10 +234,10 @@ def render_review_tab():
                     # No thumbnail available
                     if is_video:
                         # Show video placeholder with ffmpeg warning
-                        st.markdown("🎬 **Video**")
+                        st.markdown("🎬 **影片**")
                         from core import FFMPEG_AVAILABLE
                         if not FFMPEG_AVAILABLE:
-                            st.warning("**Video preview unavailable**\n\nThumbnail could not be generated\n\nPlease install ffmpeg to enable video thumbnails and metadata extraction")
+                            st.warning("**無法產生影片預覽**\n\n縮圖產生失敗\n\n請安裝 ffmpeg 以啟用影片縮圖與 metadata 提取功能")
                         else:
                             st.info("無縮圖（產生失敗）")
                     else:
