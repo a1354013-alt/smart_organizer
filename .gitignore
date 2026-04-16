@@ -1,7 +1,6 @@
-```
+
 # Test database files
 *.db
 
 # Pytest temporary directories
 tests/_tmp_pytest/
-```

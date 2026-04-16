@@ -5,7 +5,9 @@ import hashlib
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, Callable, Optional
+
 from contracts import ExtractedMetadata
 
 try:
@@ -13,10 +15,12 @@ try:
 except Exception:  # pragma: no cover
     Image = None  # type: ignore[assignment]
 
+exifread_module: Optional[ModuleType] = None
 try:
-    import exifread
+    import exifread as _exifread
+    exifread_module = _exifread
 except Exception:  # pragma: no cover
-    exifread = None
+    exifread_module = None
 
 PdfReader: Any
 try:
@@ -24,10 +28,12 @@ try:
 except Exception:  # pragma: no cover
     PdfReader = None
 
+convert_from_path_fn: Optional[Callable[..., Any]] = None
 try:
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_path as _convert_from_path
+    convert_from_path_fn = _convert_from_path
 except Exception:  # pragma: no cover
-    convert_from_path = None
+    convert_from_path_fn = None
 
 try:
     import pytesseract
@@ -44,6 +50,7 @@ except Exception:  # pragma: no cover
 FFMPEG_AVAILABLE = False
 try:
     import subprocess
+
     _ffprobe_check = subprocess.run(
         ["ffprobe", "-version"],
         capture_output=True,
@@ -56,27 +63,29 @@ except Exception:
 # 設定 Logging
 logger = logging.getLogger(__name__)
 
-DOCUMENT_TAGS = ['發票', '合約', '報價', '請款', '證明文件', '會議紀錄', '掃描', '其他文件']
-PHOTO_TAGS = ['人物', '美食', '旅行', '文件/收據', '工作', '截圖', '風景', '其他照片']
-VIDEO_TAGS = ['Unclassified', 'Screen Recording', 'Tutorial', 'Meeting', 'Promo', 'Raw Footage', 'Animation']
+DOCUMENT_TAGS = ["發票", "合約", "報價", "請款", "證明文件", "會議紀錄", "掃描", "其他文件"]
+PHOTO_TAGS = ["人物", "美食", "旅行", "文件/收據", "工作", "截圖", "風景", "其他照片"]
+VIDEO_TAGS = ["Unclassified", "Screen Recording", "Tutorial", "Meeting", "Promo", "Raw Footage", "Animation"]
 
 # Video classification keywords (for batch scanning phase 2)
 VIDEO_KEYWORD_RULES = {
-    'Screen Recording': ['screen', 'record', 'screenshot', 'desktop', '螢幕', '錄製', '畫面'],
-    'Tutorial': ['tutorial', 'howto', 'how-to', 'guide', '教學', '入門', '技巧', 'lesson'],
-    'Meeting': ['meeting', 'conference', 'zoom', 'teams', 'hangout', '會議', '簡報', 'presentation'],
-    'Promo': ['promo', 'trailer', 'teaser', 'advertisement', '廣告', '宣傳', '預告'],
-    'Raw Footage': ['raw', 'footage', 'clip', 'rushes', '原始', '素材'],
-    'Animation': ['animation', 'animated', 'cartoon', 'anime', '動畫', '動漫'],
+    "Screen Recording": ["screen", "record", "screenshot", "desktop", "螢幕", "錄製", "畫面"],
+    "Tutorial": ["tutorial", "howto", "how-to", "guide", "教學", "入門", "技巧", "lesson"],
+    "Meeting": ["meeting", "conference", "zoom", "teams", "hangout", "會議", "簡報", "presentation"],
+    "Promo": ["promo", "trailer", "teaser", "advertisement", "廣告", "宣傳", "預告"],
+    "Raw Footage": ["raw", "footage", "clip", "rushes", "原始", "素材"],
+    "Animation": ["animation", "animated", "cartoon", "anime", "動畫", "動漫"],
 }
+
 
 class FileUtils:
     """純工具函式類別，不涉及業務邏輯與昂貴初始化"""
+
     DEFAULT_UNKNOWN_DATE = "UnknownDate"
     DEFAULT_UNKNOWN_YEAR = "UnknownYear"
     DEFAULT_UNKNOWN_MONTH = "UnknownMonth"
-    ALLOWED_UPLOAD_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.mp4', '.mov', '.mkv'}
-    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv'}
+    ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv"}
+    VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
     DEFAULT_LLM_TRUNCATE_CHARS = 6000
 
     @staticmethod
@@ -104,11 +113,11 @@ class FileUtils:
             name = name.replace("..", "")
         # 移除開頭或結尾的點
         name = name.strip(".")
-        
+
         # 【邊界處理】若檔名被洗成空的，給予預設值
         if not name:
             name = "untitled_file"
-            
+
         if len(name) > max_length:
             name = name[:max_length]
         return f"{name}{ext}"
@@ -184,6 +193,7 @@ class FileUtils:
         preview_filename = f"preview_{source_path.name}.png"
         return str(preview_dir / preview_filename)
 
+
 class FileProcessor:
     def __init__(self):
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
@@ -212,7 +222,9 @@ class FileProcessor:
 
         self.pdf_text_max_pages = self._read_int_env("PDF_TEXT_MAX_PAGES", 10, min_value=1, max_value=50)
         self.pdf_preview_max_pages = self._read_int_env("PDF_PREVIEW_MAX_PAGES", 1, min_value=1, max_value=3)
-        self.max_heavy_process_bytes = self._read_int_env("MAX_HEAVY_PROCESS_MB", 15, min_value=1, max_value=200) * 1024 * 1024
+        self.max_heavy_process_bytes = (
+            self._read_int_env("MAX_HEAVY_PROCESS_MB", 15, min_value=1, max_value=200) * 1024 * 1024
+        )
         self.poppler_path = os.getenv("POPPLER_PATH") or None
 
     def _read_int_env(self, key, default, min_value=None, max_value=None):
@@ -231,9 +243,9 @@ class FileProcessor:
         return {
             "python": {
                 "Pillow": Image is not None,
-                "exifread": exifread is not None,
+                "exifread": exifread_module is not None,
                 "pypdf": PdfReader is not None,
-                "pdf2image": convert_from_path is not None,
+                "pdf2image": convert_from_path_fn is not None,
                 "pytesseract": pytesseract is not None,
                 "openai": OpenAI is not None,
             },
@@ -257,7 +269,7 @@ class FileProcessor:
     def get_file_hash(self, file_path):
         sha256_hash = hashlib.sha256()
         try:
-            if hasattr(file_path, 'read'):
+            if hasattr(file_path, "read"):
                 file_path.seek(0)
                 for byte_block in iter(lambda: file_path.read(4096), b""):
                     sha256_hash.update(byte_block)
@@ -314,9 +326,14 @@ class FileProcessor:
 
                 metadata["extracted_text"] = self._extract_pdf_text(file_path, max_pages=pdf_text_max_pages)
 
-                if enable_pdf_preview and convert_from_path is None:
+                if enable_pdf_preview and convert_from_path_fn is None:
                     metadata["notes"].append("pdf2image 未安裝，已跳過 PDF 預覽。")
-                elif enable_pdf_preview and not self.poppler_path and shutil.which("pdftoppm") is None and shutil.which("pdftocairo") is None:
+                elif (
+                    enable_pdf_preview
+                    and not self.poppler_path
+                    and shutil.which("pdftoppm") is None
+                    and shutil.which("pdftocairo") is None
+                ):
                     metadata["notes"].append("未找到 poppler（pdftoppm/pdftocairo），已跳過 PDF 預覽。")
                 elif enable_pdf_preview and (not file_size or file_size <= max_heavy_bytes):
                     metadata["preview_path"] = self._generate_pdf_preview(file_path, max_pages=pdf_preview_max_pages)
@@ -368,7 +385,7 @@ class FileProcessor:
                 return "", "OCR 依賴未安裝（pytesseract/Pillow）。"
             if shutil.which("tesseract") is None:
                 return "", "系統未找到 tesseract 可執行檔，OCR 已停用。"
-            text = pytesseract.image_to_string(Image.open(image_path), lang='chi_tra+eng')
+            text = pytesseract.image_to_string(Image.open(image_path), lang="chi_tra+eng")
             return text.strip(), None
         except Exception as e:
             err_msg = str(e)
@@ -381,20 +398,21 @@ class FileProcessor:
 
     def _generate_pdf_preview(self, file_path, max_pages=1):
         try:
-            if convert_from_path is None:
+            if convert_from_path_fn is None:
                 return None
+
             preview_path = FileUtils.build_preview_path(file_path)
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
-            
+
             if not os.path.exists(preview_path):
-                images = convert_from_path(
+                images = convert_from_path_fn(
                     file_path,
                     first_page=1,
                     last_page=max(1, int(max_pages or 1)),
                     poppler_path=self.poppler_path,
                 )
                 if images:
-                    images[0].save(preview_path, 'PNG')
+                    images[0].save(preview_path, "PNG")
             return preview_path
         except Exception as e:
             logger.error(f"PDF 預覽圖產生失敗: {e}")
@@ -402,13 +420,13 @@ class FileProcessor:
 
     def _get_photo_date(self, file_path):
         try:
-            if exifread is None:
+            if exifread_module is None:
                 return None
-            with open(file_path, 'rb') as f:
-                tags = exifread.process_file(f, stop_tag='DateTimeOriginal')
-                if 'EXIF DateTimeOriginal' in tags:
-                    date_str = str(tags['EXIF DateTimeOriginal'])
-                    return FileUtils.normalize_standard_date(date_str.split(' ')[0].replace(':', '-'))
+            with open(file_path, "rb") as f:
+                tags = exifread_module.process_file(f, stop_tag="DateTimeOriginal")
+                if "EXIF DateTimeOriginal" in tags:
+                    date_str = str(tags["EXIF DateTimeOriginal"])
+                    return FileUtils.normalize_standard_date(date_str.split(" ")[0].replace(":", "-"))
         except Exception as e:
             logger.debug(f"EXIF 讀取失敗: {e}")
         return None
@@ -416,11 +434,10 @@ class FileProcessor:
     def _get_file_mtime(self, file_path):
         try:
             mtime = os.path.getmtime(file_path)
-            return datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
+            return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         except Exception as e:
             logger.error(f"獲取修改時間失敗: {e}")
-            return datetime.datetime.now().strftime('%Y-%m-%d')
-
+            return datetime.datetime.now().strftime("%Y-%m-%d")
 
     def _extract_video_metadata(self, file_path):
         """
@@ -439,33 +456,35 @@ class FileProcessor:
             "created_at": None,
             "modified_at": None,
         }
-        
+
         if not FFMPEG_AVAILABLE:
             result["error"] = "ffprobe 不可用，無法解析影片 metadata"
             return result
-        
+
         try:
-            import subprocess
             import json
-            
+            import subprocess
+
             # Get file size
             try:
                 result["file_size"] = os.path.getsize(file_path)
             except Exception:
                 pass
-            
+
             # Get modification time
             try:
                 mtime = os.path.getmtime(file_path)
                 result["modified_at"] = datetime.datetime.fromtimestamp(mtime).isoformat()
             except Exception:
                 pass
-            
+
             # Run ffprobe to get video stream info
             cmd = [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 file_path,
@@ -474,21 +493,21 @@ class FileProcessor:
             if proc.returncode != 0:
                 result["error"] = f"ffprobe 執行失敗：{proc.stderr.strip()[:100]}"
                 return result
-            
+
             data = json.loads(proc.stdout)
-            
+
             # Find video stream
             video_stream = None
             for stream in data.get("streams", []):
                 if stream.get("codec_type") == "video":
                     video_stream = stream
                     break
-            
+
             if video_stream:
                 result["width"] = video_stream.get("width")
                 result["height"] = video_stream.get("height")
                 result["video_codec"] = video_stream.get("codec_name")
-                
+
                 # FPS calculation
                 fps = video_stream.get("r_frame_rate")
                 if fps and "/" in fps:
@@ -502,7 +521,7 @@ class FileProcessor:
                         result["fps"] = float(fps)
                     except ValueError:
                         pass
-            
+
             # Duration from format
             fmt = data.get("format", {})
             duration = fmt.get("duration")
@@ -511,12 +530,12 @@ class FileProcessor:
                     result["duration_seconds"] = round(float(duration), 2)
                 except ValueError:
                     pass
-            
+
             # Creation time if available
             creation_time = fmt.get("tags", {}).get("creation_time")
             if creation_time:
                 result["created_at"] = creation_time
-                
+
         except subprocess.TimeoutExpired:
             result["error"] = "ffprobe 超時（影片可能損毀或過大）"
         except json.JSONDecodeError:
@@ -524,7 +543,7 @@ class FileProcessor:
         except Exception as e:
             logger.error(f"影片 metadata 抽取失敗 ({file_path}): {e}")
             result["error"] = f"解析錯誤：{str(e)[:80]}"
-        
+
         return result
 
     def _generate_video_thumbnail(self, file_path, thumb_percent=0.5):
@@ -534,49 +553,56 @@ class FileProcessor:
         """
         if not FFMPEG_AVAILABLE:
             return None
-        
+
         try:
             import subprocess
-            
+
             # Get video duration first
             cmd_duration = [
                 "ffprobe",
-                "-v", "quiet",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 file_path,
             ]
             proc = subprocess.run(cmd_duration, capture_output=True, text=True, timeout=10)
             if proc.returncode != 0:
                 return None
-            
+
             try:
                 duration = float(proc.stdout.strip())
             except ValueError:
                 duration = 1.0
-            
+
             # Pick a timestamp around the middle (avoid black frames at start)
             thumb_time = max(1.0, duration * thumb_percent)
-            
+
             # Build thumbnail path
             source_path = Path(file_path)
             thumb_dir = source_path.parent / "previews"
             thumb_filename = f"thumb_{source_path.name}.jpg"
             thumb_path = str(thumb_dir / thumb_filename)
-            
+
             os.makedirs(str(thumb_dir), exist_ok=True)
-            
+
             # Skip if already exists
             if os.path.exists(thumb_path):
                 return thumb_path
-            
+
             # Extract frame using ffmpeg
             cmd = [
                 "ffmpeg",
-                "-ss", str(thumb_time),
-                "-i", file_path,
-                "-vframes", "1",
-                "-q:v", "2",
+                "-ss",
+                str(thumb_time),
+                "-i",
+                file_path,
+                "-vframes",
+                "1",
+                "-q:v",
+                "2",
                 "-y",
                 thumb_path,
             ]
@@ -584,9 +610,11 @@ class FileProcessor:
             if proc.returncode == 0 and os.path.exists(thumb_path):
                 return thumb_path
             else:
-                logger.warning(f"縮圖產生失敗 ({file_path}): {proc.stderr.decode('utf-8', errors='ignore')[:200]}")
+                logger.warning(
+                    f"縮圖產生失敗 ({file_path}): {proc.stderr.decode('utf-8', errors='ignore')[:200]}"
+                )
                 return None
-                
+
         except subprocess.TimeoutExpired:
             logger.warning(f"縮圖產生超時 ({file_path})")
             return None
@@ -620,13 +648,13 @@ class FileProcessor:
         collected_text = []
         errors = []
         try:
-            if convert_from_path is None:
+            if convert_from_path_fn is None:
                 return "", "PDF OCR 依賴未安裝（pdf2image）。"
             if pytesseract is None:
                 return "", "PDF OCR 依賴未安裝（pytesseract）。"
             if shutil.which("tesseract") is None:
                 return "", "系統未找到 tesseract 可執行檔，PDF OCR 已停用。"
-            images = convert_from_path(
+            images = convert_from_path_fn(
                 file_path,
                 first_page=1,
                 last_page=max_pages,
@@ -634,7 +662,7 @@ class FileProcessor:
             )
             for image in images:
                 try:
-                    text = pytesseract.image_to_string(image, lang='chi_tra+eng').strip()
+                    text = pytesseract.image_to_string(image, lang="chi_tra+eng").strip()
                     if text:
                         collected_text.append(text)
                 except Exception as e:
@@ -686,7 +714,6 @@ class FileProcessor:
             )
             content = (response.choices[0].message.content or "").strip()
         except Exception:
-            # 對使用者：友善訊息；詳細錯誤留在 log
             logger.error("LLM 摘要呼叫失敗", exc_info=True)
             return "AI 摘要暫時不可用，請稍後再試。", []
 
@@ -703,7 +730,6 @@ class FileProcessor:
                 summary = f"{summary} {note}"
             return summary, tags
         except Exception:
-            # JSON 解析失敗：不噴底層錯誤到 UI，保留可理解訊息
             logger.warning("AI 回應 JSON 解析失敗（已改用保守提示）", exc_info=True)
             msg = "AI 回應格式異常（JSON 解析失敗），請稍後再試。"
             if note:
@@ -732,9 +758,7 @@ class FileProcessor:
         is_video = metadata.get("file_type") == "video" or ext in FileUtils.VIDEO_EXTENSIONS
 
         if is_video:
-            # Video files use simple tagging - just mark as video
             scores = {tag: 0.0 for tag in VIDEO_TAGS}
-            # Use English topic to match VIDEO_TAGS
             scores["Unclassified"] = 1.0
             reasons.append("影片：自動標記為未分類（Unclassified）")
             default_tag = "Unclassified"
@@ -758,7 +782,6 @@ class FileProcessor:
             if is_scanned:
                 add("掃描", 0.5, "偵測為掃描件（PDF 文字不足）")
 
-            # 負面規則：圖片副檔名降低文件信心（避免誤判）
             if ext in {".jpg", ".jpeg", ".png"}:
                 for t in DOCUMENT_TAGS:
                     sub(t, 0.2, "副檔名為圖片，降低文件類別信心")
@@ -779,14 +802,12 @@ class FileProcessor:
                 if any(k.lower() in text_lower for k in keywords):
                     add(tag, w * 0.6, f"OCR/內容包含關鍵字 {keywords}")
 
-            # 負面規則：PDF 不應落在照片分類
             if ext == ".pdf":
                 for t in PHOTO_TAGS:
                     sub(t, 0.5, "副檔名為 PDF，降低照片類別信心")
 
             default_tag = "其他照片"
 
-        # 只保留正分數並上限 1.0，避免 UI 顯示負分噪音
         results = {tag: min(max(score, 0.0), 1.0) for tag, score in scores.items() if score > 0.0}
         if not results:
             results[default_tag] = 1.0
@@ -802,13 +823,13 @@ class FileProcessor:
         if not main_topic:
             return normalized_scores
 
-        if file_type == 'video':
+        if file_type == "video":
             allowed_topics = VIDEO_TAGS
-        elif file_type == 'document':
+        elif file_type == "document":
             allowed_topics = DOCUMENT_TAGS
         else:
             allowed_topics = PHOTO_TAGS
-            
+
         if main_topic not in allowed_topics:
             return normalized_scores
 
