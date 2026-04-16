@@ -3,14 +3,14 @@ import os
 import logging
 
 try:
-    import pandas as pd  # type: ignore
+    import pandas as pd
 except Exception:  # pragma: no cover
-    pd = None  # type: ignore
+    pd = None  # type: ignore[assignment]
 
 try:
-    import matplotlib.pyplot as plt  # type: ignore
+    import matplotlib.pyplot as plt
 except Exception:  # pragma: no cover
-    plt = None  # type: ignore
+    plt = None  # type: ignore[assignment]
 from pathlib import Path
 from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
@@ -220,7 +220,7 @@ def render_review_tab():
                 
                 if result.preview_path and storage.path_exists(result.preview_path):
                     try:
-                        from PIL import Image  # type: ignore
+                        from PIL import Image
 
                         img = Image.open(result.preview_path)
                         st.image(img, use_container_width=True)

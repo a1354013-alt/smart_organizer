@@ -33,14 +33,14 @@ def test_finalize_partial_copy_failure_cleans_target_and_rolls_back_state():
         storage._mem_files[dst] = b"partial"
         raise RuntimeError("forced copy failure after creating target")
 
-    storage._move_path = force_perm_error  # type: ignore[method-assign]
-    storage._copy_path = partial_then_fail  # type: ignore[method-assign]
+    storage._move_path = force_perm_error
+    storage._copy_path = partial_then_fail
     try:
         with pytest.raises(RuntimeError):
             storage.finalize_organization(file_id, "2026-04-08", "發票", "x.pdf")
     finally:
-        storage._move_path = original_move  # type: ignore[method-assign]
-        storage._copy_path = original_copy  # type: ignore[method-assign]
+        storage._move_path = original_move
+        storage._copy_path = original_copy
 
     info = storage.get_file_by_id(file_id)
     assert info["status"] == "PROCESSED"

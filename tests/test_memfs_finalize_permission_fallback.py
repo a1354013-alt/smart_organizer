@@ -25,11 +25,11 @@ def test_finalize_organization_memfs_permissionerror_fallback_uses_helpers():
     def boom_move(src, dst):
         raise PermissionError("forced for test")
 
-    storage._move_path = boom_move  # type: ignore[method-assign]
+    storage._move_path = boom_move
     try:
         final_path = storage.finalize_organization(file_id, "2026-04-08", "發票", "x.pdf")
     finally:
-        storage._move_path = original_move  # type: ignore[method-assign]
+        storage._move_path = original_move
 
     assert isinstance(final_path, str)
     assert final_path.startswith("mem://repo/")
