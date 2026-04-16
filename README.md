@@ -1,39 +1,42 @@
-# 📁 智慧檔案整理助理 (v2.8.1)
+# 📁 智慧檔案整理助理 (v2.9.0)
 
-這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF 與照片進行分類、命名與整理。
+這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF、照片與影片進行分類、命名與整理。
 
 ## 🌟 核心功能
 - **智慧分類**：系統主要透過**規則引擎**進行主題分類（發票、合約、截圖等），並可選擇使用 **LLM 生成文件摘要與輔助標籤**。
-- **視覺化預覽**：支援照片縮圖與 PDF 第一頁自動轉圖預覽。
+- **視覺化預覽**：支援照片縮圖、PDF 第一頁自動轉圖預覽，以及影片縮圖產生。
 - **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
 - **掃描檔補強**：自動偵測掃描 PDF 並進行「抽樣頁數」OCR（預設最多 3 頁，可用 `PDF_OCR_MAX_PAGES` 調整），提升可搜尋性。
 - **可交付與可診斷**：路徑與狀態完全封裝於 Storage 層，並以 `last_error` 提供可重試與可追查的錯誤摘要。
+- **批量處理**：支援離線掃描指定資料夾，自動匯入大量檔案並進行去重與分類。
 
-支援上傳格式：PDF、JPG/JPEG、PNG。
+支援上傳格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV。
 
 ## 🛠️ 安裝說明
 
 ### 1. 系統級依賴 (OS Dependencies)
-本專案需要以下系統工具支援 PDF 處理與 OCR：
+本專案需要以下系統工具支援 PDF 處理、OCR 與影片處理：
 
 > 重要：本專案已做「缺少依賴時的功能降級」：
 > - 缺少 poppler（`pdftoppm`/`pdftocairo`）時：PDF 預覽會跳過，但其餘流程仍可運作。
 > - 缺少 tesseract 或語言包時：OCR 會停用/跳過，仍可整理與搜尋（若 PDF 本身可抽到文字）。
+> - 缺少 ffmpeg（`ffprobe`/`ffmpeg`）時：影片縮圖與 metadata 提取會跳過，但影片仍可上傳與分類。
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get update
-sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra
+sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra ffmpeg
 ```
 
 **macOS (Homebrew):**
 ```bash
-brew install poppler tesseract tesseract-lang
+brew install poppler tesseract tesseract-lang ffmpeg
 ```
 
 **Windows:**
 - 安裝 Poppler（提供 `pdftoppm`）：確保 `pdftoppm.exe` 在 PATH 內，或設定環境變數 `POPPLER_PATH` 指向 Poppler 的 `bin` 目錄。
 - 安裝 Tesseract（提供 `tesseract.exe`）：確保 `tesseract.exe` 在 PATH 內，並安裝繁中語言包（常見名稱 `chi_tra`）。
+- 安裝 ffmpeg：下載 builds 並加入 PATH，或使用 `choco install ffmpeg`。
 
 ### 2. Python 環境設定
 建議使用虛擬環境：
@@ -53,7 +56,8 @@ mypy version.py contracts.py services.py
 > 提示：本專案已在 `tests/conftest.py` 補上測試路徑處理，直接在專案根目錄執行 `pytest -q` 不需要額外設定 `PYTHONPATH`。
 
 ## 📦 Release 交付包（正式包不附 tests）
-- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`**（避免交付包定位模糊）。
+- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`、`.git/`、`__pycache__/`、`.coverage`、`tests/_tmp_pytest/` 等開發暫存檔**。
+- `.gitignore` 已設定自動忽略 Python 快取、測試暫存目錄、IDE 設定與發布產物。
 - zip 檔名預設包含專案版本（來自 `version.py`）與 `runtime-demo`，避免 workspace 快照被誤認為正式交付包。
 - 正式包內另外提供 `RUN_RELEASE.md`，專門說明 runtime/demo 包的安裝與啟動方式。
 - 若需要驗證測試，請使用 source repo 執行 `pytest -q`。

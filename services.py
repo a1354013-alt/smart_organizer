@@ -169,6 +169,9 @@ def analyze_upload_batch(
     processing_options: Mapping[str, Any] | None = None,
     progress_callback: Callable[[int, int, UploadedFileData], None] | None = None,
 ) -> BatchAnalysisOutcome:
+    """
+    批量分析上傳檔案 (同步版本，保持向後相容)
+    """
     upload_list = list(uploads)
     total = len(upload_list)
     logger.info("analyze_upload_batch start%s", _log_context(files=total))
@@ -194,6 +197,81 @@ def analyze_upload_batch(
 
     logger.info(
         "analyze_upload_batch done%s",
+        _log_context(files=total, analyzed=len(results), duplicates=len(duplicates), errors=len(errors)),
+    )
+    return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)
+
+
+def analyze_upload_batch_async(
+    uploads: Iterable[UploadedFileData],
+    *,
+    processor: FileProcessor,
+    storage: StorageManager,
+    processing_options: Mapping[str, Any] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+    max_workers: int = 4,
+) -> BatchAnalysisOutcome:
+    """
+    批量分析上傳檔案 (非同步版本，支援進度追蹤與取消)
+    
+    Args:
+        uploads: 上傳檔案列表
+        processor: 檔案處理器
+        storage: 儲存管理器
+        processing_options: 處理選項
+        progress_callback: 進度回調 (current, total)
+        max_workers: 最大執行緒數
+    
+    Returns:
+        BatchAnalysisOutcome
+    """
+    from services.async_processor import AsyncProcessor, ProgressState
+    
+    upload_list = list(uploads)
+    total = len(upload_list)
+    logger.info("analyze_upload_batch_async start%s", _log_context(files=total))
+    
+    async_proc = AsyncProcessor(max_workers=max_workers)
+    results: list[AnalysisResult] = []
+    duplicates: list[DuplicateInfo] = []
+    errors: list[str] = []
+    
+    def process_single(uploaded: UploadedFileData) -> tuple[AnalysisResult | None, DuplicateInfo | None, str | None]:
+        """單個檔案處理函式"""
+        return analyze_one_upload(
+            uploaded,
+            processor=processor,
+            storage=storage,
+            processing_options=processing_options,
+        )
+    
+    def on_progress(progress: ProgressState):
+        """進度回調"""
+        if progress_callback:
+            progress_callback(progress.current, progress.total)
+        for error_info in progress.errors[-1:]:  # 記錄最新錯誤
+            logger.warning("Async processing error: %s - %s", error_info["file"], error_info["error"])
+    
+    # 執行非同步處理
+    outcomes = async_proc.process_batch(
+        items=upload_list,
+        process_fn=process_single,
+        progress_callback=on_progress,
+        item_name="檔案",
+    )
+    
+    # 整理結果
+    for outcome in outcomes:
+        analyzed, dup, err = outcome
+        if analyzed is not None:
+            results.append(analyzed)
+        if dup is not None:
+            duplicates.append(dup)
+        if err is not None:
+            errors.append(err)
+    
+    logger.info(
+        "analyze_upload_batch_async done%s",
         _log_context(files=total, analyzed=len(results), duplicates=len(duplicates), errors=len(errors)),
     )
     return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)

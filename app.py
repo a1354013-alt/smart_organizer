@@ -12,7 +12,7 @@ try:
 except Exception:  # pragma: no cover
     plt = None  # type: ignore
 from pathlib import Path
-from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS
+from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
 from storage import StorageManager, SearchContentError
 from version import APP_NAME, APP_TITLE, __version__
@@ -141,11 +141,11 @@ _render_sidebar()
 # ========== 主流程 ==========
 def render_upload_tab():
     st.header("步驟 1：上傳檔案")
-    st.markdown("支援格式：PDF、JPG/JPEG、PNG")
+    st.markdown("支援格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV")
 
     uploaded_files = st.file_uploader(
         "選擇檔案",
-        type=["pdf", "jpg", "jpeg", "png"],
+        type=["pdf", "jpg", "jpeg", "png", "mp4", "mov", "mkv"],
         accept_multiple_files=True,
     )
 
@@ -214,22 +214,102 @@ def render_review_tab():
 
             with col1:
                 st.subheader("預覽")
+                
+                # Check if it's a video file
+                is_video = result.file_type == "video"
+                
                 if result.preview_path and storage.path_exists(result.preview_path):
                     try:
                         from PIL import Image  # type: ignore
 
                         img = Image.open(result.preview_path)
                         st.image(img, use_container_width=True)
+                        
+                        # Show video badge for videos
+                        if is_video:
+                            st.caption("🎬 影片縮圖")
                     except Exception as e:
-                        st.warning(f"預覽失敗: {e}")
+                        st.warning(f"預覽失敗：{e}")
                 else:
-                    st.info("無預覽圖")
+                    # No thumbnail available
+                    if is_video:
+                        # Show video placeholder with ffmpeg warning
+                        st.markdown("🎬 **影片**")
+                        from core import FFMPEG_AVAILABLE
+                        if not FFMPEG_AVAILABLE:
+                            st.warning("**無法產生影片預覽**\n\n縮圖產生失敗\n\n請安裝 ffmpeg 以啟用影片縮圖與 metadata 提取功能")
+                        else:
+                            st.info("無縮圖（產生失敗）")
+                    else:
+                        st.info("無預覽圖")
 
             with col2:
                 st.subheader("詳細資訊")
                 st.write(f"**檔名**: {result.original_name}")
                 st.write(f"**類型**: {result.file_type}")
                 st.write(f"**日期**: {result.standard_date}")
+
+                # Video metadata display (Phase 1 UI completion)
+                if result.file_type == "video":
+                    extra = (result.metadata or {}).get("extra", {})
+                    
+                    # Duration formatting (mm:ss)
+                    duration_sec = extra.get("duration_seconds")
+                    if duration_sec is not None:
+                        try:
+                            duration_min = int(duration_sec // 60)
+                            duration_sec_remainder = int(duration_sec % 60)
+                            st.write(f"**時長**: {duration_min:02d}:{duration_sec_remainder:02d}")
+                        except (TypeError, ValueError):
+                            st.write("**時長**: N/A")
+                    else:
+                        st.write("**時長**: N/A")
+                    
+                    # Resolution
+                    width = extra.get("width")
+                    height = extra.get("height")
+                    if width is not None and height is not None:
+                        st.write(f"**解析度**: {width} x {height}")
+                    else:
+                        st.write("**解析度**: N/A")
+                    
+                    # FPS
+                    fps = extra.get("fps")
+                    if fps is not None:
+                        try:
+                            st.write(f"**FPS**: {int(round(float(fps)))}")
+                        except (TypeError, ValueError):
+                            st.write("**FPS**: N/A")
+                    else:
+                        st.write("**FPS**: N/A")
+                    
+                    # Codec
+                    codec = extra.get("video_codec")
+                    if codec:
+                        codec_display = codec.upper() if isinstance(codec, str) else str(codec)
+                        st.write(f"**編碼**: {codec_display}")
+                    else:
+                        st.write("**編碼**: N/A")
+                    
+                    # File size (from extra or compute from original)
+                    file_size = extra.get("file_size")
+                    if file_size is not None:
+                        try:
+                            file_size_mb = float(file_size) / (1024 * 1024)
+                            if file_size_mb >= 1:
+                                st.write(f"**大小**: {file_size_mb:.1f} MB")
+                            else:
+                                st.write(f"**大小**: {file_size / 1024:.1f} KB")
+                        except (TypeError, ValueError):
+                            st.write("**大小**: N/A")
+                    else:
+                        st.write("**大小**: N/A")
+                    
+                    # Thumbnail error warning if present
+                    thumb_error = extra.get("thumbnail_error")
+                    if thumb_error:
+                        st.warning(f"縮圖提示：{thumb_error}")
+
 
                 if result.is_scanned:
                     st.warning("⚠️ 掃描 PDF - 文字不足，已視情況嘗試 OCR 抽樣（可於側邊欄調整/停用）")
@@ -243,9 +323,18 @@ def render_review_tab():
                 tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in (result.tag_scores or {}).items()])
                 st.write(tag_str)
 
-                tag_options = DOCUMENT_TAGS if result.file_type == "document" else PHOTO_TAGS
+                # Three-way classification分流：document/photo/video
+                if result.file_type == "document":
+                    tag_options = DOCUMENT_TAGS
+                elif result.file_type == "photo":
+                    tag_options = PHOTO_TAGS
+                elif result.file_type == "video":
+                    tag_options = VIDEO_TAGS
+                else:
+                    tag_options = DOCUMENT_TAGS  # fallback
+                
                 new_topic = st.selectbox(
-                    "????",
+                    "選擇分類",
                     tag_options,
                     index=tag_options.index(result.main_topic) if result.main_topic in tag_options else 0,
                     key=f"topic_{idx}",
@@ -260,25 +349,25 @@ def render_review_tab():
                     summary=st.session_state.review_summaries.get(result.file_id),
                 )
 
-                st.caption("??????")
+                st.caption("📝 分類理由")
                 st.code(computed.classification_reason or "")
-                st.caption("??????")
+                st.caption("🎯 最終決策理由")
                 st.code(computed.final_decision_reason or "")
 
-                if st.button("?? AI ??", key=f"summary_{idx}"):
+                if st.button("✨ AI 建議摘要", key=f"summary_{idx}"):
                     if not st.session_state.get("ai_enabled"):
-                        st.warning("AI ???????????????????")
+                        st.warning("AI 功能未啟用，請在設定中開啟。")
                         continue
 
-                    with st.spinner("???? AI ??..."):
+                    with st.spinner("生成 AI 摘要建議中..."):
                         suggestion = generate_summary_suggestion(
                             computed,
                             processor=processor,
                         )
-                        st.info(f"**??**: {suggestion.summary}")
+                        st.info(f"**建議**: {suggestion.summary}")
                         if suggestion.llm_tags:
-                            st.caption("AI ?????????????????????")
-                            st.write(f"**AI ????**: {', ' .join(suggestion.llm_tags)}")
+                            st.caption("AI 同時建議了以下標籤供參考：")
+                            st.write(f"**AI 建議標籤**: {', '.join(suggestion.llm_tags)}")
                         st.session_state.review_summaries[result.file_id] = suggestion.summary
 
     if st.button("✅ 確認無誤，進行整理", key="confirm_button"):

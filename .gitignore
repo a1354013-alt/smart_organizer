@@ -1,43 +1,7 @@
-__pycache__/
-*.py[cod]
-*.sqlite
+```
+# Test database files
 *.db
-*.db-*
-*.sqlite-*
-*.log
-*.zip
 
-uploads/
-repo/
-test_uploads/
-test_repo/
-test_files/
-repo_v1/
-smart_org_regression_*/
-tests/_tmp/
-tests/_tmp_write_test/
-tests/tmpdel_*/
-frontend/node_modules/
-
-.pytest_cache/
-.pytest_tmp/
-.pycache_tmp/
+# Pytest temporary directories
 tests/_tmp_pytest/
-tests/_pycache_tmp/
-pytest-cache-files-*/
-.mypy_cache/
-.ruff_cache/
-.venv/
-.coverage
-dist/
-build/
-release/
-release_test/
-release_tmp/
-
-Thumbs.db
-.DS_Store
-
-# local sandbox artifacts
-del_file_test.txt
-tmp_del/
+```

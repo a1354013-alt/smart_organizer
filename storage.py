@@ -354,7 +354,9 @@ class StorageManager:
             return "photo"
         if ext == ".pdf":
             return "document"
-        if provided in {"photo", "document"}:
+        if ext in {".mp4", ".mov", ".mkv"}:
+            return "video"
+        if provided in {"photo", "document", "video"}:
             return str(provided)
         return "document"
 
