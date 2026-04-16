@@ -9,23 +9,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
+
       - name: Syntax check
         run: |
           python -c "from pathlib import Path; files = ['app.py','core.py','services.py','storage.py','logging_config.py','version.py','contracts.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]"
+
       - name: Ruff (minimal)
         run: |
           ruff check .
+
       - name: Mypy (minimal)
         run: |
           mypy version.py contracts.py services.py
+
       - name: Tests
         run: |
           python -B -m pytest -q --cov=. --cov-report=term-missing:skip-covered
