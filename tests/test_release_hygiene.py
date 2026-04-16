@@ -13,7 +13,6 @@ These tests verify that release/build directories don't contain:
 """
 
 import os
-import subprocess
 from pathlib import Path
 
 
