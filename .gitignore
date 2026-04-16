@@ -1,5 +1,46 @@
 ```
-# Test database files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test files
+.tests/_tmp_pytest/
 *.db
-**/_tmp_pytest/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# MyPy
+.mypy_cache/
+
+# PyTest
+.pytest_cache/
 ```

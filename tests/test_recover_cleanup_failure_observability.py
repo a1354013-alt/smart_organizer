@@ -42,12 +42,12 @@ def test_recover_target_cleanup_failure_writes_user_friendly_last_error():
     def fail_remove(path_value):
         raise PermissionError("forced cleanup failure")
 
-    storage._remove_path = fail_remove  # type: ignore[method-assign]
+    storage._remove_path = fail_remove
     try:
         info2 = storage.get_file_by_id(file_id)
         storage._recover_moving_file(file_id, info2)
     finally:
-        storage._remove_path = original_remove  # type: ignore[method-assign]
+        storage._remove_path = original_remove
 
     info3 = storage.get_file_by_id(file_id)
     assert info3["status"] == "PROCESSED"

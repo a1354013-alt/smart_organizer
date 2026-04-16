@@ -70,7 +70,7 @@ def test_create_temp_file_memfs_duplicate_orphan_cleanup_does_not_crash():
     def patched_get_connection(*args, **kwargs):
         return _ProxyConn(original_get_connection(*args, **kwargs))
 
-    storage._get_connection = patched_get_connection  # type: ignore[method-assign]
+    storage._get_connection = patched_get_connection
 
     def worker(name: str):
         try:
