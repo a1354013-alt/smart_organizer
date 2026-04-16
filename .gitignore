@@ -4,3 +4,8 @@
 
 # Pytest temporary directories
 tests/_tmp_pytest/
+
+# 必要的 release hygiene ignore pattern
+__pycache__
+.coverage
+*.pyc
