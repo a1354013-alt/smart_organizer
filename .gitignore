@@ -1,44 +1,14 @@
 ```
-# Coverage reports
-.coverage
+# Test database files
+tests/_tmp_pytest/**/*.db
 
-# Python
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.ENV.local
-.env.*
-.python-version
-*.env.*
 
-# Testing
-.coverage
-htmlcov/
-.tox/
-.nox/
-coverage.xml
-*.cover
-*.log
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Temp files
 *.tmp
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
+*.temp
 ```
