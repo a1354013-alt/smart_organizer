@@ -4,6 +4,7 @@
 
 ## 🌟 核心功能
 - **智慧分類**：系統主要透過**規則引擎**進行主題分類（發票、合約、截圖等），並可選擇使用 **LLM 生成文件摘要與輔助標籤**。
+- **影片分類（可解釋規則）**：影片主題以「檔名/關鍵字規則」分類（Screen Recording / Tutorial / Meeting / Promo / Raw Footage / Animation），不做影片內容辨識。
 - **視覺化預覽**：支援照片縮圖、PDF 第一頁自動轉圖預覽，以及影片縮圖產生。
 - **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
 - **掃描檔補強**：自動偵測掃描 PDF 並進行「抽樣頁數」OCR（預設最多 3 頁，可用 `PDF_OCR_MAX_PAGES` 調整），提升可搜尋性。
@@ -92,12 +93,14 @@ streamlit run app.py
 - `PDF_TEXT_MAX_PAGES`: PDF 文字抽取頁數上限（預設 10）
 - `PDF_OCR_MAX_PAGES`: PDF OCR 抽樣頁數上限（預設 3，上限 5）
 - `MAX_HEAVY_PROCESS_MB`: OCR/預覽等「耗時處理」的檔案大小上限（預設 15MB，避免卡死 UI）
+- 單檔上傳硬限制：25MB（`storage.py` 的 `MAX_UPLOAD_BYTES`；不同於 `MAX_HEAVY_PROCESS_MB`，後者只影響 OCR/預覽等耗時處理是否啟用）
 - `LOG_LEVEL`: logging 等級（預設 `INFO`）
 - `LOG_FILE`: 若設定，會額外輸出檔案 log，方便交付後追查單檔生命週期問題
 
 ## 📂 專案結構
 - `app.py`: Streamlit UI 介面（薄層），負責互動與呼叫 usecase/service。
 - `services.py`: 可測試的流程函式（分析/整理/重新分類/手動覆寫決策）與資料契約收斂。
+- `async_processor.py`: 多執行緒批次處理與進度回調（提供 async batch 分析入口使用）。
 - `core.py`: 核心處理模組，包含 OCR、PDF 處理與 AI 邏輯（AI 為 opt-in）。
 - `storage.py`: 資料庫與檔案管理層，負責路徑封裝、狀態機與 FTS5 搜尋。
 - `version.py`: 版本單一來源（UI/README/release zip 命名由測試強制一致）。

@@ -13,6 +13,7 @@ The release zip is created from an **allowlist** (not a blocklist). Only these p
 - `app.py`
 - `core.py`
 - `services.py`
+- `async_processor.py`
 - `storage.py`
 - `logging_config.py`
 - `version.py`
@@ -44,7 +45,7 @@ To run tests, use the source repo (not the release zip):
 pip install -r requirements-dev.txt
 pytest -q
 ruff check .
-mypy version.py contracts.py services.py
+mypy version.py contracts.py services.py core.py storage.py async_processor.py
 ```
 
 After unpacking the official zip, follow `RUN_RELEASE.md` for runtime/demo startup steps.

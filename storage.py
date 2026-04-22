@@ -231,49 +231,60 @@ class StorageManager:
 
                 # V6/V7: 強化 FTS 欄位與 Cascade (如果之前沒做成功)
                 if version < 7:
-                    try:
-                        # 1. 處理 file_tags 的 Cascade
-                        cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
-                        cursor.execute("DROP TABLE IF EXISTS file_tags")
-                        cursor.execute('''
-                            CREATE TABLE file_tags (
-                                file_id INTEGER, tag_id INTEGER, confidence REAL,
-                                PRIMARY KEY (file_id, tag_id),
-                                FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
-                                FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
-                            )
-                        ''')
-                        cursor.execute("INSERT INTO file_tags SELECT * FROM file_tags_backup")
-                        cursor.execute("DROP TABLE file_tags_backup")
+                    # 1. 處理 file_tags 的 Cascade
+                    cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
+                    cursor.execute("DROP TABLE IF EXISTS file_tags")
+                    cursor.execute(
+                        """
+                        CREATE TABLE file_tags (
+                            file_id INTEGER, tag_id INTEGER, confidence REAL,
+                            PRIMARY KEY (file_id, tag_id),
+                            FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+                            FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+                        )
+                        """
+                    )
+                    cursor.execute("INSERT INTO file_tags SELECT * FROM file_tags_backup")
+                    cursor.execute("DROP TABLE file_tags_backup")
 
-                        # 2. 擴充 FTS 表欄位並安全遷移數據
-                        cursor.execute("CREATE TABLE IF NOT EXISTS fts_migration_backup(rowid INTEGER PRIMARY KEY, content TEXT)")
-                        cursor.execute("PRAGMA table_info(file_content_fts)")
-                        fts_cols = [c[1] for c in cursor.fetchall()]
-                        if 'content' in fts_cols:
-                            cursor.execute("INSERT OR REPLACE INTO fts_migration_backup(rowid, content) SELECT rowid, content FROM file_content_fts")
+                    # 2. 擴充 FTS 表欄位並安全遷移數據
+                    cursor.execute("CREATE TABLE IF NOT EXISTS fts_migration_backup(rowid INTEGER PRIMARY KEY, content TEXT)")
+                    cursor.execute("PRAGMA table_info(file_content_fts)")
+                    fts_cols = [c[1] for c in cursor.fetchall()]
+                    if "content" in fts_cols:
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO fts_migration_backup(rowid, content) SELECT rowid, content FROM file_content_fts"
+                        )
 
-                        cursor.execute("DROP TABLE IF EXISTS file_content_fts")
-                        cursor.execute('''
-                            CREATE VIRTUAL TABLE file_content_fts USING fts5(
-                                original_filename, title, summary, content, tokenize='unicode61'
-                            )
-                        ''')
-                        cursor.execute('''
-                            INSERT INTO file_content_fts(rowid, original_filename, title, summary, content)
-                            SELECT f.file_id, f.original_name, f.main_topic, f.summary, COALESCE(b.content, '')
-                            FROM files f
-                            LEFT JOIN fts_migration_backup b ON f.file_id = b.rowid
-                        ''')
-                        cursor.execute("DROP TABLE fts_migration_backup")
-                    except Exception as mig_err:
-                        logger.warning(f"V7 Migration 部分失敗: {mig_err}")
+                    cursor.execute("DROP TABLE IF EXISTS file_content_fts")
+                    cursor.execute(
+                        """
+                        CREATE VIRTUAL TABLE file_content_fts USING fts5(
+                            original_filename, title, summary, content, tokenize='unicode61'
+                        )
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO file_content_fts(rowid, original_filename, title, summary, content)
+                        SELECT f.file_id, f.original_name, f.main_topic, f.summary, COALESCE(b.content, '')
+                        FROM files f
+                        LEFT JOIN fts_migration_backup b ON f.file_id = b.rowid
+                        """
+                    )
+                    cursor.execute("DROP TABLE fts_migration_backup")
 
                 cursor.execute('UPDATE sys_config SET value = ? WHERE key = "schema_version"', (str(CURRENT_SCHEMA_VERSION),))
 
             conn.commit()
         except Exception as e:
-            logger.error(f"Migration 執行失敗: {e}")
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.error(f"Migration 執行失敗（已回滾並中止啟動）: {e}")
+            raise RuntimeError(f"Database migration failed: {e}") from e
         finally:
             if conn: conn.close()
 
@@ -302,7 +313,7 @@ class StorageManager:
         if not payload:
             raise ValueError("檔案不可為空")
         if len(payload) > MAX_UPLOAD_BYTES:
-            raise ValueError(f"檔案大小超過上限 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+            raise ValueError(f"檔案大小超過上傳硬限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
 
         if ext == ".pdf" and not payload.startswith(b"%PDF-"):
             raise ValueError("PDF 檔案簽章不正確")

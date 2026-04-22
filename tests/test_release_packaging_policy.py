@@ -12,6 +12,7 @@ def test_official_release_zip_does_not_include_tests_allowlist():
         '"app.py"',
         '"core.py"',
         '"services.py"',
+        '"async_processor.py"',
         '"storage.py"',
         '"logging_config.py"',
         '"version.py"',

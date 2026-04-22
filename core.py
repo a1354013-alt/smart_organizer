@@ -22,9 +22,11 @@ try:
 except Exception:  # pragma: no cover
     exifread_module = None
 
-PdfReader: Any
+PdfReader: Any = None
 try:
-    from pypdf import PdfReader
+    from pypdf import PdfReader as _PdfReader
+
+    PdfReader = _PdfReader
 except Exception:  # pragma: no cover
     PdfReader = None
 
@@ -40,9 +42,11 @@ try:
 except Exception:  # pragma: no cover
     pytesseract = None
 
-OpenAI: Any
+OpenAI: Any = None
 try:
-    from openai import OpenAI
+    from openai import OpenAI as _OpenAI
+
+    OpenAI = _OpenAI
 except Exception:  # pragma: no cover
     OpenAI = None
 
@@ -253,6 +257,8 @@ class FileProcessor:
                 "tesseract": shutil.which("tesseract") is not None,
                 "pdftoppm": shutil.which("pdftoppm") is not None,
                 "pdftocairo": shutil.which("pdftocairo") is not None,
+                "ffmpeg": shutil.which("ffmpeg") is not None,
+                "ffprobe": shutil.which("ffprobe") is not None,
             },
             "config": {
                 "OPENAI_MODEL": self.model,
@@ -759,8 +765,31 @@ class FileProcessor:
 
         if is_video:
             scores = {tag: 0.0 for tag in VIDEO_TAGS}
-            scores["Unclassified"] = 1.0
-            reasons.append("影片：自動標記為未分類（Unclassified）")
+            matched = False
+            video_tag_weights = {
+                "Screen Recording": 0.85,
+                "Tutorial": 0.9,
+                "Meeting": 0.95,
+                "Promo": 0.9,
+                "Raw Footage": 0.8,
+                "Animation": 0.9,
+            }
+            for tag, keywords in VIDEO_KEYWORD_RULES.items():
+                for keyword in keywords:
+                    k = (keyword or "").lower()
+                    if not k:
+                        continue
+                    if k in name_lower or k in text_lower:
+                        add(tag, video_tag_weights.get(tag, 0.85), f"影片檔名/文字命中關鍵字: {keyword}")
+                        matched = True
+                        break
+
+            if matched:
+                # 保留 Unclassified 作為低權重 fallback，避免完全消失（但不應壓過明確規則命中）。
+                add("Unclassified", 0.2, "影片分類 fallback（已命中規則）")
+            else:
+                scores["Unclassified"] = 1.0
+                reasons.append("影片：未命中任何規則，預設為 Unclassified。")
             default_tag = "Unclassified"
         elif is_document:
             scores = {tag: 0.0 for tag in DOCUMENT_TAGS}

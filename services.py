@@ -212,7 +212,7 @@ def analyze_upload_batch_async(
     max_workers: int = 4,
 ) -> BatchAnalysisOutcome:
     """
-    批量分析上傳檔案 (非同步版本，支援進度追蹤與取消)
+    批量分析上傳檔案（並行處理版本，支援進度回調）
     
     Args:
         uploads: 上傳檔案列表
@@ -225,7 +225,7 @@ def analyze_upload_batch_async(
     Returns:
         BatchAnalysisOutcome
     """
-    from services.async_processor import AsyncProcessor, ProgressState
+    from async_processor import AsyncProcessor, ProgressState
     
     upload_list = list(uploads)
     total = len(upload_list)
@@ -238,12 +238,15 @@ def analyze_upload_batch_async(
     
     def process_single(uploaded: UploadedFileData) -> tuple[AnalysisResult | None, DuplicateInfo | None, str | None]:
         """單個檔案處理函式"""
-        return analyze_one_upload(
-            uploaded,
-            processor=processor,
-            storage=storage,
-            processing_options=processing_options,
-        )
+        try:
+            return analyze_one_upload(
+                uploaded,
+                processor=processor,
+                storage=storage,
+                processing_options=processing_options,
+            )
+        except Exception as e:  # pragma: no cover - defensive: AsyncProcessor already handles exceptions.
+            return None, None, f"{uploaded.name}: {e}"
     
     def on_progress(progress: ProgressState):
         """進度回調"""
@@ -262,6 +265,9 @@ def analyze_upload_batch_async(
     
     # 整理結果
     for outcome in outcomes:
+        if outcome is None:
+            errors.append("Async processing failed: empty outcome")
+            continue
         analyzed, dup, err = outcome
         if analyzed is not None:
             results.append(analyzed)

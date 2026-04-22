@@ -1,18 +1,24 @@
+from __future__ import annotations
+
 """
-非同步處理與進度回饋模組
-提供耗時任務的非同步執行、進度追蹤與優雅取消機制
+非同步（多執行緒）處理與進度回饋模組。
+
+此模組以 ThreadPoolExecutor 進行並行處理；不提供持久化的 job queue。
 """
 import concurrent.futures
 import threading
-from typing import Callable, Any, List, Optional, Dict
 from dataclasses import dataclass, field
+from typing import Callable, Optional, Sequence, TypeVar
+
+TItem = TypeVar("TItem")
+TResult = TypeVar("TResult")
 
 @dataclass
 class ProgressState:
     """進度狀態物件"""
     total: int = 0
     current: int = 0
-    errors: List[Dict[str, str]] = field(default_factory=list)
+    errors: list[dict[str, str]] = field(default_factory=list)
     cancelled: bool = False
     
     def update(self, completed: int = 1):
@@ -47,11 +53,11 @@ class AsyncProcessor:
     
     def process_batch(
         self,
-        items: List[Any],
-        process_fn: Callable[[Any], Any],
+        items: Sequence[TItem],
+        process_fn: Callable[[TItem], TResult],
         progress_callback: Optional[Callable[[ProgressState], None]] = None,
         item_name: str = "項目"
-    ) -> List[Any]:
+    ) -> list[TResult]:
         """
         批量處理項目
         
@@ -66,33 +72,31 @@ class AsyncProcessor:
         """
         self.reset_cancel()
         progress = ProgressState(total=len(items))
-        results = []
+        results: list[TResult | None] = [None] * len(items)
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 提交所有任務
-            future_to_item = {
-                executor.submit(process_fn, item): item 
-                for item in items
-            }
+            future_to_index = {executor.submit(process_fn, item): idx for idx, item in enumerate(items)}
             
             # 處理完成任務
-            for future in concurrent.futures.as_completed(future_to_item):
+            for future in concurrent.futures.as_completed(future_to_index):
                 if self.is_cancelled():
+                    progress.cancelled = True
                     break
                     
-                item = future_to_item[future]
+                idx = future_to_index[future]
+                item = items[idx]
                 try:
                     result = future.result()
-                    results.append(result)
+                    results[idx] = result
                 except Exception as e:
-                    progress.add_error(str(item), str(e))
+                    progress.add_error(getattr(item, "name", None) or str(item), str(e))
                     # 單項失敗不中斷整體流程
                 finally:
                     progress.update()
                     if progress_callback:
                         progress_callback(progress)
         
-        return results
+        return [r for r in results if r is not None]
 
 # 全域單例 (供 app.py 使用)
 async_processor = AsyncProcessor(max_workers=4)

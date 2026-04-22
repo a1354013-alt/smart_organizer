@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover
 from pathlib import Path
 from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
-from storage import StorageManager, SearchContentError
+from storage import MAX_UPLOAD_BYTES, StorageManager, SearchContentError
 from version import APP_NAME, APP_TITLE, __version__
 from services import (
     UploadedFileData,
@@ -84,7 +84,15 @@ def _render_sidebar():
     st.sidebar.subheader("效能與安全")
     enable_pdf_preview = st.sidebar.checkbox("啟用 PDF 預覽（需要 poppler）", value=True)
     enable_ocr = st.sidebar.checkbox("啟用 OCR（需要 tesseract）", value=False)
-    max_heavy_mb = st.sidebar.slider("耗時處理檔案大小上限 (MB)", 1, 200, 15)
+    upload_hard_limit_mb = int(MAX_UPLOAD_BYTES / (1024 * 1024))
+    st.sidebar.caption(f"上傳硬限制：單檔 {upload_hard_limit_mb}MB（超過會拒絕上傳）")
+    max_heavy_mb = st.sidebar.slider(
+        "耗時處理啟用上限 (MB)",
+        1,
+        200,
+        15,
+        help="超過此大小會跳過 OCR / PDF 預覽等耗時處理，但仍可上傳與基本整理。",
+    )
     pdf_text_max_pages = st.sidebar.slider("PDF 文字抽取頁數上限", 1, 50, 10)
     pdf_ocr_max_pages = st.sidebar.slider("PDF OCR 頁數上限", 1, 5, int(getattr(processor, "pdf_ocr_max_pages", 3)))
 
@@ -237,7 +245,9 @@ def render_review_tab():
                         st.markdown("🎬 **影片**")
                         from core import FFMPEG_AVAILABLE
                         if not FFMPEG_AVAILABLE:
-                            st.warning("**無法產生影片預覽**\n\n縮圖產生失敗\n\n請安裝 ffmpeg 以啟用影片縮圖與 metadata 提取功能")
+                            st.warning(
+                                "**無法產生影片預覽**\n\n縮圖產生失敗\n\n請安裝 ffmpeg（含 ffprobe）以啟用影片縮圖與 metadata 提取功能"
+                            )
                         else:
                             st.info("無縮圖（產生失敗）")
                     else:

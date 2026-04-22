@@ -37,3 +37,21 @@ def test_pdf_extension_forces_document_even_if_metadata_says_photo():
     assert main_topic in tags
     assert "合約" in tags or "其他文件" in tags
 
+
+def test_classify_video_meeting_keywords_from_filename():
+    p = FileProcessor()
+    metadata = {"file_type": "video", "extracted_text": "", "is_scanned": False}
+    main_topic, tags, reason = p.classify_multi_tag(metadata, "zoom_meeting_2026.mp4", return_reason=True)
+    assert main_topic == "Meeting"
+    assert "Meeting" in tags
+    assert "命中關鍵字" in reason
+
+
+def test_classify_video_screen_recording_keywords_from_filename():
+    p = FileProcessor()
+    metadata = {"file_type": "video", "extracted_text": "", "is_scanned": False}
+    main_topic, tags, reason = p.classify_multi_tag(metadata, "screen_recording_demo.mp4", return_reason=True)
+    assert main_topic == "Screen Recording"
+    assert "Screen Recording" in tags
+    assert "命中關鍵字" in reason
+
