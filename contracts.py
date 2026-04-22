@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, TypeAlias, cast
+
+FileType: TypeAlias = Literal["document", "photo", "video", "unknown"]
+RecordStatus: TypeAlias = Literal["PENDING", "PROCESSED", "MOVING", "COMPLETED", "MISSING", "BROKEN"]
+DecisionSource: TypeAlias = Literal["RULE", "MANUAL_OVERRIDE", "RULE_RECLASSIFY", "RECOVERY"]
 
 METADATA_REQUIRED_KEYS = {
     "file_type",
@@ -20,7 +24,7 @@ class ExtractedMetadata(TypedDict):
     Keep keys stable to avoid "magic keys" drifting across core/services/app/storage.
     """
 
-    file_type: str  # "document" | "photo" | "video" | "unknown"
+    file_type: FileType
     standard_date: str
     extracted_text: str
     is_scanned: bool
@@ -35,7 +39,7 @@ class ExtractedMetadata(TypedDict):
 
 
 class DecisionHistory(TypedDict, total=False):
-    decision_source: str  # e.g. "RULE", "MANUAL_OVERRIDE", "RULE_RECLASSIFY", "RECOVERY"
+    decision_source: DecisionSource
     decision_updated_at: str
     last_manual_topic: str | None
     last_manual_reason: str | None
@@ -63,8 +67,14 @@ def validate_extracted_metadata(raw: ExtractedMetadata | dict[str, Any]) -> Extr
     if not isinstance(notes, list):
         notes = [str(notes)]
 
+    ft_raw = str(metadata.get("file_type") or "unknown")
+    if ft_raw in {"document", "photo", "video", "unknown"}:
+        file_type: FileType = cast(FileType, ft_raw)
+    else:
+        file_type = "unknown"
+
     normalized: ExtractedMetadata = {
-        "file_type": str(metadata.get("file_type") or "unknown"),
+        "file_type": file_type,
         "standard_date": str(metadata.get("standard_date") or ""),
         "extracted_text": str(metadata.get("extracted_text") or ""),
         "is_scanned": bool(metadata.get("is_scanned", False)),

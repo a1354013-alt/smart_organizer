@@ -27,7 +27,7 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -c "from pathlib import Path; files = ['app.py','core.py','services.py','async_processor.py','storage.py','logging_config.py','version.py','contracts.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]"
+          python -c "from pathlib import Path; files = ['app.py','app_main.py','core.py','core_utils.py','core_classification.py','core_processor.py','services.py','services_models.py','services_analysis.py','services_review.py','services_finalize.py','async_processor.py','storage.py','storage_base.py','storage_schema.py','storage_repository.py','storage_recovery.py','storage_search.py','storage_cleanup.py','storage_manager.py','logging_config.py','version.py','contracts.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]"
 
       - name: Ruff (minimal)
         run: |
@@ -35,7 +35,7 @@ jobs:
 
       - name: Mypy (minimal)
         run: |
-          mypy version.py contracts.py services.py core.py storage.py async_processor.py
+          mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py
 
       - name: Tests
         run: |

@@ -1,4 +1,4 @@
-# 📁 智慧檔案整理助理 (v2.8.1)
+# 📁 智慧檔案整理助理 (v2.8.4)
 
 這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF、照片與影片進行分類、命名與整理。
 
@@ -114,7 +114,7 @@ streamlit run app.py
 
 ## 📜 更新日誌 (Changelog)
 
-### v2.8.1 - 2026-04-10
+### v2.8.4 - 2026-04-22
 - **app.py 再薄化**：批次分析、批次整理、confirmed result 建立改交給 `services.py`，UI 只維持互動與顯示。
 - **單檔追蹤 log 補強**：create/update/finalize/reclassify 等關鍵流程補上更一致的 contextual logging。
 - **交付入口更完整**：新增正式包啟動說明 `RUN_RELEASE.md`，並將報告/規劃文件移到 `docs/`。
@@ -158,7 +158,7 @@ streamlit run app.py
 - **OpenAI 可配置化**：支援 `OPENAI_MODEL` 環境變數配置，並加入 30 秒請求超時控制。
 - **依賴版本鎖定**：`requirements.txt` 已鎖定主要版本號，提升部署穩定性。
 
-## Architecture Notes (v2.8.1)
+## Architecture Notes (v2.8.4)
 
 - `app.py` now mainly owns Streamlit rendering, widget wiring, and session-state lifecycle.
 - `services.py` owns upload analysis orchestration, AI summary generation, review confirmation assembly, finalize execution, and reclassification flows.

@@ -11,10 +11,25 @@ Use the PowerShell packaging script instead:
 The release zip is created from an **allowlist** (not a blocklist). Only these paths are included:
 
 - `app.py`
+- `app_main.py`
 - `core.py`
+- `core_utils.py`
+- `core_classification.py`
+- `core_processor.py`
 - `services.py`
+- `services_models.py`
+- `services_analysis.py`
+- `services_review.py`
+- `services_finalize.py`
 - `async_processor.py`
 - `storage.py`
+- `storage_base.py`
+- `storage_schema.py`
+- `storage_repository.py`
+- `storage_recovery.py`
+- `storage_search.py`
+- `storage_cleanup.py`
+- `storage_manager.py`
 - `logging_config.py`
 - `version.py`
 - `contracts.py`

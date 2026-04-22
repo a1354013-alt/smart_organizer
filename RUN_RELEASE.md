@@ -8,13 +8,28 @@ It is not a development guide.
 The official release zip contains only the runtime files:
 
 - `app.py`
+- `app_main.py`
 - `contracts.py`
 - `core.py`
+- `core_utils.py`
+- `core_classification.py`
+- `core_processor.py`
 - `logging_config.py`
 - `README.md`
 - `requirements.txt`
 - `services.py`
+- `services_models.py`
+- `services_analysis.py`
+- `services_review.py`
+- `services_finalize.py`
 - `storage.py`
+- `storage_base.py`
+- `storage_schema.py`
+- `storage_repository.py`
+- `storage_recovery.py`
+- `storage_search.py`
+- `storage_cleanup.py`
+- `storage_manager.py`
 - `version.py`
 
 It does **not** include tests, CI config, or development-only tooling.
