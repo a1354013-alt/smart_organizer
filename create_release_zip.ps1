@@ -60,6 +60,7 @@ $includePaths = @(
     "storage_cleanup.py",
     "storage_manager.py",
     "logging_config.py",
+    "ui_renderers.py",
     "version.py",
     "contracts.py",
     "README.md",

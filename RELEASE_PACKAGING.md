@@ -31,6 +31,7 @@ The release zip is created from an **allowlist** (not a blocklist). Only these p
 - `storage_cleanup.py`
 - `storage_manager.py`
 - `logging_config.py`
+- `ui_renderers.py`
 - `version.py`
 - `contracts.py`
 - `README.md`
@@ -60,7 +61,7 @@ To run tests, use the source repo (not the release zip):
 pip install -r requirements-dev.txt
 pytest -q
 ruff check .
-mypy version.py contracts.py services.py core.py storage.py async_processor.py
+mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py
 ```
 
 After unpacking the official zip, follow `RUN_RELEASE.md` for runtime/demo startup steps.

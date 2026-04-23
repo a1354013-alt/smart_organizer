@@ -26,6 +26,13 @@ dist/
 build/
 target/
 
+# Ruff
+.ruff_cache/
+
+# Runtime artifacts (local runs)
+uploads/
+repo/
+
 # Editors
 .vscode/
 .idea/

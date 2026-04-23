@@ -1,172 +1,135 @@
 # 📁 智慧檔案整理助理 (v2.8.4)
 
-這是一個基於 Python 的智慧檔案整理工具，能自動根據時間與內容對 PDF、照片與影片進行分類、命名與整理。
+「智慧檔案整理助理」是一個以 **本機檔案整理/分類/搜尋/去重** 為核心的 Streamlit App：上傳或批量匯入檔案後，透過規則引擎與可選的 AI 摘要，將檔案整理到可追蹤、可重試、可維護的資料庫驅動流程中。
 
-## 🌟 核心功能
-- **智慧分類**：系統主要透過**規則引擎**進行主題分類（發票、合約、截圖等），並可選擇使用 **LLM 生成文件摘要與輔助標籤**。
-- **影片分類（可解釋規則）**：影片主題以「檔名/關鍵字規則」分類（Screen Recording / Tutorial / Meeting / Promo / Raw Footage / Animation），不做影片內容辨識。
-- **視覺化預覽**：支援照片縮圖、PDF 第一頁自動轉圖預覽，以及影片縮圖產生。
-- **全文檢索**：內建 SQLite FTS5，支援對檔案內容進行秒級關鍵字搜尋。
-- **掃描檔補強**：自動偵測掃描 PDF 並進行「抽樣頁數」OCR（預設最多 3 頁，可用 `PDF_OCR_MAX_PAGES` 調整），提升可搜尋性。
-- **可交付與可診斷**：路徑與狀態完全封裝於 Storage 層，並以 `last_error` 提供可重試與可追查的錯誤摘要。
-- **批量處理**：支援離線掃描指定資料夾，自動匯入大量檔案並進行去重與分類。
+## 專案定位（很重要）
+- 這是 **智慧檔案整理**：分類、命名、歸檔、去重、可搜尋、可追蹤決策。
+- 這不是知識庫：不做筆記系統、不做跨文件關聯圖、不做長文檢索/問答產品化包裝。
 
-支援上傳格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV。
+## 目前支援的檔案類型與能力邊界
+### 文件（Document）
+- 支援：`PDF`
+- 內容來源：
+  - 先嘗試抽取 PDF 文字（若 PDF 本身是可選取文字）
+  - 可選擇對掃描型 PDF 做「抽樣頁數」OCR（預設最多 3 頁）
+- 可選擇產生 PDF 預覽圖（第一頁轉圖）
 
-## 🛠️ 安裝說明
+### 照片（Photo）
+- 支援：`JPG/JPEG`、`PNG`
+- 內容來源：
+  - 讀取 EXIF 日期（若可用）
+  - 可選 OCR 圖片文字（需要 tesseract）
+- 預覽：照片本身即為預覽
 
-### 1. 系統級依賴 (OS Dependencies)
-本專案需要以下系統工具支援 PDF 處理、OCR 與影片處理：
+### 影片（Video）— Phase 1（明確邊界）
+- 支援：`MP4`、`MOV`、`MKV`
+- 目前只做 **Phase 1（檔案層級）**：
+  - 副檔名/檔名規則分類（可解釋，不做內容理解）
+  - `ffprobe` 擷取容器/串流 metadata（時長/解析度/fps/codec/大小）
+  - `ffmpeg` 擷取縮圖（作為預覽）
+- **不做**：影片內容理解、語意切片、字幕生成、語音轉文字、鏡頭/人物辨識
 
-> 重要：本專案已做「缺少依賴時的功能降級」：
-> - 缺少 poppler（`pdftoppm`/`pdftocairo`）時：PDF 預覽會跳過，但其餘流程仍可運作。
-> - 缺少 tesseract 或語言包時：OCR 會停用/跳過，仍可整理與搜尋（若 PDF 本身可抽到文字）。
-> - 缺少 ffmpeg（`ffprobe`/`ffmpeg`）時：影片縮圖與 metadata 提取會跳過，但影片仍可上傳與分類。
+## 依賴缺失時的降級行為（Graceful Degradation）
+本專案設計原則是：**缺少系統依賴時，App 仍可運作，只是功能降級**。
 
-**Ubuntu/Debian:**
+- 缺少 `poppler`：跳過 PDF 預覽圖，其他流程照常（仍可分類/整理/搜尋）
+- 缺少 `tesseract` / 語言包：OCR 停用或跳過（若 PDF/圖片本身可抽出文字，仍可搜尋）
+- 缺少 `ffmpeg/ffprobe`：跳過影片縮圖與影片 metadata（影片仍可上傳與規則分類）
+
+## 安裝與執行
+### 1) 系統級依賴（OS Dependencies）
+**Ubuntu/Debian**
 ```bash
 sudo apt-get update
 sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-tra ffmpeg
 ```
 
-**macOS (Homebrew):**
+**macOS (Homebrew)**
 ```bash
 brew install poppler tesseract tesseract-lang ffmpeg
 ```
 
-**Windows:**
-- 安裝 Poppler（提供 `pdftoppm`）：確保 `pdftoppm.exe` 在 PATH 內，或設定環境變數 `POPPLER_PATH` 指向 Poppler 的 `bin` 目錄。
-- 安裝 Tesseract（提供 `tesseract.exe`）：確保 `tesseract.exe` 在 PATH 內，並安裝繁中語言包（常見名稱 `chi_tra`）。
-- 安裝 ffmpeg：下載 builds 並加入 PATH，或使用 `choco install ffmpeg`。
+**Windows**
+- Poppler：確保 `pdftoppm.exe` 在 PATH，或設定環境變數 `POPPLER_PATH` 指向 Poppler 的 `bin`
+- Tesseract：確保 `tesseract.exe` 在 PATH，並安裝繁中語言包（常見 `chi_tra`）
+- ffmpeg：下載 builds 加入 PATH，或使用 `choco install ffmpeg`
 
-### 2. Python 環境設定
-建議使用虛擬環境：
+### 2) Python 依賴
 ```bash
 pip install -r requirements.txt
 ```
 
-> 重要：`streamlit` 是 **App 啟動必要依賴**。若缺少 `streamlit`，App 無法啟動；但 OCR/PDF 預覽等「附加功能」可在缺少系統依賴時自動降級跳過。
-
-### 3. （可選）開發與測試依賴
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-ruff check .
-mypy version.py contracts.py services.py
-```
-> 提示：本專案已在 `tests/conftest.py` 補上測試路徑處理，直接在專案根目錄執行 `pytest -q` 不需要額外設定 `PYTHONPATH`。
-
-## 📦 Release 交付包（正式包不附 tests）
-- 使用 `create_release_zip.ps1` 產生的 **正式 release zip** 是「展示/執行用」最小包，**不包含 `tests/`、`.git/`、`__pycache__/`、`.coverage`、`tests/_tmp_pytest/` 等開發暫存檔**。
-- `.gitignore` 已設定自動忽略 Python 快取、測試暫存目錄、IDE 設定與發布產物。
-- zip 檔名預設包含專案版本（來自 `version.py`）與 `runtime-demo`，避免 workspace 快照被誤認為正式交付包。
-- 正式包內另外提供 `RUN_RELEASE.md`，專門說明 runtime/demo 包的安裝與啟動方式。
-- 若需要驗證測試，請使用 source repo 執行 `pytest -q`。
-- 請勿直接把整個工作目錄壓縮上傳（workspace 快照可能包含 `.git/`、`__pycache__/`、`.db`、暫存檔等殘留）。正式交付以 release zip 為準。
-- 正式 release zip 是 **runtime/demo package**，不是 source-development package。
-
-## 🧯 整理失敗與重試（last_error / decision history）
-- 若「執行整理」失敗，系統會把錯誤摘要寫入資料庫欄位 `last_error`，並在「查看紀錄」表格中顯示，方便診斷。
-- 多數情況可直接重試：修正檔案權限/路徑、補齊系統依賴（如 poppler/tesseract）後再執行整理。
-- 若檔案已遺失（暫存檔不存在），需要重新上傳或先用「重新整理檔案位置」檢查紀錄。
-- 人工覆寫主題時，會額外記錄 `decision_source / decision_updated_at / last_manual_topic / last_manual_reason`，重分類不會洗掉人工修正痕跡。
-
-## 🔎 全文檢索（重要規格）
-- `search_content()` 會先將輸入做 FTS 安全轉義；若轉義後變成空字串（例如只輸入括號、引號等特殊符號），會直接回傳空結果 `[]`（不走 metadata fallback），以避免 SQLite FTS5 例外並維持行為可預期。
-
-## 🚀 執行方式
-在專案根目錄執行：
+### 3) 啟動
 ```bash
 streamlit run app.py
 ```
 
-## 🔐 AI 摘要（安全開關）
-- UI 預設 **不啟用** AI 摘要（不送出任何內容）。
-- 需要時請在側邊欄手動開啟「啟用 AI 摘要」，並在環境中設定 `OPENAI_API_KEY`。
+## 測試與品質門檻（CI/本機一致）
+```bash
+ruff check .
+mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py
+python -B -m pytest -q
+```
 
-## ⚙️ 重要環境變數
-- `OPENAI_API_KEY`: 啟用 AI 摘要所需
-- `OPENAI_MODEL`: 預設 `gpt-4.1-mini`
-- `OPENAI_TIMEOUT_SECONDS`: 預設 30
-- `OPENAI_MAX_CHARS`: 送出摘要的文字最大字元數（預設 6000，會自動截斷）
-- `POPPLER_PATH`: （Windows 常用）Poppler `bin` 路徑
-- `PDF_TEXT_MAX_PAGES`: PDF 文字抽取頁數上限（預設 10）
-- `PDF_OCR_MAX_PAGES`: PDF OCR 抽樣頁數上限（預設 3，上限 5）
-- `MAX_HEAVY_PROCESS_MB`: OCR/預覽等「耗時處理」的檔案大小上限（預設 15MB，避免卡死 UI）
-- 單檔上傳硬限制：25MB（`storage.py` 的 `MAX_UPLOAD_BYTES`；不同於 `MAX_HEAVY_PROCESS_MB`，後者只影響 OCR/預覽等耗時處理是否啟用）
-- `LOG_LEVEL`: logging 等級（預設 `INFO`）
-- `LOG_FILE`: 若設定，會額外輸出檔案 log，方便交付後追查單檔生命週期問題
+> 影片相關測試在缺少 ffmpeg 時會跳過（skip），但影片的 metadata 結構契約仍會被非 ffmpeg 測試覆蓋。
 
-## 📂 專案結構
-- `app.py`: Streamlit UI 介面（薄層），負責互動與呼叫 usecase/service。
-- `services.py`: 可測試的流程函式（分析/整理/重新分類/手動覆寫決策）與資料契約收斂。
-- `async_processor.py`: 多執行緒批次處理與進度回調（提供 async batch 分析入口使用）。
-- `core.py`: 核心處理模組，包含 OCR、PDF 處理與 AI 邏輯（AI 為 opt-in）。
-- `storage.py`: 資料庫與檔案管理層，負責路徑封裝、狀態機與 FTS5 搜尋。
-- `version.py`: 版本單一來源（UI/README/release zip 命名由測試強制一致）。
-- `contracts.py`: 跨模組資料契約（TypedDict），避免 magic key 漂移。
-- `logging_config.py`: logging 設定（可用 `LOG_LEVEL` 調整）。
-- `RUN_RELEASE.md`: 正式 release 包啟動說明（僅針對 runtime/demo package）。
-- `docs/`: 報告、規劃與展示輔助文件。
-- `uploads/`: 暫存上傳檔案。
-- `repo/`: 整理後的檔案儲存庫。
-- `smart_organizer.db`: SQLite 資料庫。
+## Release 交付包 vs Source Repo（交付邊界）
+本專案提供兩種「可交付」形態：
 
-## 📜 更新日誌 (Changelog)
+1) **Source Repo（開發/測試用）**
+- 含 `tests/`、`requirements-dev.txt`、`pyproject.toml`、CI 設定
+- 用於跑測試、靜態檢查、開發迭代
 
-### v2.8.4 - 2026-04-22
-- **app.py 再薄化**：批次分析、批次整理、confirmed result 建立改交給 `services.py`，UI 只維持互動與顯示。
-- **單檔追蹤 log 補強**：create/update/finalize/reclassify 等關鍵流程補上更一致的 contextual logging。
-- **交付入口更完整**：新增正式包啟動說明 `RUN_RELEASE.md`，並將報告/規劃文件移到 `docs/`。
+2) **Release Zip（runtime/demo package）**
+- 由 `create_release_zip.ps1` 以「允許清單」生成
+- **不包含**：`tests/`、`.git/`、快取、workspace 暫存檔、開發工具
+- 目標：交付可執行 demo，避免把整個 workspace 快照誤當正式交付
 
-### v2.8.0 - 2026-04-09
-- **UI 薄層化**：核心流程（分析/整理/重新分類/手動覆寫決策）移到 `services.py`，`app.py` 專注互動與顯示。
-- **資料契約收斂**：新增 `contracts.py`（`ExtractedMetadata` TypedDict），減少 magic key 與鬆散欄位傳遞。
-- **決策歷史可觀測**：新增 `decision_source / decision_updated_at / last_manual_topic / last_manual_reason`，重分類不會洗掉人工修正痕跡。
-- **工具鏈與 CI**：新增 ruff/mypy/pytest-cov 與 GitHub Actions 基本檢查，提升可重現與可維護性。
+詳見：`RUN_RELEASE.md`、`RELEASE_PACKAGING.md`
 
-### v2.7.4 Steel-Fortified Final Ultimate - 2026-03-14
-- **狀態機收斂補強**：優化 `_recover_moving_file` 邏輯，加入「雙失蹤」異常處理，確保在極端情況下狀態能自動回退而不卡死。
-- **FTS 查詢防禦**：在 `search_content` 中加入空查詢與特殊字元過濾，提升全文檢索的魯棒性。
-- **極致乾淨打包**：優化發佈流程，徹底排除所有測試目錄、資料庫殘留與開發暫存檔。
-- **代碼精煉**：移除 `app.py` 中未使用的引用，保持專案結構俐落。
+## Architecture（精簡版）
+### 分層責任
+- `core*`：檔案內容/metadata 擷取、規則分類（`FileProcessor` / `FileUtils`）
+- `services*`：Use case（上傳分析、人工覆寫、確認、整理落盤、重新分類）
+- `storage*`：資料庫/檔案生命週期（去重、狀態機、crash-safe finalize、FTS、recovery、cleanup）
+- `app_main.py`：Streamlit UI（薄控制層，盡量不承載核心決策）
 
-### v2.7.3 Steel-Fortified Final Refined - 2026-03-14
-- **併發清理補強**：在 `create_temp_file` 中加入併發重複上傳的即時清理邏輯，防止 `uploads/` 目錄產生孤兒暫存檔。
-- **清理年齡保護**：`cleanup_orphaned_uploads` 引入 5 分鐘年齡保護機制，避免清理程序誤刪正在處理中的檔案。
-- **狀態機重構**：重構 `finalize_organization` 流程，將 Recovery 邏輯獨立化並統一連線管理，提升系統穩定性。
-- **文檔措辭校正**：修正 README 描述，以更嚴謹的工程措辭描述併發安全與分類邏輯。
+### 主要資料流（Data Flow）
+1. Upload/Import → `storage.create_temp_file()`：暫存檔落地 + hash 去重
+2. `core.FileProcessor.extract_metadata()`：抽取 metadata / preview / OCR（可降級）
+3. `core.FileProcessor.classify_multi_tag()`：規則分類（可解釋）
+4. Review → `services_review.apply_manual_topic_override()`：人工覆寫主題，保留決策原因
+5. Finalize → `storage.finalize_organization()`：搬移檔案到 repo 結構 + DB 狀態更新（crash-safe）
+6. Search → `storage.search_content()`：FTS5 + metadata fallback（檔名/主題/摘要/標籤）
 
-### v2.7.2 Steel-Fortified Final - 2026-03-14
-- **強化併發防護**：`create_temp_file` 改為「先查後寫」並搭配 `BEGIN IMMEDIATE` 交易鎖定，顯著降低併發衝突風險。
-- **收窄清理安全邊界**：`cleanup_orphaned_uploads` 加入正則表達式檢查，僅清理符合規則的暫存檔，排除日誌或鎖定檔。
-- **FTS 註解校正**：修正 `core.py` 中關於 FTS5 轉義邏輯的描述。
-- **文檔 Typo 修正**：修正 README 中「掃描檔補強」的文字錯誤。
+### Storage 狀態機（State Machine）
+資料表 `files.status` 主要狀態：
+- `PENDING`：已建立暫存檔，尚未完成 metadata/分類落庫
+- `PROCESSED`：完成 metadata/分類落庫，等待整理落盤
+- `MOVING`：正在搬移（crash-safe，支援 recovery）
+- `COMPLETED`：已整理完成（final_path 存在）
+- `MISSING`：記錄為完成但檔案遺失
+- `BROKEN`：暫存與最終檔都不存在（需人工介入或重新上傳）
 
-### v2.7.1 Steel-Fortified Hotfix - 2026-03-14
-- **缺失依賴補全**：在 `requirements.txt` 中新增 `matplotlib`，修復部署時的 `ModuleNotFoundError`。
-- **強化 Crash Recovery**：優化 `finalize_organization` 恢復邏輯，增加對 `temp_path` 存在性的檢查，避免在不完整搬移時誤標記為 `COMPLETED`。
-- **預覽圖清理安全性**：確保 `cleanup_orphaned_uploads` 檔名解析使用 `Path(name).stem`，避免檔名中含 `.png` 等字串時被誤解析。
-- **文檔描述校正**：修正 README 中關於分類邏輯的描述，與實際程式碼行為對齊。
+決策追蹤（Decision History）重點欄位：
+- `decision_source`：RULE / MANUAL_OVERRIDE / RULE_RECLASSIFY / RECOVERY
+- `decision_updated_at`、`last_manual_topic`、`last_manual_reason`
 
-### v2.7 Steel-Fortified (鋼鐵堡壘版) - 2026-03-06
-- **FTS 同步修復**：`update_file_metadata` 現在會同步更新 FTS 索引，並確保 `content` 欄位不會被洗空。
-- **Crash-safe Finalize**：實作「MOVING → 原子搬移 → COMPLETED」三階段流程，並加入 **Recovery 補償機制**，確保搬檔失敗不遺留 ghost 狀態。
-- **並發上傳保護**：採用 `.part` 檔案與原子化 `os.replace` 機制，徹底消除 Race Condition。
-- **清理流程安全邊界**：強化 `cleanup_orphaned_uploads`，支援 PNG 預覽圖清理並嚴格限制刪除範圍。
-- **Schema Cascade**：為 `file_tags` 加入 `ON DELETE CASCADE`，確保刪除檔案時關聯標籤一併清除。
-- **OpenAI 可配置化**：支援 `OPENAI_MODEL` 環境變數配置，並加入 30 秒請求超時控制。
-- **依賴版本鎖定**：`requirements.txt` 已鎖定主要版本號，提升部署穩定性。
+## 搜尋（FTS）維護說明
+- `search_content()` 使用 SQLite FTS5 做全文檢索，並補上 metadata fallback（檔名/主題/摘要/標籤）
+- `reconcile_fts_rows()`（UI：對齊/重建全文索引）只做：
+  - rowid 對齊/補齊缺漏列
+  - 從 DB 欄位（檔名/主題/摘要）重建對應欄位
+  - **保留** FTS 表中既有的 `content`（不會重新讀原始檔案抽內容）
 
-## Architecture Notes (v2.8.4)
+## 目前限制與後續可擴充方向（不亂吹）
+目前限制
+- 影片僅 Phase 1：規則分類 + ffprobe metadata + thumbnail，不含內容理解
+- OCR 為抽樣策略，偏向提升可搜尋性，而非完整逐頁辨識
+- 目前 cleanup 聚焦在 `uploads/` 與 `previews/` 的孤兒暫存檔，不做「長期未使用檔案」的 repo 級清理策略
 
-- `app.py` now mainly owns Streamlit rendering, widget wiring, and session-state lifecycle.
-- `services.py` owns upload analysis orchestration, AI summary generation, review confirmation assembly, finalize execution, and reclassification flows.
-- `storage.py` owns persistence, crash/recovery safety, finalization, and search ranking/fallback behavior.
-- `contracts.py` defines the cross-module metadata contract. Shared fields must live at the top level of `ExtractedMetadata`; `extra` is only for backward-compatible local extensions.
+後續可擴充（加分項，非本次必修）
+- 更完整的批量匯入工作流與報表（但仍以整理/清理為主，不走知識庫方向）
+- 更細緻的 duplicate policy（同 hash / 近似重複）與自動化清理策略（可設定保留規則）
+- 更完善的 observability（結構化 log / 匯出診斷報告），提升交付時可維運性
 
-## Release / Source Repo Boundary
-
-- Use `RUN_RELEASE.md` after unzipping the official runtime/demo package.
-- Use the source repository when you need `pytest`, `ruff`, `mypy`, CI, or development-only documents.
-- The official release zip is intentionally smaller than the source repo and is not meant to replace it for development work.

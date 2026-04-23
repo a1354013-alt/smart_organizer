@@ -15,6 +15,7 @@ The official release zip contains only the runtime files:
 - `core_classification.py`
 - `core_processor.py`
 - `logging_config.py`
+- `ui_renderers.py`
 - `README.md`
 - `requirements.txt`
 - `services.py`
@@ -51,8 +52,10 @@ streamlit run app.py
 - `streamlit` is required to start the app.
 - `poppler` is required for PDF preview.
 - `tesseract` is required for OCR.
+- `ffmpeg` (including `ffprobe`) is required for video thumbnails and video metadata (Phase 1).
 
 If `poppler` or `tesseract` is missing, those features degrade gracefully; the app still starts.
+If `ffmpeg/ffprobe` is missing, video thumbnail/metadata is skipped; video upload and rule-based classification still works.
 
 ## Known limits
 

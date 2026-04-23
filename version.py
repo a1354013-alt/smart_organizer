@@ -11,6 +11,6 @@ __all__ = ["__version__", "APP_NAME", "APP_TITLE"]
 
 __version__ = "2.8.4"
 
-APP_NAME = "智慧檔案整理分類工具"
+APP_NAME = "智慧檔案整理助理"
 APP_TITLE = f"{APP_NAME} (v{__version__})"
 

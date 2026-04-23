@@ -167,6 +167,23 @@ class StorageSearchMixin:
                 conn.close()
 
     def rebuild_fts_index(self: Any):
+        """
+        Deprecated: use `reconcile_fts_rows()`.
+
+        This does NOT re-extract content from original files.
+        It only rebuilds the FTS table rows from existing DB fields (files.main_topic/summary/original_name)
+        and preserves the last-known `content` stored in the FTS table.
+        """
+        return self.reconcile_fts_rows()
+
+    def reconcile_fts_rows(self: Any):
+        """
+        Reconcile FTS rows with the `files` table (rowid alignment + missing rows).
+
+        Scope/guarantees:
+        - Ensures every file in `files` has a corresponding FTS row with the correct rowid.
+        - Preserves the last-known `content` already stored in `file_content_fts` (no re-extraction).
+        """
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -192,7 +209,7 @@ class StorageSearchMixin:
             conn.commit()
             return {"success": True}
         except Exception as e:
-            logger.error("重建 FTS 索引失敗: %s", e)
+            logger.error("FTS row 對齊/重建失敗: %s", e)
             if conn:
                 conn.rollback()
             return {"success": False, "error": str(e)}

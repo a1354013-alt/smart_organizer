@@ -7,7 +7,7 @@ import os
 from types import ModuleType
 from typing import Any, Callable, Optional
 
-from contracts import ExtractedMetadata, FileType
+from contracts import ExtractedMetadata, FileType, VideoMetadata, validate_extracted_metadata
 from core_classification import classify_multi_tag as _classify_multi_tag
 from core_classification import sync_manual_topic as _sync_manual_topic
 from core_utils import FileUtils
@@ -94,17 +94,21 @@ class FileProcessor:
         return v
 
     def get_dependency_status(self):
-        status = {
+        python_deps = {
             "PIL": Image is not None,
             "exifread": exifread_module is not None,
             "pypdf": PdfReader is not None,
             "pdf2image": convert_from_path_fn is not None,
             "pytesseract": pytesseract is not None,
             "openai": OpenAI is not None,
+        }
+        system_deps = {
             "ffmpeg": FFMPEG_AVAILABLE,
         }
-        status["poppler_path"] = bool(self.poppler_path)
-        return status
+        config = {
+            "poppler_path": bool(self.poppler_path),
+        }
+        return {"python": python_deps, "system": system_deps, "config": config}
 
     def get_file_hash(self, file_path):
         if hasattr(file_path, "read"):
@@ -135,6 +139,7 @@ class FileProcessor:
         preview_path = None
         ocr_error = None
         notes: list[str] = []
+        video: VideoMetadata | None = None
 
         standard_date = self._get_file_mtime(file_path)
 
@@ -147,11 +152,14 @@ class FileProcessor:
 
         if file_type == "video":
             video_meta = self._extract_video_metadata(file_path)
-            if isinstance(video_meta, dict):
-                notes.append("video_phase1")
-            thumb = self._generate_video_thumbnail(file_path, thumb_percent=0.5)
+            video = video_meta
+            notes.append("video_phase1")
+
+            thumb, thumb_error = self._generate_video_thumbnail(file_path, thumb_percent=0.5)
             if thumb:
                 preview_path = thumb
+            elif thumb_error:
+                video_meta["thumbnail_error"] = thumb_error
 
         if file_type == "document" and ext == ".pdf":
             try:
@@ -197,7 +205,9 @@ class FileProcessor:
             "ocr_error": ocr_error,
             "notes": notes,
         }
-        return metadata
+        if video is not None:
+            metadata["video"] = video
+        return validate_extracted_metadata(metadata)
 
     def _ocr_image(self, image_path):
         if pytesseract is None or Image is None:
@@ -251,8 +261,8 @@ class FileProcessor:
             logger.error(f"獲取修改時間失敗: {e}")
             return datetime.datetime.now().strftime("%Y-%m-%d")
 
-    def _extract_video_metadata(self, file_path):
-        result = {
+    def _extract_video_metadata(self, file_path: str) -> VideoMetadata:
+        result: VideoMetadata = {
             "media_type": "video",
             "duration_seconds": None,
             "width": None,
@@ -262,10 +272,11 @@ class FileProcessor:
             "file_size": None,
             "created_at": None,
             "modified_at": None,
+            "ffprobe_error": None,
         }
 
         if not FFMPEG_AVAILABLE:
-            result["error"] = "ffprobe 不可用，無法解析影片 metadata"
+            result["ffprobe_error"] = "ffprobe 不可用，無法解析影片 metadata"
             return result
 
         try:
@@ -295,7 +306,7 @@ class FileProcessor:
             ]
             proc = subprocess.run(cmd, capture_output=True, timeout=10)
             if proc.returncode != 0:
-                result["error"] = (proc.stderr.decode("utf-8", errors="ignore") or "").strip() or "ffprobe failed"
+                result["ffprobe_error"] = (proc.stderr.decode("utf-8", errors="ignore") or "").strip() or "ffprobe failed"
                 return result
 
             data = json.loads(proc.stdout.decode("utf-8", errors="ignore") or "{}")
@@ -327,12 +338,12 @@ class FileProcessor:
                     pass
             return result
         except Exception as e:
-            result["error"] = str(e)
+            result["ffprobe_error"] = str(e)
             return result
 
-    def _generate_video_thumbnail(self, file_path, thumb_percent=0.5):
+    def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5) -> tuple[str | None, str | None]:
         if not FFMPEG_AVAILABLE:
-            return None
+            return None, "ffmpeg 不可用，無法產生影片縮圖"
         try:
             import subprocess
 
@@ -350,12 +361,16 @@ class FileProcessor:
                 "1",
                 preview_path,
             ]
-            subprocess.run(cmd, capture_output=True, timeout=10)
+            proc = subprocess.run(cmd, capture_output=True, timeout=10)
             if os.path.exists(preview_path):
-                return preview_path
-            return None
-        except Exception:
-            return None
+                return preview_path, None
+
+            stderr = (proc.stderr.decode("utf-8", errors="ignore") or "").strip()
+            if stderr:
+                return None, stderr[:200]
+            return None, "縮圖產生失敗（ffmpeg 未輸出錯誤訊息）"
+        except Exception as e:
+            return None, str(e)[:200]
 
     def _extract_pdf_text(self, file_path, max_pages=None):
         if PdfReader is None:

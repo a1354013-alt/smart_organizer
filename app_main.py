@@ -16,6 +16,7 @@ from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
 from storage import MAX_UPLOAD_BYTES, StorageManager, SearchContentError
 from version import APP_NAME, APP_TITLE, __version__
+from ui_renderers import render_dependency_status, render_video_details
 from services import (
     UploadedFileData,
     AnalysisResult,
@@ -109,9 +110,7 @@ def _render_sidebar():
 
     with st.sidebar.expander("🔎 環境與依賴檢查", expanded=False):
         deps = processor.get_dependency_status()
-        st.write("Python 套件：", deps.get("python", {}))
-        st.write("系統依賴：", deps.get("system", {}))
-        st.write("設定：", deps.get("config", {}))
+        render_dependency_status(deps)
 
     st.sidebar.subheader("🧹 uploads 清理")
     cleanup_dry_run = st.sidebar.checkbox("Dry-run（只預覽不刪除）", value=True)
@@ -261,64 +260,7 @@ def render_review_tab():
 
                 # Video metadata display (Phase 1 UI completion)
                 if result.file_type == "video":
-                    extra = (result.metadata or {}).get("extra", {})
-                    
-                    # Duration formatting (mm:ss)
-                    duration_sec = extra.get("duration_seconds")
-                    if duration_sec is not None:
-                        try:
-                            duration_min = int(duration_sec // 60)
-                            duration_sec_remainder = int(duration_sec % 60)
-                            st.write(f"**時長**: {duration_min:02d}:{duration_sec_remainder:02d}")
-                        except (TypeError, ValueError):
-                            st.write("**時長**: N/A")
-                    else:
-                        st.write("**時長**: N/A")
-                    
-                    # Resolution
-                    width = extra.get("width")
-                    height = extra.get("height")
-                    if width is not None and height is not None:
-                        st.write(f"**解析度**: {width} x {height}")
-                    else:
-                        st.write("**解析度**: N/A")
-                    
-                    # FPS
-                    fps = extra.get("fps")
-                    if fps is not None:
-                        try:
-                            st.write(f"**FPS**: {int(round(float(fps)))}")
-                        except (TypeError, ValueError):
-                            st.write("**FPS**: N/A")
-                    else:
-                        st.write("**FPS**: N/A")
-                    
-                    # Codec
-                    codec = extra.get("video_codec")
-                    if codec:
-                        codec_display = codec.upper() if isinstance(codec, str) else str(codec)
-                        st.write(f"**編碼**: {codec_display}")
-                    else:
-                        st.write("**編碼**: N/A")
-                    
-                    # File size (from extra or compute from original)
-                    file_size = extra.get("file_size")
-                    if file_size is not None:
-                        try:
-                            file_size_mb = float(file_size) / (1024 * 1024)
-                            if file_size_mb >= 1:
-                                st.write(f"**大小**: {file_size_mb:.1f} MB")
-                            else:
-                                st.write(f"**大小**: {file_size / 1024:.1f} KB")
-                        except (TypeError, ValueError):
-                            st.write("**大小**: N/A")
-                    else:
-                        st.write("**大小**: N/A")
-                    
-                    # Thumbnail error warning if present
-                    thumb_error = extra.get("thumbnail_error")
-                    if thumb_error:
-                        st.warning(f"縮圖提示：{thumb_error}")
+                    render_video_details(result.metadata or {})
 
 
                 if result.is_scanned:
@@ -494,11 +436,11 @@ def render_records_tab():
                 else:
                     st.error(f"失敗：{res.get('error')}；已檢查：{res.get('summary')}")
     with col_b:
-        if st.button("🧱 重建全文索引(FTS)", key="rebuild_fts"):
-            with st.spinner("重建索引中..."):
-                res = storage.rebuild_fts_index()
+        if st.button("🧱 對齊/重建全文索引(FTS)", key="rebuild_fts"):
+            with st.spinner("對齊/重建索引中...（不會重新擷取檔案內容）"):
+                res = storage.reconcile_fts_rows()
                 if res.get("success"):
-                    st.success("FTS 索引重建完成")
+                    st.success("FTS 索引對齊/重建完成")
                 else:
                     st.error(f"重建失敗：{res.get('error')}")
     with col_c:

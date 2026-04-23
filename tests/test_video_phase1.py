@@ -124,16 +124,16 @@ class TestVideoMetadataExtraction:
         metadata = processor.extract_metadata(test_video_mp4)
         
         assert metadata['file_type'] == 'video'
-        assert 'extra' in metadata
-        extra = metadata['extra']
+        assert 'video' in metadata
+        video = metadata['video']
         
-        assert extra.get('media_type') == 'video'
-        assert extra.get('duration_seconds') is not None
-        assert extra.get('width') is not None
-        assert extra.get('height') is not None
-        assert extra.get('fps') is not None
-        assert extra.get('video_codec') is not None
-        assert extra.get('file_size') is not None
+        assert video.get('media_type') == 'video'
+        assert video.get('duration_seconds') is not None
+        assert video.get('width') is not None
+        assert video.get('height') is not None
+        assert video.get('fps') is not None
+        assert video.get('video_codec') is not None
+        assert video.get('file_size') is not None
     
     def test_extract_video_metadata_mov(self, test_video_mov):
         """Test metadata extraction from MOV file."""
@@ -141,8 +141,8 @@ class TestVideoMetadataExtraction:
         metadata = processor.extract_metadata(test_video_mov)
         
         assert metadata['file_type'] == 'video'
-        extra = metadata.get('extra', {})
-        assert extra.get('media_type') == 'video'
+        video = metadata.get('video') or {}
+        assert video.get('media_type') == 'video'
     
     def test_extract_video_metadata_mkv(self, test_video_mkv):
         """Test metadata extraction from MKV file."""
@@ -150,8 +150,8 @@ class TestVideoMetadataExtraction:
         metadata = processor.extract_metadata(test_video_mkv)
         
         assert metadata['file_type'] == 'video'
-        extra = metadata.get('extra', {})
-        assert extra.get('media_type') == 'video'
+        video = metadata.get('video') or {}
+        assert video.get('media_type') == 'video'
 
 
 class TestVideoThumbnailGeneration:
@@ -224,7 +224,8 @@ class TestGracefulDegradation:
             
             # Should still return metadata structure
             assert metadata['file_type'] == 'video'
-            # May have error in extra, but should not crash
+            assert metadata.get('video', {}).get('media_type') == 'video'
+            # May have error in video metadata, but should not crash
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
@@ -238,11 +239,11 @@ class TestGracefulDegradation:
         
         # Metadata should be present even if thumbnail fails
         assert metadata['file_type'] == 'video'
-        assert 'extra' in metadata
+        assert 'video' in metadata
         # thumbnail_error may or may not be present depending on success
-        extra = metadata.get('extra', {})
+        video = metadata.get('video', {})
         # Core metadata should exist regardless of thumbnail status
-        assert extra.get('media_type') == 'video'
+        assert video.get('media_type') == 'video'
 
 
 class TestDuplicateDetectionWithVideo:
