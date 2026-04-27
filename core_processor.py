@@ -4,6 +4,8 @@ import datetime
 import hashlib
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from types import ModuleType
 from typing import Any, Callable, Optional
 
@@ -118,11 +120,24 @@ class FileProcessor:
                 data = f.read()
         return hashlib.sha256(data).hexdigest()
 
+
     def extract_metadata(self, file_path, options=None) -> ExtractedMetadata:
         options = options or {}
         file_path = str(file_path)
         filename = os.path.basename(file_path)
         ext = os.path.splitext(filename)[1].lower()
+
+        timings = options.get("_timings")
+        if not isinstance(timings, dict):
+            timings = None
+
+        def _record(step: str, started_at: float) -> None:
+            if timings is None:
+                return
+            try:
+                timings[step] = round(time.perf_counter() - started_at, 4)
+            except Exception:
+                return
 
         file_type: FileType = "document"
         if ext in {".jpg", ".jpeg", ".png"}:
@@ -143,50 +158,114 @@ class FileProcessor:
 
         standard_date = self._get_file_mtime(file_path)
 
+        file_size_bytes: int | None = None
+        try:
+            file_size_bytes = int(os.path.getsize(file_path))
+        except Exception:
+            file_size_bytes = None
+
+        max_heavy_bytes_raw = options.get("max_heavy_bytes")
+        heavy_allowed = True
+        if max_heavy_bytes_raw is not None and file_size_bytes is not None:
+            try:
+                heavy_allowed = file_size_bytes <= int(max_heavy_bytes_raw)
+            except Exception:
+                heavy_allowed = True
+
         if file_type == "photo":
-            # For photos we always have a "preview" (the file itself).
             preview_path = file_path
             photo_date = self._get_photo_date(file_path)
             if photo_date:
                 standard_date = photo_date
 
         if file_type == "video":
-            video_meta = self._extract_video_metadata(file_path)
-            video = video_meta
-            notes.append("video_phase1")
+            if not heavy_allowed:
+                notes.append("?????????? metadata/?????????????????")
+                video = {"media_type": "video"}  # type: ignore[assignment]
+            else:
+                meta_timeout = int(options.get("video_metadata_timeout_seconds") or 10)
+                thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or 10)
 
-            thumb, thumb_error = self._generate_video_thumbnail(file_path, thumb_percent=0.5)
-            if thumb:
-                preview_path = thumb
-            elif thumb_error:
-                video_meta["thumbnail_error"] = thumb_error
+                started = time.perf_counter()
+                video_meta = self._extract_video_metadata(file_path, timeout_seconds=meta_timeout)
+                _record("video_metadata", started)
+                video = video_meta
+
+                started = time.perf_counter()
+                thumb, thumb_error = self._generate_video_thumbnail(
+                    file_path,
+                    thumb_percent=0.5,
+                    timeout_seconds=thumb_timeout,
+                )
+                _record("video_thumbnail", started)
+
+                if thumb:
+                    preview_path = thumb
+                elif thumb_error and isinstance(video_meta, dict):
+                    video_meta["thumbnail_error"] = thumb_error
 
         if file_type == "document" and ext == ".pdf":
-            try:
-                extracted_text = self._extract_pdf_text(file_path, max_pages=int(options.get("pdf_text_max_pages") or 10))
-            except Exception as e:
-                logger.error("PDF 文字擷取失敗: %s", e)
-                extracted_text = ""
+            enable_pdf_preview = bool(options.get("enable_pdf_preview", False))
+            enable_ocr = bool(options.get("enable_ocr", False))
 
-            if options.get("enable_pdf_preview", True):
-                preview_path = self._generate_pdf_preview(file_path, max_pages=int(options.get("pdf_preview_max_pages") or 1))
+            if not heavy_allowed:
+                notes.append("檔案過大，已跳過 PDF 文字抽取 / 預覽 / OCR（可於側邊欄調整耗時處理上限）")
             else:
-                notes.append("PDF 預覽已停用")
+                text_timeout = int(options.get("pdf_text_timeout_seconds") or 10)
+                text_pages = max(1, int(options.get("pdf_text_max_pages") or 3))
 
-            if options.get("enable_ocr", False):
-                try:
-                    ocr_text = self._ocr_pdf_sample(file_path, max_pages=int(options.get("pdf_ocr_max_pages") or self.pdf_ocr_max_pages))
+                started = time.perf_counter()
+                ok, text_value, err = self._extract_pdf_text_with_timeout(
+                    file_path,
+                    max_pages=int(text_pages),
+                    timeout_seconds=text_timeout,
+                )
+                _record("pdf_text", started)
+
+                if ok and isinstance(text_value, str):
+                    extracted_text = text_value
+                elif err == "timeout":
+                    notes.append("PDF 文字抽取逾時，已跳過")
+                else:
+                    notes.append(f"PDF 文字抽取失敗，已跳過（{err or 'unknown'}）")
+
+                if enable_pdf_preview:
+                    preview_timeout = int(options.get("pdf_preview_timeout_seconds") or 10)
+                    preview_pages = max(1, int(options.get("pdf_preview_max_pages") or 1))
+                    started = time.perf_counter()
+                    preview_path = self._generate_pdf_preview(
+                        file_path,
+                        max_pages=preview_pages,
+                        timeout_seconds=preview_timeout,
+                    )
+                    _record("pdf_preview", started)
+                    if not preview_path:
+                        notes.append("PDF 預覽產生失敗或逾時，已跳過")
+                else:
+                    notes.append("PDF 預覽已停用（預設）")
+
+                if enable_ocr:
+                    ocr_timeout = int(options.get("ocr_timeout_seconds") or 15)
+                    ocr_pages = max(1, int(options.get("pdf_ocr_max_pages") or self.pdf_ocr_max_pages))
+                    started = time.perf_counter()
+                    ocr_text, ocr_err = self._ocr_pdf_sample(
+                        file_path,
+                        max_pages=ocr_pages,
+                        timeout_seconds=ocr_timeout,
+                    )
+                    _record("ocr_pdf", started)
+
                     if ocr_text and len(ocr_text.strip()) > 10:
                         is_scanned = True
-                        extracted_text = (extracted_text + "\n" + ocr_text).strip()
-                except Exception as e:
-                    ocr_error = str(e)
-            else:
-                # Compatibility: when OCR is disabled and extracted text is empty, mark as scanned.
-                if not (extracted_text or "").strip():
-                    is_scanned = True
-                ocr_error = "OCR 已停用（設定）。"
-                notes.append("OCR 已停用")
+                        extracted_text = (extracted_text + "\\n" + ocr_text).strip()
+                    elif ocr_err:
+                        ocr_error = ocr_err
+                        notes.append(f"OCR 失敗或逾時，已跳過（{ocr_err}）")
+                else:
+                    notes.append("OCR 已停用")
+                    ocr_error = "OCR 已停用（設定）。"
+                    if not (extracted_text or "").strip():
+                        is_scanned = True
 
         if file_type == "photo" and options.get("enable_ocr", False):
             try:
@@ -219,7 +298,8 @@ class FileProcessor:
             logger.error(f"OCR 圖片失敗: {e}")
             return ""
 
-    def _generate_pdf_preview(self, file_path, max_pages=1):
+
+    def _generate_pdf_preview(self, file_path, max_pages=1, timeout_seconds: int = 10):
         if convert_from_path_fn is None:
             return None
         try:
@@ -232,13 +312,15 @@ class FileProcessor:
                     first_page=1,
                     last_page=max(1, int(max_pages or 1)),
                     poppler_path=self.poppler_path,
+                    timeout=int(timeout_seconds or 0) or None,
                 )
                 if images:
                     images[0].save(preview_path, "PNG")
             return preview_path
         except Exception as e:
-            logger.error(f"PDF 預覽圖產生失敗: {e}")
+            logger.error("PDF preview failed: %s", e)
             return None
+
 
     def _get_photo_date(self, file_path):
         try:
@@ -261,7 +343,7 @@ class FileProcessor:
             logger.error(f"獲取修改時間失敗: {e}")
             return datetime.datetime.now().strftime("%Y-%m-%d")
 
-    def _extract_video_metadata(self, file_path: str) -> VideoMetadata:
+    def _extract_video_metadata(self, file_path: str, timeout_seconds: int = 10) -> VideoMetadata:
         result: VideoMetadata = {
             "media_type": "video",
             "duration_seconds": None,
@@ -304,7 +386,7 @@ class FileProcessor:
                 "-show_format",
                 file_path,
             ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=10)
+            proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)))
             if proc.returncode != 0:
                 result["ffprobe_error"] = (proc.stderr.decode("utf-8", errors="ignore") or "").strip() or "ffprobe failed"
                 return result
@@ -341,7 +423,7 @@ class FileProcessor:
             result["ffprobe_error"] = str(e)
             return result
 
-    def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5) -> tuple[str | None, str | None]:
+    def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5, timeout_seconds: int = 10) -> tuple[str | None, str | None]:
         if not FFMPEG_AVAILABLE:
             return None, "ffmpeg 不可用，無法產生影片縮圖"
         try:
@@ -361,7 +443,7 @@ class FileProcessor:
                 "1",
                 preview_path,
             ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=10)
+            proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)))
             if os.path.exists(preview_path):
                 return preview_path, None
 
@@ -371,6 +453,28 @@ class FileProcessor:
             return None, "縮圖產生失敗（ffmpeg 未輸出錯誤訊息）"
         except Exception as e:
             return None, str(e)[:200]
+
+    def _extract_pdf_text_with_timeout(
+        self,
+        file_path: str,
+        *,
+        max_pages: int,
+        timeout_seconds: int,
+    ) -> tuple[bool, str | None, str | None]:
+        if PdfReader is None:
+            return True, "", None
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self._extract_pdf_text, file_path, max_pages=max_pages)
+        try:
+            value = future.result(timeout=max(1, int(timeout_seconds or 1)))
+            return True, str(value or ""), None
+        except FutureTimeoutError:
+            return False, None, "timeout"
+        except Exception as e:
+            return False, None, f"{type(e).__name__}: {e}"
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _extract_pdf_text(self, file_path, max_pages=None):
         if PdfReader is None:
@@ -393,26 +497,37 @@ class FileProcessor:
             logger.error(f"PDF 文字擷取失敗: {e}")
             return ""
 
-    def _ocr_pdf_sample(self, file_path, max_pages=3):
+
+    def _ocr_pdf_sample(self, file_path, max_pages=3, timeout_seconds: int = 15) -> tuple[str, str | None]:
         if convert_from_path_fn is None or pytesseract is None:
-            return ""
+            return "", "dependencies_missing"
         try:
+            deadline = time.perf_counter() + max(1.0, float(timeout_seconds or 15))
             images = convert_from_path_fn(
                 file_path,
                 first_page=1,
                 last_page=max(1, int(max_pages or 1)),
                 poppler_path=self.poppler_path,
+                timeout=max(1, int(timeout_seconds or 15)),
             )
-            parts = []
+            parts: list[str] = []
             for img in images:
                 try:
-                    parts.append(pytesseract.image_to_string(img, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")))
+                    remaining = max(1, int(deadline - time.perf_counter()))
+                    parts.append(
+                        pytesseract.image_to_string(
+                            img,
+                            lang=os.getenv("TESSERACT_LANG", "chi_tra+eng"),
+                            timeout=remaining,
+                        )
+                    )
                 except Exception:
                     continue
-            return "\n".join([p for p in parts if p])
+            return "\\n".join([p for p in parts if p]), None
         except Exception as e:
-            logger.error(f"PDF OCR 失敗: {e}")
-            return ""
+            logger.error("PDF OCR failed: %s", e)
+            return "", str(e)[:200]
+
 
     def get_llm_summary(self, text, file_type, enabled=False):
         note = None

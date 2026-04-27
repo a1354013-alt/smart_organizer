@@ -36,6 +36,9 @@ class AnalysisResult:
     is_scanned: bool
     summary: str | None = None
     manual_override: bool = False
+    analysis_status: str = "OK"  # "OK" | "WARNING" | "PARTIAL"
+    last_error: str | None = None
+    step_timings: dict[str, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)

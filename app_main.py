@@ -1,21 +1,25 @@
 ﻿import streamlit as st
 import os
 import logging
+from pathlib import Path
+
+from version import APP_NAME, APP_TITLE, __version__
+
+st.set_page_config(page_title=APP_NAME, layout="wide")
 
 try:
     import pandas as pd
-except Exception:  # pragma: no cover
-    pd = None  # type: ignore[assignment]
+except Exception:
+    pd = None
 
 try:
     import matplotlib.pyplot as plt
-except Exception:  # pragma: no cover
-    plt = None  # type: ignore[assignment]
-from pathlib import Path
+except Exception:
+    plt = None
+
 from core import FileProcessor, DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
 from logging_config import setup_logging
 from storage import MAX_UPLOAD_BYTES, StorageManager, SearchContentError
-from version import APP_NAME, APP_TITLE, __version__
 from ui_renderers import render_dependency_status, render_video_details
 from services import (
     UploadedFileData,
@@ -28,19 +32,28 @@ from services import (
     generate_summary_suggestion,
 )
 
-# ========== 路徑配置 (集中管理) ==========
 PROJECT_ROOT = Path(__file__).parent
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 REPO_ROOT = PROJECT_ROOT / "repo"
 DB_PATH = PROJECT_ROOT / "smart_organizer.db"
 
-# 設定 Logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
+def _is_debug() -> bool:
+    return bool(st.session_state.get("debug_mode", False))
+
+
+def _handle_ui_exception(user_message: str, exc: Exception) -> None:
+    if _is_debug():
+        st.exception(exc)
+    else:
+        st.error(user_message)
+
+
 @st.cache_resource
 def _bootstrap_services():
-    # Streamlit rerun-safe: cache expensive/side-effectful init once per session.
     processor = FileProcessor()
     storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
     return processor, storage
@@ -48,9 +61,12 @@ def _bootstrap_services():
 
 processor, storage = _bootstrap_services()
 
-st.set_page_config(page_title=APP_NAME, layout="wide")
 st.title(f"📁 {APP_TITLE}")
-st.markdown("**資料庫驅動的檔案生命週期管理系統**\n- 規則分類 | OCR/PDF 可降級 | 全文檢索 | 可重試與可診斷（last_error）")
+st.markdown(
+    "**資料庫驅動的檔案生命週期管理系統**\n"
+    "- 規則分類 | OCR/PDF 可降級 | 全文檢索 | 可重試與可診斷（last_error）"
+)
+
 
 def _init_session_state():
     st.session_state.setdefault("analysis_results", [])
@@ -78,15 +94,25 @@ def _build_uploaded_file_batch(uploaded_files) -> list[UploadedFileData]:
 def _render_sidebar():
     st.sidebar.header("⚙️ 設定與維護")
 
+    st.sidebar.subheader("除錯")
+    debug_mode = st.sidebar.checkbox("Debug 模式", value=False)
+    st.session_state.debug_mode = bool(debug_mode)
+    if _is_debug():
+        current_file = st.session_state.get("current_processing_file")
+        if current_file:
+            st.sidebar.caption(f"目前處理檔名：{current_file}")
+
     st.sidebar.subheader("AI 摘要")
     ai_enabled = st.sidebar.toggle("啟用 AI 摘要（會送出內容到 OpenAI）", value=False)
     st.sidebar.caption("未啟用時，系統不會送出任何內容。")
 
     st.sidebar.subheader("效能與安全")
-    enable_pdf_preview = st.sidebar.checkbox("啟用 PDF 預覽（需要 poppler）", value=True)
+    enable_pdf_preview = st.sidebar.checkbox("啟用 PDF 預覽（需要 poppler）", value=False)
     enable_ocr = st.sidebar.checkbox("啟用 OCR（需要 tesseract）", value=False)
+
     upload_hard_limit_mb = int(MAX_UPLOAD_BYTES / (1024 * 1024))
     st.sidebar.caption(f"上傳硬限制：單檔 {upload_hard_limit_mb}MB（超過會拒絕上傳）")
+
     max_heavy_mb = st.sidebar.slider(
         "耗時處理啟用上限 (MB)",
         1,
@@ -94,8 +120,14 @@ def _render_sidebar():
         15,
         help="超過此大小會跳過 OCR / PDF 預覽等耗時處理，但仍可上傳與基本整理。",
     )
-    pdf_text_max_pages = st.sidebar.slider("PDF 文字抽取頁數上限", 1, 50, 10)
-    pdf_ocr_max_pages = st.sidebar.slider("PDF OCR 頁數上限", 1, 5, int(getattr(processor, "pdf_ocr_max_pages", 3)))
+
+    pdf_text_max_pages = st.sidebar.slider("PDF 文字抽取頁數上限", 1, 50, 3)
+    pdf_ocr_max_pages = st.sidebar.slider(
+        "PDF OCR 頁數上限",
+        1,
+        5,
+        int(getattr(processor, "pdf_ocr_max_pages", 3)),
+    )
 
     processing_options = {
         "enable_pdf_preview": enable_pdf_preview,
@@ -104,16 +136,26 @@ def _render_sidebar():
         "pdf_text_max_pages": int(pdf_text_max_pages),
         "pdf_ocr_max_pages": int(pdf_ocr_max_pages),
         "pdf_preview_max_pages": int(getattr(processor, "pdf_preview_max_pages", 1)),
+        "pdf_text_timeout_seconds": 10,
+        "pdf_preview_timeout_seconds": 10,
+        "ocr_timeout_seconds": 15,
+        "video_metadata_timeout_seconds": 10,
+        "video_thumbnail_timeout_seconds": 10,
     }
+
     st.session_state.ai_enabled = ai_enabled
     st.session_state.processing_options = processing_options
 
     with st.sidebar.expander("🔎 環境與依賴檢查", expanded=False):
         deps = processor.get_dependency_status()
         render_dependency_status(deps)
+        if _is_debug():
+            st.caption("processing_options")
+            st.json(st.session_state.get("processing_options") or {})
 
     st.sidebar.subheader("🧹 uploads 清理")
     cleanup_dry_run = st.sidebar.checkbox("Dry-run（只預覽不刪除）", value=True)
+
     if st.sidebar.button("🧹 掃描孤兒暫存檔/預覽圖", key="scan_orphans"):
         try:
             actions = storage.cleanup_orphaned_uploads(dry_run=True)
@@ -138,15 +180,19 @@ def _render_sidebar():
                 st.write(f"...（共 {len(st.session_state.cleanup_actions)} 項，僅顯示前 50）")
 
     st.sidebar.markdown(
-        f"**系統配置**\n- 專案根: `{PROJECT_ROOT}`\n- 上傳目錄: `{UPLOAD_DIR}`\n- 儲存庫: `{REPO_ROOT}`\n- 資料庫: `{DB_PATH}`"
+        f"**系統配置**\n"
+        f"- 專案根: `{PROJECT_ROOT}`\n"
+        f"- 上傳目錄: `{UPLOAD_DIR}`\n"
+        f"- 儲存庫: `{REPO_ROOT}`\n"
+        f"- 資料庫: `{DB_PATH}`"
     )
 
 
 _init_session_state()
 _render_sidebar()
 
-# ========== 主流程 ==========
-def render_upload_tab():
+
+def _render_upload_tab_impl():
     st.header("步驟 1：上傳檔案")
     st.markdown("支援格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV")
 
@@ -169,48 +215,70 @@ def render_upload_tab():
     progress_bar = st.progress(0)
     status_text = st.empty()
     uploaded_batch = _build_uploaded_file_batch(uploaded_files)
+
     def _on_progress(index: int, total: int, uploaded: UploadedFileData):
         progress_bar.progress(index / total)
         status_text.text(f"分析中... {index}/{total} - {uploaded.name}")
+        st.session_state.current_processing_file = uploaded.name
 
-    outcome = analyze_upload_batch(
-        uploaded_batch,
-        processor=processor,
-        storage=storage,
-        processing_options=st.session_state.get("processing_options"),
-        progress_callback=_on_progress,
-    )
+    try:
+        outcome = analyze_upload_batch(
+            uploaded_batch,
+            processor=processor,
+            storage=storage,
+            processing_options=st.session_state.get("processing_options"),
+            progress_callback=_on_progress,
+        )
 
-    progress_bar.progress(1.0)
-    status_text.text("✅ 分析完成！")
+        progress_bar.progress(1.0)
+        status_text.text("✅ 分析完成！")
 
-    for err in outcome.errors:
-        st.error(f"❌ {err}")
+        for err in outcome.errors:
+            st.error(f"❌ {err}")
 
-    if outcome.duplicates:
-        st.warning(f"⚠️ 發現 {len(outcome.duplicates)} 個重複檔案，已跳過")
-        for dup in outcome.duplicates:
-            if getattr(dup, "status", "") == "COMPLETED":
-                st.info(f"📁 {dup.display} → {dup.final_path or '已整理'}")
-            else:
-                st.info(f"⏳ {dup.display}")
+        if outcome.duplicates:
+            st.warning(f"⚠️ 發現 {len(outcome.duplicates)} 個重複檔案，已跳過")
+            for dup in outcome.duplicates:
+                if getattr(dup, "status", "") == "COMPLETED":
+                    st.info(f"📁 {dup.display} → {dup.final_path or '已整理'}")
+                else:
+                    st.info(f"⏳ {dup.display}")
 
-    st.session_state.analysis_results = outcome.results
+        st.session_state.analysis_results = outcome.results
 
-    if outcome.results:
-        st.success(f"✅ 成功分析 {len(outcome.results)} 個檔案，請前往『預覽與確認』頁籤")
-    else:
-        st.warning("⚠️ 未有新檔案可分析")
+        if outcome.results:
+            st.success(f"✅ 成功分析 {len(outcome.results)} 個檔案，請前往『預覽與確認』頁籤")
+        else:
+            st.warning("⚠️ 未有新檔案可分析")
+
+    except Exception as e:
+        logger.exception("分析失敗")
+        _handle_ui_exception("分析失敗，請稍後重試或開啟 Debug 模式查看詳細錯誤。", e)
 
 
-def render_review_tab():
+def render_upload_tab():
+    try:
+        _render_upload_tab_impl()
+    except Exception as e:
+        logger.exception("render_upload_tab failed")
+        _handle_ui_exception("上傳與分析頁面發生錯誤，請重整後再試。", e)
+
+
+def _render_review_tab_impl():
     st.header("步驟 2：預覽與確認")
 
-    if "analysis_results" not in st.session_state or not st.session_state.analysis_results:
+    if not st.session_state.get("analysis_results"):
         st.info("請先在『上傳與分析』頁籤上傳檔案。")
         return
 
-    analysis_results: list[AnalysisResult] = st.session_state.analysis_results
+    analysis_results_raw = st.session_state.analysis_results
+    if not isinstance(analysis_results_raw, list):
+        st.error("分析結果格式錯誤，請回到『上傳與分析』重新分析。")
+        if _is_debug():
+            st.json({"type": str(type(analysis_results_raw))})
+        return
+
+    analysis_results: list[AnalysisResult] = analysis_results_raw
     st.markdown("在下方預覽每個檔案，並確認分類結果。")
 
     selected_topics: dict[int, str] = {}
@@ -221,34 +289,34 @@ def render_review_tab():
 
             with col1:
                 st.subheader("預覽")
-                
-                # Check if it's a video file
                 is_video = result.file_type == "video"
-                
+
                 if result.preview_path and storage.path_exists(result.preview_path):
                     try:
-                        from PIL import Image
+                        st.image(str(result.preview_path), use_container_width=True)
 
-                        img = Image.open(result.preview_path)
-                        st.image(img, use_container_width=True)
-                        
-                        # Show video badge for videos
                         if is_video:
                             st.caption("🎬 影片縮圖")
                     except Exception as e:
-                        st.warning(f"預覽失敗：{e}")
+                        if _is_debug():
+                            st.exception(e)
+                        st.info("無預覽圖")
                 else:
-                    # No thumbnail available
                     if is_video:
-                        # Show video placeholder with ffmpeg warning
                         st.markdown("🎬 **影片**")
-                        from core import FFMPEG_AVAILABLE
-                        if not FFMPEG_AVAILABLE:
-                            st.warning(
-                                "**無法產生影片預覽**\n\n縮圖產生失敗\n\n請安裝 ffmpeg（含 ffprobe）以啟用影片縮圖與 metadata 提取功能"
-                            )
-                        else:
-                            st.info("無縮圖（產生失敗）")
+                        try:
+                            from core import FFMPEG_AVAILABLE
+
+                            if not FFMPEG_AVAILABLE:
+                                st.warning(
+                                    "**無法產生影片預覽**\n\n"
+                                    "縮圖產生失敗\n\n"
+                                    "請安裝 ffmpeg（含 ffprobe）以啟用影片縮圖與 metadata 提取功能"
+                                )
+                            else:
+                                st.info("無縮圖（產生失敗）")
+                        except Exception:
+                            st.info("無縮圖")
                     else:
                         st.info("無預覽圖")
 
@@ -258,84 +326,128 @@ def render_review_tab():
                 st.write(f"**類型**: {result.file_type}")
                 st.write(f"**日期**: {result.standard_date}")
 
-                # Video metadata display (Phase 1 UI completion)
-                if result.file_type == "video":
-                    render_video_details(result.metadata or {})
+                analysis_status = str(getattr(result, "analysis_status", "OK") or "OK")
+                if analysis_status in {"WARNING", "PARTIAL"}:
+                    st.warning("此檔案部分分析失敗，但仍可整理。")
+                    last_error = getattr(result, "last_error", None)
+                    if last_error:
+                        st.caption(f"last_error: {last_error}")
+                    if _is_debug() and getattr(result, "step_timings", None):
+                        st.caption("step_timings")
+                        st.json(getattr(result, "step_timings") or {})
 
+                if result.file_type == "video":
+                    try:
+                        render_video_details(result.metadata or {})
+                    except Exception as e:
+                        st.warning(f"影片資訊顯示失敗：{e}")
 
                 if result.is_scanned:
                     st.warning("⚠️ 掃描 PDF - 文字不足，已視情況嘗試 OCR 抽樣（可於側邊欄調整/停用）")
                     if (result.metadata or {}).get("ocr_error"):
                         st.error(f"❌ OCR 提示: {result.metadata['ocr_error']}")
 
-                if (result.metadata or {}).get("notes"):
-                    st.info("處理提示：\n- " + "\n- ".join(result.metadata["notes"]))
+                notes = (result.metadata or {}).get("notes")
+                if notes:
+                    if isinstance(notes, list):
+                        st.info("處理提示：\n- " + "\n- ".join(map(str, notes)))
+                    else:
+                        st.info(f"處理提示：{notes}")
 
                 st.write("**建議標籤**:")
-                tag_str = ", ".join([f"{tag}({score:.0%})" for tag, score in (result.tag_scores or {}).items()])
-                st.write(tag_str)
+                tag_str = ", ".join(
+                    [f"{tag}({score:.0%})" for tag, score in (result.tag_scores or {}).items()]
+                )
+                st.write(tag_str or "無")
 
-                # Three-way classification分流：document/photo/video
                 if result.file_type == "document":
-                    tag_options = DOCUMENT_TAGS
+                    tag_options = list(DOCUMENT_TAGS)
                 elif result.file_type == "photo":
-                    tag_options = PHOTO_TAGS
+                    tag_options = list(PHOTO_TAGS)
                 elif result.file_type == "video":
-                    tag_options = VIDEO_TAGS
+                    tag_options = list(VIDEO_TAGS)
                 else:
-                    tag_options = DOCUMENT_TAGS  # fallback
-                
+                    tag_options = list(DOCUMENT_TAGS)
+
+                tag_options = list(tag_options)
+                if not tag_options:
+                    tag_options = ["其他文件"]
+                current_index = tag_options.index(result.main_topic) if result.main_topic in tag_options else 0
+                current_index = min(max(0, int(current_index)), len(tag_options) - 1)
+
                 new_topic = st.selectbox(
                     "選擇分類",
                     tag_options,
-                    index=tag_options.index(result.main_topic) if result.main_topic in tag_options else 0,
-                    key=f"topic_{idx}",
+                    index=current_index,
+                    key=f"topic_{idx}_{result.file_id}",
                 )
+
                 selected_topics[result.file_id] = new_topic
 
-                # Keep decision updates inside service/usecase instead of mutating AnalysisResult in UI.
-                computed = apply_manual_topic_override(
-                    result,
-                    processor=processor,
-                    chosen_topic=new_topic,
-                    summary=st.session_state.review_summaries.get(result.file_id),
-                )
+                try:
+                    computed = apply_manual_topic_override(
+                        result,
+                        processor=processor,
+                        chosen_topic=new_topic,
+                        summary=st.session_state.review_summaries.get(result.file_id),
+                    )
 
-                st.caption("📝 分類理由")
-                st.code(computed.classification_reason or "")
-                st.caption("🎯 最終決策理由")
-                st.code(computed.final_decision_reason or "")
+                    st.caption("📝 分類理由")
+                    st.code(str(computed.classification_reason or ""))
+                    st.caption("🎯 最終決策理由")
+                    st.code(str(computed.final_decision_reason or ""))
 
-                if st.button("✨ AI 建議摘要", key=f"summary_{idx}"):
+                except Exception as e:
+                    logger.exception("分類覆寫失敗")
+                    _handle_ui_exception("分類覆寫失敗，請稍後再試或開啟 Debug 模式查看詳細錯誤。", e)
+                    computed = result
+
+                if st.button("✨ AI 建議摘要", key=f"summary_{idx}_{result.file_id}"):
                     if not st.session_state.get("ai_enabled"):
                         st.warning("AI 功能未啟用，請在設定中開啟。")
                         continue
 
                     with st.spinner("生成 AI 摘要建議中..."):
-                        suggestion = generate_summary_suggestion(
-                            computed,
-                            processor=processor,
-                        )
-                        st.info(f"**建議**: {suggestion.summary}")
-                        if suggestion.llm_tags:
-                            st.caption("AI 同時建議了以下標籤供參考：")
-                            st.write(f"**AI 建議標籤**: {', '.join(suggestion.llm_tags)}")
-                        st.session_state.review_summaries[result.file_id] = suggestion.summary
+                        try:
+                            suggestion = generate_summary_suggestion(
+                                computed,
+                                processor=processor,
+                            )
+                            st.info(f"**建議**: {suggestion.summary}")
+                            if suggestion.llm_tags:
+                                st.caption("AI 同時建議了以下標籤供參考：")
+                                st.write(f"**AI 建議標籤**: {', '.join(suggestion.llm_tags)}")
+                            st.session_state.review_summaries[result.file_id] = suggestion.summary
+                        except Exception as e:
+                            logger.exception("AI 摘要失敗")
+                            _handle_ui_exception("AI 摘要失敗，請稍後再試或開啟 Debug 模式查看詳細錯誤。", e)
 
     if st.button("✅ 確認無誤，進行整理", key="confirm_button"):
-        st.session_state.confirmed_results = build_confirmed_results(
-            analysis_results,
-            processor=processor,
-            selected_topics=selected_topics,
-            summaries=st.session_state.review_summaries,
-        )
-        st.success("✅ 已確認！請前往「執行整理」頁籤。")
+        try:
+            st.session_state.confirmed_results = build_confirmed_results(
+                analysis_results,
+                processor=processor,
+                selected_topics=selected_topics,
+                summaries=st.session_state.review_summaries,
+            )
+            st.success("✅ 已確認！請前往「執行整理」頁籤。")
+        except Exception as e:
+            logger.exception("建立確認結果失敗")
+            _handle_ui_exception("建立確認結果失敗，請稍後再試或開啟 Debug 模式查看詳細錯誤。", e)
 
 
-def render_execute_tab():
+def render_review_tab():
+    try:
+        _render_review_tab_impl()
+    except Exception as e:
+        logger.exception("render_review_tab failed")
+        _handle_ui_exception("預覽與確認頁面發生錯誤，請重整後再試。", e)
+
+
+def _render_execute_tab_impl():
     st.header("步驟 3：執行整理")
 
-    if "confirmed_results" not in st.session_state or not st.session_state.confirmed_results:
+    if not st.session_state.get("confirmed_results"):
         st.info("請先在『預覽與確認』頁籤完成確認。")
         return
 
@@ -350,29 +462,45 @@ def render_execute_tab():
         progress_bar.progress(index / total)
         status_text.text(f"整理中... {index}/{total} - {result.original_name}")
 
-    execution_results = finalize_batch(
-        confirmed_results,
-        storage=storage,
-        progress_callback=_on_execute_progress,
-    )
-    progress_bar.progress(1.0)
-    status_text.text("✅ 整理完成！")
-    st.session_state.execution_results = execution_results
-    st.session_state.analysis_results = []
-    st.session_state.confirmed_results = []
-    _reset_review_state()
+    try:
+        execution_results = finalize_batch(
+            confirmed_results,
+            storage=storage,
+            progress_callback=_on_execute_progress,
+        )
 
-    for res in execution_results:
-        if res.status == "SUCCESS":
-            st.success(f"✅ {res.original_name} → {res.new_path}")
-        else:
-            st.error(f"❌ {res.original_name} 整理失敗（可重試）。詳細原因已記錄在「查看紀錄」的 last_error。")
+        progress_bar.progress(1.0)
+        status_text.text("✅ 整理完成！")
+
+        st.session_state.execution_results = execution_results
+        st.session_state.analysis_results = []
+        st.session_state.confirmed_results = []
+        _reset_review_state()
+
+        for res in execution_results:
+            if res.status == "SUCCESS":
+                st.success(f"✅ {res.original_name} → {res.new_path}")
+            else:
+                st.error(f"❌ {res.original_name} 整理失敗（可重試）。詳細原因已記錄在「查看紀錄」的 last_error。")
+
+    except Exception as e:
+        logger.exception("整理失敗")
+        _handle_ui_exception("整理失敗，請稍後重試或開啟 Debug 模式查看詳細錯誤。", e)
 
 
-def render_search_tab():
+def render_execute_tab():
+    try:
+        _render_execute_tab_impl()
+    except Exception as e:
+        logger.exception("render_execute_tab failed")
+        _handle_ui_exception("執行整理頁面發生錯誤，請重整後再試。", e)
+
+
+def _render_search_tab_impl():
     st.header("步驟 4：全文檢索")
 
     search_query = st.text_input("輸入搜尋關鍵字", placeholder="例如：軟體開發、統編 12345678")
+
     if not search_query:
         st.info("請輸入搜尋關鍵字。注意：查詢中的部分特殊字元會被忽略；若忽略後沒有任何詞，會回傳空結果。")
         return
@@ -387,8 +515,10 @@ def render_search_tab():
                     with st.expander(f"📄 {result['original_name']} ({result['standard_date']})"):
                         st.write(f"**主題**: {result['main_topic']}")
                         st.write(f"**路徑**: {result['final_path']}")
+
                         if result.get("all_tags"):
                             st.write(f"**標籤**: {result['all_tags']}")
+
                         st.markdown(f"**內容片段**: ...{result.get('snippet', '')}...")
 
                         if result.get("final_path") and storage.path_exists(result["final_path"]):
@@ -401,25 +531,50 @@ def render_search_tab():
                                 )
             else:
                 st.info("🔎 沒有找到符合的結果。")
+
         except SearchContentError as e:
             logger.error(f"搜尋失敗: {e}")
             st.error("搜尋暫時不可用，請稍後再試或重建索引。")
         except Exception as e:
-            logger.error(f"搜尋失敗: {e}")
-            st.error("搜尋暫時不可用，請稍後再試。")
+            logger.exception("搜尋失敗")
+            _handle_ui_exception("搜尋失敗，請稍後再試或開啟 Debug 模式查看詳細錯誤。", e)
 
 
-def render_records_tab():
+def render_search_tab():
+    try:
+        _render_search_tab_impl()
+    except Exception as e:
+        logger.exception("render_search_tab failed")
+        _handle_ui_exception("全文檢索頁面發生錯誤，請重整後再試。", e)
+
+
+def _render_records_tab_impl():
     st.header("步驟 5：查看紀錄")
 
-    records = storage.get_all_records()
+    try:
+        records = storage.get_all_records()
+    except Exception as e:
+        logger.exception("讀取紀錄失敗")
+        _handle_ui_exception("讀取紀錄失敗，請稍後再試或開啟 Debug 模式查看詳細錯誤。", e)
+        return
+
     if not records:
         st.info("目前尚無處理紀錄")
         return
 
     if pd is not None:
         df = pd.DataFrame(records)
-        cols = ["file_id", "original_name", "standard_date", "main_topic", "all_tags", "status", "manual_override", "last_error", "created_at"]
+        cols = [
+            "file_id",
+            "original_name",
+            "standard_date",
+            "main_topic",
+            "all_tags",
+            "status",
+            "manual_override",
+            "last_error",
+            "created_at",
+        ]
         display_df = df[[c for c in cols if c in df.columns]]
         st.dataframe(display_df, use_container_width=True)
     else:
@@ -427,28 +582,39 @@ def render_records_tab():
 
     st.subheader("維護操作")
     col_a, col_b, col_c = st.columns(3)
+
     with col_a:
         if st.button("🔁 重新整理檔案位置", key="refresh_locations"):
             with st.spinner("重新整理中..."):
-                res = storage.refresh_file_locations(fix_moving=True)
-                if res.get("success"):
-                    st.success(f"完成：{res.get('summary')}")
-                else:
-                    st.error(f"失敗：{res.get('error')}；已檢查：{res.get('summary')}")
+                try:
+                    res = storage.refresh_file_locations(fix_moving=True)
+                    if res.get("success"):
+                        st.success(f"完成：{res.get('summary')}")
+                    else:
+                        st.error(f"失敗：{res.get('error')}；已檢查：{res.get('summary')}")
+                except Exception as e:
+                    _handle_ui_exception("重新整理檔案位置失敗。", e)
+
     with col_b:
         if st.button("🧱 對齊/重建全文索引(FTS)", key="rebuild_fts"):
             with st.spinner("對齊/重建索引中...（不會重新擷取檔案內容）"):
-                res = storage.reconcile_fts_rows()
-                if res.get("success"):
-                    st.success("FTS 索引對齊/重建完成")
-                else:
-                    st.error(f"重建失敗：{res.get('error')}")
+                try:
+                    res = storage.reconcile_fts_rows()
+                    if res.get("success"):
+                        st.success("FTS 索引對齊/重建完成")
+                    else:
+                        st.error(f"重建失敗：{res.get('error')}")
+                except Exception as e:
+                    _handle_ui_exception("重建索引失敗。", e)
+
     with col_c:
         st.caption("重新分類：選一筆紀錄後執行")
 
     file_id_options = [r.get("file_id") for r in records if r.get("file_id") is not None]
+
     if file_id_options:
         selected_file_id = st.selectbox("選擇 file_id", file_id_options, index=0, key="reclassify_file_id")
+
         if st.button("🏷️ 重新分類（不使用 AI）", key="do_reclassify"):
             with st.spinner("重新分類中..."):
                 try:
@@ -462,32 +628,71 @@ def render_records_tab():
                 except FileNotFoundError:
                     st.error("檔案不存在（可能已遺失），請先用「重新整理檔案位置」檢查。")
                 except Exception as e:
-                    logger.error(f"重新分類失敗: {e}")
-                    st.error("重新分類失敗，請稍後再試。")
+                    logger.exception("重新分類失敗")
+                    _handle_ui_exception("重新分類失敗。", e)
     else:
         st.info("沒有可重新分類的紀錄")
 
     if pd is not None:
         st.subheader("統計分析")
         col1, col2 = st.columns(2)
+
         with col1:
             st.write("**主題分佈**")
-            topic_counts = df["main_topic"].value_counts()
-            st.bar_chart(topic_counts)
+            if "main_topic" in df.columns:
+                topic_series = df["main_topic"]
+                if topic_series is not None:
+                    topic_counts = (
+                        topic_series.dropna()
+                        .astype(str)
+                        .replace("", pd.NA)
+                        .dropna()
+                        .value_counts()
+                    )
+                    if not topic_counts.empty:
+                        st.bar_chart(topic_counts)
+                    else:
+                        st.info("沒有可用的主題資料可畫圖。")
+            else:
+                st.info("沒有 main_topic 欄位，略過圖表。")
+
         with col2:
             st.write("**處理狀態**")
-            status_counts = df["status"].value_counts()
-            if plt is None:
-                st.bar_chart(status_counts)
+            if "status" in df.columns:
+                status_series = df["status"]
+                if status_series is not None:
+                    status_counts = (
+                        status_series.dropna()
+                        .astype(str)
+                        .replace("", pd.NA)
+                        .dropna()
+                        .value_counts()
+                    )
+                    if status_counts.empty:
+                        st.info("沒有可用的狀態資料可畫圖。")
+                    elif plt is None:
+                        st.bar_chart(status_counts)
+                    else:
+                        fig, ax = plt.subplots()
+                        status_counts.plot.pie(ax=ax, autopct="%1.1f%%", startangle=90)
+                        ax.set_ylabel("")
+                        st.pyplot(fig)
+                        plt.close(fig)
             else:
-                fig, ax = plt.subplots()
-                status_counts.plot.pie(ax=ax, autopct="%1.1f%%", startangle=90)
-                ax.set_ylabel("")
-                st.pyplot(fig)
-                plt.close(fig)
+                st.info("沒有 status 欄位，略過圖表。")
 
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📤 上傳與分析", "👁️ 預覽與確認", "✅ 執行整理", "🔍 全文檢索", "📊 查看紀錄"])
+def render_records_tab():
+    try:
+        _render_records_tab_impl()
+    except Exception as e:
+        logger.exception("render_records_tab failed")
+        _handle_ui_exception("查看紀錄頁面發生錯誤，請重整後再試。", e)
+
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📤 上傳與分析", "👁️ 預覽與確認", "✅ 執行整理", "🔍 全文檢索", "📊 查看紀錄"]
+)
 
 with tab1:
     render_upload_tab()
@@ -506,4 +711,3 @@ with tab5:
 
 st.divider()
 st.caption(f"{APP_NAME} v{__version__} | Powered by Python & Streamlit")
-

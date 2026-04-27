@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from typing import Any, Callable, Iterable, Mapping
 
 from contracts import validate_extracted_metadata
@@ -25,16 +26,24 @@ def analyze_one_upload(
     storage: StorageManager,
     processing_options: Mapping[str, Any] | None = None,
 ) -> tuple[AnalysisResult | None, DuplicateInfo | None, str | None]:
+    """Analyze one uploaded file.
+
+    Design goals:
+    - Never block the whole batch for a single slow/broken file.
+    - Always return an AnalysisResult once a temp file is created, even if some steps fail.
+    """
+    step_timings: dict[str, float] = {}
+    analysis_status = "OK"
+    last_error: str | None = None
+
     try:
         file_hash = processor.get_file_hash(io.BytesIO(uploaded.content))
-
         file_type_hint = "photo" if (uploaded.mime_type or "").startswith("image") else "document"
 
         created = storage.create_temp_file(uploaded.name, uploaded.content, file_hash, file_type_hint)
-
         if not created.get("success"):
             if created.get("reason") == "DUPLICATE":
-                dup_status = created.get("status", "UNKNOWN")
+                dup_status = str(created.get("status", "UNKNOWN"))
                 if dup_status == "COMPLETED":
                     return (
                         None,
@@ -42,7 +51,7 @@ def analyze_one_upload(
                             filename=uploaded.name,
                             status="COMPLETED",
                             final_path=str(created.get("final_path") or ""),
-                            display=f"{uploaded.name} (已存在)",
+                            display=f"{uploaded.name} (??????)",
                         ),
                         None,
                     )
@@ -51,25 +60,74 @@ def analyze_one_upload(
                     DuplicateInfo(
                         filename=uploaded.name,
                         status="PENDING",
-                        display=f"{uploaded.name} (已存在待整理)",
+                        display=f"{uploaded.name} (??????)",
                     ),
                     None,
                 )
-            return None, None, f"建立暫存檔案失敗：{uploaded.name}"
+            return None, None, f"???????: {uploaded.name}"
 
         file_id = int(created["file_id"])
         temp_path = storage.get_file_path(file_id)
         if not temp_path:
-            return None, None, f"找不到暫存檔案路徑：{uploaded.name}"
+            return None, None, f"????????: {uploaded.name}"
 
-        metadata = validate_extracted_metadata(processor.extract_metadata(temp_path, dict(processing_options or {})))
-        main_topic, tag_scores, classification_reason = processor.classify_multi_tag(
-            metadata,
-            uploaded.name,
-            return_reason=True,
-        )
+        options = dict(processing_options or {})
+        options.setdefault("enable_pdf_preview", False)
+        options.setdefault("enable_ocr", False)
+        options.setdefault("pdf_text_max_pages", 3)
+        options.setdefault("pdf_text_timeout_seconds", 10)
+        options.setdefault("pdf_preview_timeout_seconds", 10)
+        options.setdefault("ocr_timeout_seconds", 15)
+        options.setdefault("video_metadata_timeout_seconds", 10)
+        options.setdefault("video_thumbnail_timeout_seconds", 10)
+        options["_timings"] = step_timings
 
-        suggested_main_topic = main_topic
+        started = time.perf_counter()
+        try:
+            metadata = validate_extracted_metadata(processor.extract_metadata(temp_path, options))
+        except Exception as e:
+            analysis_status = "PARTIAL"
+            last_error = f"extract_metadata failed: {type(e).__name__}: {e}"
+            metadata = validate_extracted_metadata(
+                {
+                    "file_type": file_type_hint,
+                    "standard_date": "",
+                    "extracted_text": "",
+                    "is_scanned": False,
+                    "preview_path": None,
+                    "ocr_error": None,
+                    "notes": [last_error],
+                }
+            )
+        finally:
+            step_timings["extract_metadata_total"] = round(time.perf_counter() - started, 4)
+
+        try:
+            main_topic, tag_scores, classification_reason = processor.classify_multi_tag(
+                metadata,
+                uploaded.name,
+                return_reason=True,
+            )
+        except Exception as e:
+            analysis_status = "PARTIAL"
+            err = f"classify failed: {type(e).__name__}: {e}"
+            last_error = err if not last_error else f"{last_error} | {err}"
+            if metadata.get("file_type") == "photo":
+                main_topic = "????"
+            elif metadata.get("file_type") == "video":
+                main_topic = "Unclassified"
+            else:
+                main_topic = "????"
+            tag_scores = {}
+            classification_reason = err
+
+        notes = metadata.get("notes")
+        if isinstance(notes, list) and any(
+            (isinstance(n, str) and ("??" in n or "??" in n or "??" in n)) for n in notes
+        ):
+            if analysis_status == "OK":
+                analysis_status = "WARNING"
+
         return (
             AnalysisResult(
                 file_id=file_id,
@@ -77,20 +135,23 @@ def analyze_one_upload(
                 file_type=metadata.get("file_type") or "unknown",
                 standard_date=metadata.get("standard_date") or "",
                 main_topic=main_topic,
-                suggested_main_topic=suggested_main_topic,
+                suggested_main_topic=main_topic,
                 tag_scores=dict(tag_scores or {}),
                 classification_reason=classification_reason or "",
-                final_decision_reason="系統預設決策",
+                final_decision_reason="?????????",
                 metadata=metadata,
                 preview_path=metadata.get("preview_path"),
                 is_scanned=bool(metadata.get("is_scanned", False)),
+                analysis_status=analysis_status,
+                last_error=last_error,
+                step_timings=step_timings,
             ),
             None,
             None,
         )
     except Exception:
         logger.error("analyze_one_upload failed%s", _log_context(original_name=uploaded.name), exc_info=True)
-        return None, None, f"分析失敗：{uploaded.name}"
+        return None, None, f"????: {uploaded.name}"
 
 
 def analyze_upload_batch(
