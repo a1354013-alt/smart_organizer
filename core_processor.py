@@ -17,8 +17,7 @@ from core_utils import FileUtils
 try:
     from PIL import Image
 except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
-
+    Image = None  
 exifread_module: Optional[ModuleType] = None
 try:
     import exifread as _exifread
@@ -181,7 +180,7 @@ class FileProcessor:
         if file_type == "video":
             if not heavy_allowed:
                 notes.append("?????????? metadata/?????????????????")
-                video = {"media_type": "video"}  # type: ignore[assignment]
+                video = {"media_type": "video"}  
             else:
                 meta_timeout = int(options.get("video_metadata_timeout_seconds") or 10)
                 thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or 10)
