@@ -434,7 +434,8 @@ class FileProcessor:
         try:
             import subprocess
 
-            preview_path = FileUtils.build_preview_path(file_path)
+            base_preview_path = FileUtils.build_preview_path(file_path)
+            preview_path = os.path.splitext(base_preview_path)[0] + ".jpg"
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
 
             cmd = [
@@ -446,6 +447,8 @@ class FileProcessor:
                 "thumbnail,scale=320:-1",
                 "-frames:v",
                 "1",
+                "-q:v",
+                "2",
                 preview_path,
             ]
             proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)))
