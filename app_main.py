@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import os
 import logging
 from pathlib import Path
