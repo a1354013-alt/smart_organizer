@@ -45,8 +45,11 @@ try:
 except Exception:  # pragma: no cover
     convert_from_path_fn = None
 
+pytesseract: Any = None
 try:
-    import pytesseract
+    import pytesseract as _pytesseract
+
+    pytesseract = _pytesseract
 except Exception:  # pragma: no cover
     pytesseract = None
 
