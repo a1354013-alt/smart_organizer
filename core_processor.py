@@ -14,10 +14,13 @@ from core_classification import classify_multi_tag as _classify_multi_tag
 from core_classification import sync_manual_topic as _sync_manual_topic
 from core_utils import FileUtils
 
+Image: Any = None
 try:
-    from PIL import Image
+    from PIL import Image as _Image
+
+    Image = _Image
 except Exception:  # pragma: no cover
-    Image = None  
+    Image = None
 exifread_module: Optional[ModuleType] = None
 try:
     import exifread as _exifread
