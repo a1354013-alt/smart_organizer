@@ -1,11 +1,15 @@
 import streamlit as st
 import os
 import logging
+import datetime
+import time
 from pathlib import Path
 
 from version import APP_NAME, APP_TITLE, __version__
+from frontend_safety import inject_browser_storage_sanitizer
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
+inject_browser_storage_sanitizer(enabled=True)
 
 try:
     import pandas as pd
@@ -41,6 +45,181 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def _inject_global_css() -> None:
+    st.markdown(
+        """
+        <style>
+          :root {
+            --so-bg: #f7faf8;
+            --so-surface: rgba(255, 255, 255, 0.92);
+            --so-border: rgba(15, 23, 42, 0.10);
+            --so-text: #0f172a;
+            --so-muted: rgba(15, 23, 42, 0.65);
+            --so-accent: #10b981;
+            --so-accent-2: #3b82f6;
+            --so-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+            --so-radius: 20px;
+            --so-primary-border: rgba(16, 185, 129, 0.25);
+            --so-secondary-border: rgba(59, 130, 246, 0.22);
+          }
+
+          .stApp {
+            background: radial-gradient(1200px 600px at 20% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
+                        radial-gradient(900px 500px at 90% 0%, rgba(59, 130, 246, 0.10), transparent 55%),
+                        var(--so-bg);
+            color: var(--so-text);
+          }
+
+          /* Reduce visual pressure in sidebar */
+          section[data-testid="stSidebar"] {
+            background: rgba(255, 255, 255, 0.70);
+            border-right: 1px solid rgba(15, 23, 42, 0.06);
+          }
+
+          .hero-card,
+          .primary-action-card,
+          .secondary-action-card,
+          .status-card {
+            background: var(--so-surface);
+            border: 1px solid var(--so-border);
+            border-radius: var(--so-radius);
+            box-shadow: var(--so-shadow);
+            padding: 18px 18px;
+            margin: 6px 0 14px 0;
+          }
+
+          .primary-action-card {
+            background: linear-gradient(135deg, rgba(236, 253, 245, 0.98), rgba(255, 251, 235, 0.92));
+            border-color: var(--so-primary-border);
+          }
+
+          .secondary-action-card {
+            background: linear-gradient(135deg, rgba(239, 246, 255, 0.98), rgba(248, 250, 252, 0.92));
+            border-color: var(--so-secondary-border);
+          }
+
+          .hero-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin: 0;
+          }
+
+          .version-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.30);
+            color: rgba(15, 23, 42, 0.85);
+            font-weight: 700;
+            font-size: 13px;
+            white-space: nowrap;
+          }
+
+          .hero-subtitle {
+            margin: 8px 0 0 0;
+            color: var(--so-muted);
+            font-size: 14px;
+            line-height: 1.55;
+          }
+
+          .feature-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+          }
+
+          .feature-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(2, 132, 199, 0.08);
+            border: 1px solid rgba(2, 132, 199, 0.20);
+            color: rgba(15, 23, 42, 0.85);
+            font-weight: 650;
+            font-size: 12.5px;
+            white-space: nowrap;
+          }
+
+          .card-title {
+            font-size: 16px;
+            font-weight: 800;
+            margin: 0 0 8px 0;
+          }
+
+          .card-muted {
+            color: var(--so-muted);
+            font-size: 13px;
+            line-height: 1.55;
+            margin: 0 0 8px 0;
+          }
+
+          .status-metric {
+            font-weight: 900;
+            font-size: 22px;
+            margin: 0;
+          }
+
+          .status-label {
+            color: var(--so-muted);
+            font-size: 12.5px;
+            margin-top: 4px;
+          }
+
+          /* Give main content some breathing room */
+          div[data-testid="stMainBlockContainer"] {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+          }
+
+          /* Softer default buttons */
+          .stButton > button {
+            border-radius: 14px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+          }
+
+          .stButton > button[kind="primary"] {
+            background: rgba(16, 185, 129, 0.85);
+            border: 1px solid rgba(16, 185, 129, 0.30);
+          }
+
+          .stButton > button[kind="primary"]:hover {
+            background: rgba(16, 185, 129, 0.92);
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _card_open(class_name: str) -> None:
+    st.markdown(f'<div class="{class_name}">', unsafe_allow_html=True)
+
+
+def _card_close() -> None:
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _human_bytes(num_bytes: int | None) -> str:
+    if num_bytes is None:
+        return "-"
+    value = float(num_bytes)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if value < 1024.0 or unit == "TB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024.0
+    return f"{int(num_bytes)} B"
+
+
 def _is_debug() -> bool:
     return bool(st.session_state.get("debug_mode", False))
 
@@ -61,11 +240,32 @@ def _bootstrap_services():
 
 processor, storage = _bootstrap_services()
 
-st.title(f"📁 {APP_TITLE}")
+_inject_global_css()
+
+_card_open("hero-card")
+col_title, col_badge = st.columns([4, 1])
+with col_title:
+    st.markdown('<div class="hero-title">📁 智慧檔案整理助理</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hero-subtitle">資料夾掃描、檔案分類、久未使用檔案清理</div>',
+        unsafe_allow_html=True,
+    )
+with col_badge:
+    st.markdown(f'<div class="version-badge">v{__version__}</div>', unsafe_allow_html=True)
+
 st.markdown(
-    "**資料庫驅動的檔案生命週期管理系統**\n"
-    "- 規則分類 | OCR/PDF 可降級 | 全文檢索 | 可重試與可診斷（last_error）"
+    """
+    <div class="feature-chips">
+      <span class="feature-chip">規則分類</span>
+      <span class="feature-chip">檔案大小分析</span>
+      <span class="feature-chip">久未使用檢查</span>
+      <span class="feature-chip">可預覽後執行</span>
+      <span class="feature-chip">Dry-run 安全模式</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
+_card_close()
 
 
 def _init_session_state():
@@ -74,10 +274,142 @@ def _init_session_state():
     st.session_state.setdefault("execution_results", [])
     st.session_state.setdefault("cleanup_actions", [])
     st.session_state.setdefault("review_summaries", {})
+    st.session_state.setdefault("folder_scan", None)
+    st.session_state.setdefault("folder_scan_actions", [])
 
 
 def _reset_review_state():
     st.session_state.review_summaries = {}
+
+
+def _infer_local_file_kind(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    if ext in {".jpg", ".jpeg", ".png"}:
+        return "photo"
+    if ext in {".mp4", ".mov", ".mkv"}:
+        return "video"
+    if ext == ".pdf":
+        return "document"
+    if ext:
+        return "document"
+    return "unknown"
+
+
+def _scan_local_folder(
+    folder_path: str,
+    *,
+    recursive: bool,
+    max_files: int,
+    stale_days: int,
+) -> dict[str, object]:
+    started = time.perf_counter()
+    root = Path(folder_path).expanduser()
+
+    records: list[dict[str, object]] = []
+    errors: list[str] = []
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale_delta = datetime.timedelta(days=max(0, int(stale_days)))
+
+    scanned = 0
+
+    def _on_walk_error(err: OSError) -> None:
+        try:
+            errors.append(f"掃描資料夾失敗：{err}")
+        except Exception:
+            return
+
+    if recursive:
+        walker = os.walk(str(root), topdown=True, onerror=_on_walk_error)
+        for dirpath, _dirnames, filenames in walker:
+            if scanned >= int(max_files):
+                break
+            for filename in filenames:
+                if scanned >= int(max_files):
+                    break
+                p = Path(dirpath) / filename
+                try:
+                    stat = p.stat()
+                    mtime = datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.timezone.utc)
+                    is_stale = (now - mtime) >= stale_delta if stale_days > 0 else False
+                    records.append(
+                        {
+                            "path": str(p),
+                            "name": p.name,
+                            "ext": p.suffix.lower(),
+                            "size_bytes": int(stat.st_size),
+                            "mtime": mtime.isoformat(),
+                            "file_kind": _infer_local_file_kind(str(p)),
+                            "is_stale": bool(is_stale),
+                        }
+                    )
+                    scanned += 1
+                except PermissionError:
+                    errors.append(f"權限不足：{p}")
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    errors.append(f"讀取失敗：{p}（{e}）")
+    else:
+        try:
+            for entry in os.scandir(str(root)):
+                if scanned >= int(max_files):
+                    break
+                try:
+                    if not entry.is_file():
+                        continue
+                    stat = entry.stat()
+                    p = Path(entry.path)
+                    mtime = datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.timezone.utc)
+                    is_stale = (now - mtime) >= stale_delta if stale_days > 0 else False
+                    records.append(
+                        {
+                            "path": str(p),
+                            "name": p.name,
+                            "ext": p.suffix.lower(),
+                            "size_bytes": int(stat.st_size),
+                            "mtime": mtime.isoformat(),
+                            "file_kind": _infer_local_file_kind(str(p)),
+                            "is_stale": bool(is_stale),
+                        }
+                    )
+                    scanned += 1
+                except PermissionError:
+                    errors.append(f"權限不足：{entry.path}")
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    errors.append(f"讀取失敗：{entry.path}（{e}）")
+        except PermissionError:
+            raise
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            errors.append(f"掃描資料夾失敗：{e}")
+
+    stats = {
+        "scanned_files": len(records),
+        "stale_candidates": sum(1 for r in records if r.get("is_stale")),
+        "total_bytes": sum(int(r.get("size_bytes") or 0) for r in records),
+        "by_kind": {
+            "document": sum(1 for r in records if r.get("file_kind") == "document"),
+            "photo": sum(1 for r in records if r.get("file_kind") == "photo"),
+            "video": sum(1 for r in records if r.get("file_kind") == "video"),
+            "unknown": sum(1 for r in records if r.get("file_kind") == "unknown"),
+        },
+    }
+
+    return {
+        "path": str(root),
+        "recursive": bool(recursive),
+        "max_files": int(max_files),
+        "stale_days": int(stale_days),
+        "scanned_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "elapsed_seconds": round(time.perf_counter() - started, 3),
+        "records": records,
+        "errors": errors[:50],
+        "stats": stats,
+    }
 
 
 def _build_uploaded_file_batch(uploaded_files) -> list[UploadedFileData]:
@@ -92,92 +424,110 @@ def _build_uploaded_file_batch(uploaded_files) -> list[UploadedFileData]:
 
 
 def _render_sidebar():
-    st.sidebar.header("⚙️ 設定與維護")
+    st.sidebar.header("⚙️ 設定")
 
-    st.sidebar.subheader("除錯")
-    debug_mode = st.sidebar.checkbox("Debug 模式", value=False)
-    st.session_state.debug_mode = bool(debug_mode)
-    if _is_debug():
-        current_file = st.session_state.get("current_processing_file")
-        if current_file:
-            st.sidebar.caption(f"目前處理檔名：{current_file}")
+    with st.sidebar.expander("主流程：資料夾掃描", expanded=True):
+        folder_dry_run = st.checkbox("Dry-run 安全模式（只預覽建議，不做刪除/移動）", value=True, key="folder_dry_run")
+        # Avoid Streamlit widget warnings: default must align with step=7.
+        stale_days = st.slider("久未使用判定（天）", 7, 3650, 364, step=7, help="以檔案最後修改時間判定。")
+        recursive = st.checkbox("遞迴掃描子資料夾", value=True, key="folder_recursive")
+        max_files = st.number_input("掃描上限（檔案數）", min_value=100, max_value=200000, value=5000, step=500)
+        st.session_state.folder_scan_options = {
+            "dry_run": bool(folder_dry_run),
+            "stale_days": int(stale_days),
+            "recursive": bool(recursive),
+            "max_files": int(max_files),
+        }
 
-    st.sidebar.subheader("AI 摘要")
-    ai_enabled = st.sidebar.toggle("啟用 AI 摘要（會送出內容到 OpenAI）", value=False)
-    st.sidebar.caption("未啟用時，系統不會送出任何內容。")
+    with st.sidebar.expander("輔助：上傳單檔分析", expanded=False):
+        upload_hard_limit_mb = int(MAX_UPLOAD_BYTES / (1024 * 1024))
+        st.caption(f"單檔上傳硬限制：{upload_hard_limit_mb}MB（超過會拒絕上傳）")
+        st.caption("用途：單檔測試/驗證分析品質；主要整理流程以『掃描資料夾』為主。")
 
-    st.sidebar.subheader("效能與安全")
-    enable_pdf_preview = st.sidebar.checkbox("啟用 PDF 預覽（需要 poppler）", value=False)
-    enable_ocr = st.sidebar.checkbox("啟用 OCR（需要 tesseract）", value=False)
+    with st.sidebar.expander("進階設定：PDF / OCR / AI / 除錯", expanded=False):
+        debug_mode = st.checkbox("Debug 模式", value=False, key="debug_mode_checkbox")
+        st.session_state.debug_mode = bool(debug_mode)
+        if _is_debug():
+            current_file = st.session_state.get("current_processing_file")
+            if current_file:
+                st.caption(f"目前處理檔名：{current_file}")
 
-    upload_hard_limit_mb = int(MAX_UPLOAD_BYTES / (1024 * 1024))
-    st.sidebar.caption(f"上傳硬限制：單檔 {upload_hard_limit_mb}MB（超過會拒絕上傳）")
+        ai_enabled = st.toggle("啟用 AI 摘要（會送出內容到 OpenAI）", value=False, key="ai_enabled_toggle")
+        st.caption("未啟用時，系統不會送出任何內容。")
 
-    max_heavy_mb = st.sidebar.slider(
-        "耗時處理啟用上限 (MB)",
-        1,
-        200,
-        15,
-        help="超過此大小會跳過 OCR / PDF 預覽等耗時處理，但仍可上傳與基本整理。",
-    )
+        enable_pdf_preview = st.checkbox("啟用 PDF 預覽（需要 poppler）", value=False, key="enable_pdf_preview")
+        enable_ocr = st.checkbox("啟用 OCR（需要 tesseract）", value=False, key="enable_ocr")
 
-    pdf_text_max_pages = st.sidebar.slider("PDF 文字抽取頁數上限", 1, 50, 3)
-    pdf_ocr_max_pages = st.sidebar.slider(
-        "PDF OCR 頁數上限",
-        1,
-        5,
-        int(getattr(processor, "pdf_ocr_max_pages", 3)),
-    )
+        max_heavy_mb = st.slider(
+            "耗時處理啟用上限 (MB)",
+            1,
+            200,
+            15,
+            help="超過此大小會跳過 OCR / PDF 預覽等耗時處理，但仍可上傳與基本整理。",
+            key="max_heavy_mb",
+        )
 
-    processing_options = {
-        "enable_pdf_preview": enable_pdf_preview,
-        "enable_ocr": enable_ocr,
-        "max_heavy_bytes": int(max_heavy_mb) * 1024 * 1024,
-        "pdf_text_max_pages": int(pdf_text_max_pages),
-        "pdf_ocr_max_pages": int(pdf_ocr_max_pages),
-        "pdf_preview_max_pages": int(getattr(processor, "pdf_preview_max_pages", 1)),
-        "pdf_text_timeout_seconds": 10,
-        "pdf_preview_timeout_seconds": 10,
-        "ocr_timeout_seconds": 15,
-        "video_metadata_timeout_seconds": 10,
-        "video_thumbnail_timeout_seconds": 10,
-    }
+        pdf_text_max_pages = st.slider("PDF 文字抽取頁數上限", 1, 50, 3, key="pdf_text_max_pages")
+        pdf_ocr_max_pages = st.slider(
+            "PDF OCR 頁數上限",
+            1,
+            5,
+            max(1, min(5, int(getattr(processor, "pdf_ocr_max_pages", 3)))),
+            key="pdf_ocr_max_pages",
+        )
 
-    st.session_state.ai_enabled = ai_enabled
-    st.session_state.processing_options = processing_options
+        processing_options = {
+            "enable_pdf_preview": bool(enable_pdf_preview),
+            "enable_ocr": bool(enable_ocr),
+            "max_heavy_bytes": int(max_heavy_mb) * 1024 * 1024,
+            "pdf_text_max_pages": int(pdf_text_max_pages),
+            "pdf_ocr_max_pages": int(pdf_ocr_max_pages),
+            "pdf_preview_max_pages": int(getattr(processor, "pdf_preview_max_pages", 1)),
+            "pdf_text_timeout_seconds": 10,
+            "pdf_preview_timeout_seconds": 10,
+            "ocr_timeout_seconds": 15,
+            "video_metadata_timeout_seconds": 10,
+            "video_thumbnail_timeout_seconds": 10,
+        }
 
-    with st.sidebar.expander("🔎 環境與依賴檢查", expanded=False):
+        st.session_state.ai_enabled = bool(ai_enabled)
+        st.session_state.processing_options = processing_options
+
+        st.divider()
+        st.markdown("**維護：uploads 清理（進階）**")
+        cleanup_dry_run = st.checkbox("Dry-run（只預覽不刪除）", value=True, key="cleanup_dry_run")
+
+        if st.button("🧹 掃描孤兒暫存檔/預覽圖", key="scan_orphans"):
+            try:
+                actions = storage.cleanup_orphaned_uploads(dry_run=True)
+                st.session_state.cleanup_actions = actions
+                st.success(f"✅ 掃描完成：{len(actions)} 個待清理項目")
+            except Exception as e:
+                st.error(f"❌ 掃描失敗: {e}")
+
+        if st.button("🗑️ 執行清理", key="do_cleanup", disabled=cleanup_dry_run):
+            try:
+                actions = storage.cleanup_orphaned_uploads(dry_run=False)
+                st.session_state.cleanup_actions = actions
+                st.success(f"✅ 清理完成：{len(actions)} 個項目")
+            except Exception as e:
+                st.error(f"❌ 清理失敗: {e}")
+
+        actions = st.session_state.get("cleanup_actions") or []
+        if actions:
+            show_actions = st.checkbox("顯示待清理清單", value=False, key="show_cleanup_actions")
+            if show_actions:
+                for a in actions[:50]:
+                    st.write(f"- {a.get('type')}: {a.get('path')}")
+                if len(actions) > 50:
+                    st.caption(f"...（共 {len(actions)} 項，僅顯示前 50）")
+
+    with st.sidebar.expander("🔍 環境與依賴檢查", expanded=False):
         deps = processor.get_dependency_status()
         render_dependency_status(deps)
         if _is_debug():
             st.caption("processing_options")
             st.json(st.session_state.get("processing_options") or {})
-
-    st.sidebar.subheader("🧹 uploads 清理")
-    cleanup_dry_run = st.sidebar.checkbox("Dry-run（只預覽不刪除）", value=True)
-
-    if st.sidebar.button("🧹 掃描孤兒暫存檔/預覽圖", key="scan_orphans"):
-        try:
-            actions = storage.cleanup_orphaned_uploads(dry_run=True)
-            st.session_state.cleanup_actions = actions
-            st.sidebar.success(f"✅ 掃描完成：{len(actions)} 個待清理項目")
-        except Exception as e:
-            st.sidebar.error(f"❌ 掃描失敗: {e}")
-
-    if st.sidebar.button("🗑️ 執行清理", key="do_cleanup", disabled=cleanup_dry_run):
-        try:
-            actions = storage.cleanup_orphaned_uploads(dry_run=False)
-            st.session_state.cleanup_actions = actions
-            st.sidebar.success(f"✅ 清理完成：{len(actions)} 個項目")
-        except Exception as e:
-            st.sidebar.error(f"❌ 清理失敗: {e}")
-
-    if st.session_state.get("cleanup_actions"):
-        with st.sidebar.expander("待清理清單", expanded=False):
-            for a in st.session_state.cleanup_actions[:50]:
-                st.write(f"- {a.get('type')}: {a.get('path')}")
-            if len(st.session_state.cleanup_actions) > 50:
-                st.write(f"...（共 {len(st.session_state.cleanup_actions)} 項，僅顯示前 50）")
 
     st.sidebar.markdown(
         f"**系統配置**\n"
@@ -192,9 +542,184 @@ _init_session_state()
 _render_sidebar()
 
 
+def _render_home_dashboard() -> None:
+    _card_open("hero-card")
+    st.markdown(
+        f"""
+        <div class="hero-title">
+          🗂️ {APP_TITLE} <span class="version-badge">v{__version__}</span>
+        </div>
+        <div class="hero-subtitle">
+          掃描資料夾、整理檔案、找出久未使用檔案，並在 <b>Dry-run</b> 安全模式下先預覽再執行。
+          <br/>首頁主角是 <b>資料夾掃描</b>；PDF / OCR / AI 是進階輔助，不是主流程。
+        </div>
+        <div class="feature-chips">
+          <span class="feature-chip">主流程：掃描資料夾</span>
+          <span class="feature-chip">久未使用候選</span>
+          <span class="feature-chip">Dry-run 安全模式</span>
+          <span class="feature-chip">上傳單檔（輔助）</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _card_close()
+
+    col_main, col_side = st.columns([2, 1], gap="large")
+    scan_options = dict(st.session_state.get("folder_scan_options") or {})
+    dry_run = bool(scan_options.get("dry_run", True))
+    stale_days = int(scan_options.get("stale_days", 365))
+    recursive = bool(scan_options.get("recursive", True))
+    max_files = int(scan_options.get("max_files", 5000))
+
+    with col_main:
+        _card_open("primary-action-card")
+        st.markdown('<div class="card-title">主流程：掃描資料夾</div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="card-muted">
+              - 只有按下「開始掃描資料夾」才會執行（不會自動掃描）<br/>
+              - 先找出久未使用檔案候選（stale）與可整理方向<br/>
+              - 建議先用 Dry-run 預覽，再到「執行」分頁套用動作
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        folder_path = st.text_input(
+            "輸入資料夾路徑",
+            value=str(st.session_state.get("folder_scan_path") or ""),
+            placeholder=r"例如：D:\Downloads 或 C:\Users\you\Desktop",
+            key="folder_scan_path",
+            help="Streamlit 無法直接開啟本機資料夾選擇視窗，請貼上路徑。",
+        )
+
+        st.caption(f"Dry-run 狀態：{'✅ 開啟（安全）' if dry_run else '⚠️ 關閉（請小心）'}")
+
+        scan_clicked = st.button("🔎 掃描檔案清單", type="primary", key="scan_folder_button")
+        if scan_clicked:
+            normalized = str(folder_path or "").strip().strip('"')
+            if not normalized:
+                st.error("請先輸入資料夾路徑。")
+            else:
+                try:
+                    path_obj = Path(normalized).expanduser()
+                    if not path_obj.exists():
+                        st.error("資料夾不存在，請確認路徑是否正確。")
+                    elif not path_obj.is_dir():
+                        st.error("指定路徑不是資料夾，請重新輸入。")
+                    else:
+                        with st.spinner("掃描中…（只會在按下按鈕時執行）"):
+                            scan = _scan_local_folder(
+                                str(path_obj),
+                                recursive=recursive,
+                                max_files=max_files,
+                                stale_days=stale_days,
+                            )
+                        st.session_state.folder_scan = scan
+                        st.success(
+                            f"✅ 掃描完成：{scan.get('stats', {}).get('scanned_files', 0)} 個檔案"
+                            f"（耗時 {scan.get('elapsed_seconds', 0)} 秒）"
+                        )
+                except PermissionError:
+                    st.error("沒有權限讀取該資料夾，請改用其他路徑或調整權限。")
+                except Exception as e:
+                    logger.exception("folder scan failed")
+                    _handle_ui_exception("掃描資料夾失敗，請檢查路徑與權限後重試。", e)
+
+        scan = st.session_state.get("folder_scan")
+        if scan:
+            stats = dict(scan.get("stats") or {})
+            st.divider()
+            st.markdown("**掃描摘要**")
+            st.write(
+                f"- 路徑：`{scan.get('path')}`\n"
+                f"- 遞迴：{('是' if scan.get('recursive') else '否')}\n"
+                f"- 掃描檔案數：{stats.get('scanned_files', 0)}\n"
+                f"- 總大小：{_human_bytes(int(stats.get('total_bytes') or 0))}\n"
+                f"- 久未使用候選：{stats.get('stale_candidates', 0)}（{scan.get('stale_days', 0)} 天）"
+            )
+
+            if scan.get("errors"):
+                with st.expander("掃描時的警告 / 權限問題", expanded=False):
+                    for msg in list(scan.get("errors") or [])[:50]:
+                        st.write(f"- {msg}")
+
+            with st.expander("預覽整理建議", expanded=True):
+                records = list(scan.get("records") or [])
+                if not records:
+                    st.info("目前沒有可用的掃描結果。")
+                else:
+                    stale = [r for r in records if r.get("is_stale")]
+                    largest = sorted(records, key=lambda r: int(r.get("size_bytes") or 0), reverse=True)[:20]
+                    oldest = sorted(records, key=lambda r: str(r.get("mtime") or ""))[:20]
+
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown("**久未使用候選（前 20）**")
+                        if not stale:
+                            st.caption("無")
+                        else:
+                            for r in stale[:20]:
+                                st.write(
+                                    f"- `{r.get('name')}` · {_human_bytes(int(r.get('size_bytes') or 0))} · {str(r.get('mtime') or '')[:10]}"
+                                )
+                    with col_b:
+                        st.markdown("**大型檔案（前 20）**")
+                        if not largest:
+                            st.caption("無")
+                        else:
+                            for r in largest:
+                                st.write(f"- `{r.get('name')}` · {_human_bytes(int(r.get('size_bytes') or 0))}")
+
+                    st.markdown("**提醒**：此頁面只提供掃描與建議預覽；真正的刪除/移動一定要在你確認後才會執行。")
+        else:
+            st.info("先掃描資料夾後，才會出現『預覽整理建議』與後續執行引導。")
+
+        _card_close()
+
+    with col_side:
+        _card_open("secondary-action-card")
+        st.markdown('<div class="card-title">輔助：上傳單檔分析</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="card-muted">用於單檔測試/驗證分析品質，不是主要整理流程。</div>',
+            unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader(
+            "選擇檔案（支援 PDF / JPG / PNG / MP4 / MOV / MKV）",
+            type=["pdf", "jpg", "jpeg", "png", "mp4", "mov", "mkv"],
+            accept_multiple_files=False,
+            key="single_file_uploader",
+        )
+        if uploaded is not None:
+            st.info("已選擇檔案。請到下方頁籤『上傳與分析』使用批次流程（含預覽/確認/執行）。")
+        _card_close()
+
+    st.markdown("")
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4, gap="large")
+    scan = st.session_state.get("folder_scan") or {}
+    scan_stats = dict(scan.get("stats") or {}) if isinstance(scan, dict) else {}
+
+    metrics = [
+        (col_s1, int(scan_stats.get("scanned_files") or 0), "已掃描檔案數"),
+        (col_s2, int(scan_stats.get("stale_candidates") or 0), "久未使用候選"),
+        (col_s3, int(len(st.session_state.get("analysis_results") or [])), "待預覽/確認（上傳流程）"),
+        (col_s4, int(len(st.session_state.get("execution_results") or [])), "已執行紀錄（本次會話）"),
+    ]
+    for col, value, label in metrics:
+        with col:
+            _card_open("status-card")
+            st.markdown(f'<div class="status-metric">{value}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="status-label">{label}</div>', unsafe_allow_html=True)
+            _card_close()
+
+
+_render_home_dashboard()
+
+
 def _render_upload_tab_impl():
-    st.header("步驟 1：上傳檔案")
-    st.markdown("支援格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV")
+    st.header("上傳與分析（輔助流程）")
+    st.markdown("這是用於單檔/批次測試分析品質的流程；首頁主流程以『掃描資料夾』為主。")
+    st.caption("支援格式：PDF、JPG/JPEG、PNG、MP4、MOV、MKV")
 
     uploaded_files = st.file_uploader(
         "選擇檔案",
@@ -265,10 +790,10 @@ def render_upload_tab():
 
 
 def _render_review_tab_impl():
-    st.header("步驟 2：預覽與確認")
+    st.header("預覽與確認")
 
     if not st.session_state.get("analysis_results"):
-        st.info("請先在『上傳與分析』頁籤上傳檔案。")
+        st.info("尚未有上傳分析結果。若要整理本機資料夾，請先使用首頁的『掃描資料夾』。")
         return
 
     analysis_results_raw = st.session_state.analysis_results
@@ -445,7 +970,7 @@ def render_review_tab():
 
 
 def _render_execute_tab_impl():
-    st.header("步驟 3：執行整理")
+    st.header("執行整理")
 
     if not st.session_state.get("confirmed_results"):
         st.info("請先在『預覽與確認』頁籤完成確認。")
@@ -497,7 +1022,7 @@ def render_execute_tab():
 
 
 def _render_search_tab_impl():
-    st.header("步驟 4：全文檢索")
+    st.header("全文檢索")
 
     search_query = st.text_input("輸入搜尋關鍵字", placeholder="例如：軟體開發、統編 12345678")
 
@@ -549,7 +1074,7 @@ def render_search_tab():
 
 
 def _render_records_tab_impl():
-    st.header("步驟 5：查看紀錄")
+    st.header("查看紀錄")
 
     try:
         records = storage.get_all_records()
@@ -691,7 +1216,7 @@ def render_records_tab():
 
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📤 上傳與分析", "👁️ 預覽與確認", "✅ 執行整理", "🔍 全文檢索", "📊 查看紀錄"]
+    ["📤 上傳與分析（輔助）", "👁️ 預覽與確認", "✅ 執行整理", "🔍 全文檢索", "📊 查看紀錄"]
 )
 
 with tab1:

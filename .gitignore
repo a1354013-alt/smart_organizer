@@ -32,6 +32,7 @@ target/
 # Runtime artifacts (local runs)
 uploads/
 repo/
+.compileall_cache/
 
 # Editors
 .vscode/
