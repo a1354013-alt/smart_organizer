@@ -51,7 +51,7 @@ def analyze_one_upload(
                             filename=uploaded.name,
                             status="COMPLETED",
                             final_path=str(created.get("final_path") or ""),
-                            display=f"{uploaded.name} (??????)",
+                            display=f"{uploaded.name} (已整理)",
                         ),
                         None,
                     )
@@ -60,16 +60,16 @@ def analyze_one_upload(
                     DuplicateInfo(
                         filename=uploaded.name,
                         status="PENDING",
-                        display=f"{uploaded.name} (??????)",
+                        display=f"{uploaded.name} (待分析)",
                     ),
                     None,
                 )
-            return None, None, f"???????: {uploaded.name}"
+            return None, None, f"建立暫存檔失敗: {uploaded.name}"
 
         file_id = int(created["file_id"])
         temp_path = storage.get_file_path(file_id)
         if not temp_path:
-            return None, None, f"????????: {uploaded.name}"
+            return None, None, f"無法取得暫存路徑: {uploaded.name}"
 
         options = dict(processing_options or {})
         options.setdefault("enable_pdf_preview", False)
@@ -113,17 +113,17 @@ def analyze_one_upload(
             err = f"classify failed: {type(e).__name__}: {e}"
             last_error = err if not last_error else f"{last_error} | {err}"
             if metadata.get("file_type") == "photo":
-                main_topic = "????"
+                main_topic = "其他照片"
             elif metadata.get("file_type") == "video":
                 main_topic = "Unclassified"
             else:
-                main_topic = "????"
+                main_topic = "未分類"
             tag_scores = {}
             classification_reason = err
 
         notes = metadata.get("notes")
         if isinstance(notes, list) and any(
-            (isinstance(n, str) and ("??" in n or "??" in n or "??" in n)) for n in notes
+            (isinstance(n, str) and ("失敗" in n or "逾時" in n)) for n in notes
         ):
             if analysis_status == "OK":
                 analysis_status = "WARNING"
@@ -138,7 +138,7 @@ def analyze_one_upload(
                 suggested_main_topic=main_topic,
                 tag_scores=dict(tag_scores or {}),
                 classification_reason=classification_reason or "",
-                final_decision_reason="?????????",
+                final_decision_reason="系統已根據目前資訊自動判定分類。",
                 metadata=metadata,
                 preview_path=metadata.get("preview_path"),
                 is_scanned=bool(metadata.get("is_scanned", False)),
@@ -151,7 +151,7 @@ def analyze_one_upload(
         )
     except Exception:
         logger.error("analyze_one_upload failed%s", _log_context(original_name=uploaded.name), exc_info=True)
-        return None, None, f"????: {uploaded.name}"
+        return None, None, f"分析失敗: {uploaded.name}"
 
 
 def analyze_upload_batch(

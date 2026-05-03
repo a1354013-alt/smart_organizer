@@ -1,4 +1,3 @@
-
 """
 Video Phase 1 Support Tests
 
@@ -18,7 +17,9 @@ def _ffmpeg_exists():
     """Check if ffmpeg is available in PATH."""
     return shutil.which("ffmpeg") is not None
 
-
+def _ffprobe_exists():
+    """Check if ffprobe is available in PATH."""
+    return shutil.which("ffprobe") is not None
 
 @pytest.fixture
 def test_video_mp4():
@@ -28,22 +29,29 @@ def test_video_mp4():
     with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as f:
         temp_path = f.name
     
+    # Use 0.1s duration to minimize processing time
     cmd = [
         'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=2',
+        '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=0.1',
         '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
         '-c:a', 'aac', '-shortest',
         temp_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Failed to create test video: {result.stderr}"
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, f"Failed to create test video: {result.stderr}"
+    except subprocess.TimeoutExpired:
+        pytest.skip("ffmpeg command timed out during test video creation")
     
     yield temp_path
     
     # Cleanup
     if os.path.exists(temp_path):
-        os.unlink(temp_path)
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
 
 
 @pytest.fixture
@@ -56,17 +64,23 @@ def test_video_mov():
     
     cmd = [
         'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=green:s=640x480:d=1.5',
+        '-f', 'lavfi', '-i', 'color=c=green:s=320x240:d=0.1',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
         temp_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+    except subprocess.TimeoutExpired:
+        pytest.skip("ffmpeg command timed out during test video creation")
     
     yield temp_path
     
     if os.path.exists(temp_path):
-        os.unlink(temp_path)
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
 
 
 @pytest.fixture
@@ -79,17 +93,23 @@ def test_video_mkv():
     
     cmd = [
         'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=red:s=1280x720:d=3',
+        '-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=0.1',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
         temp_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+    except subprocess.TimeoutExpired:
+        pytest.skip("ffmpeg command timed out during test video creation")
     
     yield temp_path
     
     if os.path.exists(temp_path):
-        os.unlink(temp_path)
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
 
 
 class TestVideoUploadSupport:
@@ -120,6 +140,8 @@ class TestVideoMetadataExtraction:
     
     def test_extract_video_metadata_mp4(self, test_video_mp4):
         """Test metadata extraction from MP4 file."""
+        if not _ffprobe_exists():
+            pytest.skip("ffprobe not found in PATH")
         processor = FileProcessor()
         metadata = processor.extract_metadata(test_video_mp4)
         
@@ -137,6 +159,8 @@ class TestVideoMetadataExtraction:
     
     def test_extract_video_metadata_mov(self, test_video_mov):
         """Test metadata extraction from MOV file."""
+        if not _ffprobe_exists():
+            pytest.skip("ffprobe not found in PATH")
         processor = FileProcessor()
         metadata = processor.extract_metadata(test_video_mov)
         
@@ -146,6 +170,8 @@ class TestVideoMetadataExtraction:
     
     def test_extract_video_metadata_mkv(self, test_video_mkv):
         """Test metadata extraction from MKV file."""
+        if not _ffprobe_exists():
+            pytest.skip("ffprobe not found in PATH")
         processor = FileProcessor()
         metadata = processor.extract_metadata(test_video_mkv)
         
@@ -159,6 +185,8 @@ class TestVideoThumbnailGeneration:
     
     def test_thumbnail_generated_for_video(self, test_video_mp4):
         """Test that thumbnail is generated for video files."""
+        if not _ffmpeg_exists():
+            pytest.skip("ffmpeg not found in PATH")
         processor = FileProcessor()
         metadata = processor.extract_metadata(test_video_mp4)
         
@@ -168,6 +196,8 @@ class TestVideoThumbnailGeneration:
     
     def test_thumbnail_from_middle_of_video(self, test_video_mp4):
         """Test that thumbnail is extracted from middle of video."""
+        if not _ffmpeg_exists():
+            pytest.skip("ffmpeg not found in PATH")
         processor = FileProcessor()
         metadata = processor.extract_metadata(test_video_mp4)
         
@@ -228,7 +258,10 @@ class TestGracefulDegradation:
             # May have error in video metadata, but should not crash
         finally:
             if os.path.exists(temp_path):
-                os.unlink(temp_path)
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
     
     def test_thumbnail_failure_does_not_break_metadata(self, test_video_mp4):
         """Test that thumbnail failure doesn't break metadata storage."""

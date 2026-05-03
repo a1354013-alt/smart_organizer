@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import time
+import shutil
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from types import ModuleType
 from typing import Any, Callable, Optional
@@ -66,12 +67,17 @@ FFMPEG_AVAILABLE = False
 try:
     import subprocess
 
-    _ffprobe_check = subprocess.run(
-        ["ffprobe", "-version"],
-        capture_output=True,
-        timeout=5,
-    )
-    FFMPEG_AVAILABLE = _ffprobe_check.returncode == 0
+    # Use shutil.which for a cleaner check before running subprocess
+    if shutil.which("ffprobe"):
+        _ffprobe_check = subprocess.run(
+            ["ffprobe", "-version"],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+        FFMPEG_AVAILABLE = _ffprobe_check.returncode == 0
+    else:
+        FFMPEG_AVAILABLE = False
 except Exception:
     FFMPEG_AVAILABLE = False
 
@@ -185,7 +191,7 @@ class FileProcessor:
 
         if file_type == "video":
             if not heavy_allowed:
-                notes.append("?????????? metadata/?????????????????")
+                notes.append("檔案過大，已跳過影片 metadata 提取與縮圖產生")
                 video = {"media_type": "video"}  
             else:
                 meta_timeout = int(options.get("video_metadata_timeout_seconds") or 10)
@@ -262,7 +268,7 @@ class FileProcessor:
 
                     if ocr_text and len(ocr_text.strip()) > 10:
                         is_scanned = True
-                        extracted_text = (extracted_text + "\\n" + ocr_text).strip()
+                        extracted_text = (extracted_text + "\n" + ocr_text).strip()
                     elif ocr_err:
                         ocr_error = ocr_err
                         notes.append(f"OCR 失敗或逾時，已跳過（{ocr_err}）")
@@ -289,15 +295,16 @@ class FileProcessor:
             "ocr_error": ocr_error,
             "notes": notes,
         }
-        if video is not None:
+        if video:
             metadata["video"] = video
         return validate_extracted_metadata(metadata)
 
-    def _ocr_image(self, image_path):
+
+    def _ocr_image(self, file_path):
         if pytesseract is None or Image is None:
             return ""
         try:
-            img = Image.open(image_path)
+            img = Image.open(file_path)
             return pytesseract.image_to_string(img, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")) or ""
         except Exception as e:
             logger.error(f"OCR 圖片失敗: {e}")
@@ -391,38 +398,44 @@ class FileProcessor:
                 "-show_format",
                 file_path,
             ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)))
-            if proc.returncode != 0:
-                result["ffprobe_error"] = (proc.stderr.decode("utf-8", errors="ignore") or "").strip() or "ffprobe failed"
-                return result
-
-            data = json.loads(proc.stdout.decode("utf-8", errors="ignore") or "{}")
-            fmt = data.get("format") or {}
-            streams = data.get("streams") or []
-
             try:
-                dur = fmt.get("duration")
-                if dur is not None:
-                    result["duration_seconds"] = float(dur)
-            except Exception:
-                pass
+                proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)), text=True)
+                if proc.returncode != 0:
+                    result["ffprobe_error"] = (proc.stderr or "").strip() or "ffprobe failed"
+                    return result
 
-            vstream = None
-            for s in streams:
-                if (s.get("codec_type") or "") == "video":
-                    vstream = s
-                    break
-            if vstream:
-                result["width"] = vstream.get("width")
-                result["height"] = vstream.get("height")
-                result["video_codec"] = vstream.get("codec_name")
+                data = json.loads(proc.stdout or "{}")
+                fmt = data.get("format") or {}
+                streams = data.get("streams") or []
+
                 try:
-                    fr = vstream.get("r_frame_rate") or ""
-                    if isinstance(fr, str) and "/" in fr:
-                        a, b = fr.split("/", 1)
-                        result["fps"] = float(a) / float(b) if float(b) else None
+                    dur = fmt.get("duration")
+                    if dur is not None:
+                        result["duration_seconds"] = float(dur)
                 except Exception:
                     pass
+
+                vstream = None
+                for s in streams:
+                    if (s.get("codec_type") or "") == "video":
+                        vstream = s
+                        break
+                if vstream:
+                    result["width"] = vstream.get("width")
+                    result["height"] = vstream.get("height")
+                    result["video_codec"] = vstream.get("codec_name")
+                    try:
+                        fr = vstream.get("r_frame_rate") or ""
+                        if isinstance(fr, str) and "/" in fr:
+                            a, b = fr.split("/", 1)
+                            result["fps"] = float(a) / float(b) if float(b) else None
+                    except Exception:
+                        pass
+            except subprocess.TimeoutExpired:
+                result["ffprobe_error"] = f"ffprobe 執行逾時 ({timeout_seconds}s)"
+            except Exception as e:
+                result["ffprobe_error"] = f"ffprobe 執行錯誤: {str(e)}"
+            
             return result
         except Exception as e:
             result["ffprobe_error"] = str(e)
@@ -451,14 +464,19 @@ class FileProcessor:
                 "2",
                 preview_path,
             ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)))
-            if os.path.exists(preview_path):
-                return preview_path, None
+            try:
+                proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)), text=True)
+                if os.path.exists(preview_path):
+                    return preview_path, None
 
-            stderr = (proc.stderr.decode("utf-8", errors="ignore") or "").strip()
-            if stderr:
-                return None, stderr[:200]
-            return None, "縮圖產生失敗（ffmpeg 未輸出錯誤訊息）"
+                stderr = (proc.stderr or "").strip()
+                if stderr:
+                    return None, stderr[:200]
+                return None, "縮圖產生失敗（ffmpeg 未輸出錯誤訊息）"
+            except subprocess.TimeoutExpired:
+                return None, f"ffmpeg 縮圖產生逾時 ({timeout_seconds}s)"
+            except Exception as e:
+                return None, f"ffmpeg 執行錯誤: {str(e)[:200]}"
         except Exception as e:
             return None, str(e)[:200]
 
@@ -531,7 +549,7 @@ class FileProcessor:
                     )
                 except Exception:
                     continue
-            return "\\n".join([p for p in parts if p]), None
+            return "\n".join([p for p in parts if p]), None
         except Exception as e:
             logger.error("PDF OCR failed: %s", e)
             return "", str(e)[:200]
