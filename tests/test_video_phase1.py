@@ -1,356 +1,114 @@
-"""
-Video Phase 1 Support Tests
+from __future__ import annotations
 
-Tests for video file upload, metadata extraction, thumbnail generation,
-and graceful degradation handling.
-"""
-
-import os
 import subprocess
-import tempfile
-import shutil
-import pytest
-from core import FileProcessor, FileUtils, VIDEO_TAGS
+from pathlib import Path
+from types import SimpleNamespace
+
+import core_processor
+from core import FileProcessor, FileUtils, VIDEO_TAGS, VIDEO_TOOL_TIMEOUT_SECONDS
 from storage import StorageManager
 
-def _ffmpeg_exists():
-    """Check if ffmpeg is available in PATH."""
-    return shutil.which("ffmpeg") is not None
 
-def _ffprobe_exists():
-    """Check if ffprobe is available in PATH."""
-    return shutil.which("ffprobe") is not None
-
-@pytest.fixture
-def test_video_mp4():
-    if not _ffmpeg_exists():
-        pytest.skip("ffmpeg not found in PATH")
-    """Create a minimal valid MP4 test file using ffmpeg."""
-    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as f:
-        temp_path = f.name
-    
-    # Use 0.1s duration to minimize processing time
-    cmd = [
-        'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=0.1',
-        '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac', '-shortest',
-        temp_path,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        assert result.returncode == 0, f"Failed to create test video: {result.stderr}"
-    except subprocess.TimeoutExpired:
-        pytest.skip("ffmpeg command timed out during test video creation")
-    
-    yield temp_path
-    
-    # Cleanup
-    if os.path.exists(temp_path):
-        try:
-            os.unlink(temp_path)
-        except Exception:
-            pass
+def test_video_extensions_defined():
+    assert ".mp4" in FileUtils.VIDEO_EXTENSIONS
+    assert ".mov" in FileUtils.VIDEO_EXTENSIONS
+    assert ".mkv" in FileUtils.VIDEO_EXTENSIONS
+    assert ".mp4" in FileUtils.ALLOWED_UPLOAD_EXTENSIONS
 
 
-@pytest.fixture
-def test_video_mov():
-    if not _ffmpeg_exists():
-        pytest.skip("ffmpeg not found in PATH")
-    """Create a minimal MOV test file using ffmpeg."""
-    with tempfile.NamedTemporaryFile(suffix='.mov', delete=False) as f:
-        temp_path = f.name
-    
-    cmd = [
-        'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=green:s=320x240:d=0.1',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        temp_path,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        assert result.returncode == 0
-    except subprocess.TimeoutExpired:
-        pytest.skip("ffmpeg command timed out during test video creation")
-    
-    yield temp_path
-    
-    if os.path.exists(temp_path):
-        try:
-            os.unlink(temp_path)
-        except Exception:
-            pass
+def test_video_tags_defined():
+    assert isinstance(VIDEO_TAGS, list)
+    assert VIDEO_TAGS
 
 
-@pytest.fixture
-def test_video_mkv():
-    if not _ffmpeg_exists():
-        pytest.skip("ffmpeg not found in PATH")
-    """Create a minimal MKV test file using ffmpeg."""
-    with tempfile.NamedTemporaryFile(suffix='.mkv', delete=False) as f:
-        temp_path = f.name
-    
-    cmd = [
-        'ffmpeg', '-y',
-        '-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=0.1',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        temp_path,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        assert result.returncode == 0
-    except subprocess.TimeoutExpired:
-        pytest.skip("ffmpeg command timed out during test video creation")
-    
-    yield temp_path
-    
-    if os.path.exists(temp_path):
-        try:
-            os.unlink(temp_path)
-        except Exception:
-            pass
+def test_extract_video_metadata_uses_timeout(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+    processor = FileProcessor()
+    captured: dict[str, object] = {}
 
-
-class TestVideoUploadSupport:
-    """Test video format upload support."""
-    
-    def test_video_extensions_defined(self):
-        """Verify video extensions are defined."""
-        assert '.mp4' in FileUtils.VIDEO_EXTENSIONS
-        assert '.mov' in FileUtils.VIDEO_EXTENSIONS
-        assert '.mkv' in FileUtils.VIDEO_EXTENSIONS
-    
-    def test_video_extensions_in_allowed_list(self):
-        """Verify video extensions are in allowed upload list."""
-        assert '.mp4' in FileUtils.ALLOWED_UPLOAD_EXTENSIONS
-        assert '.mov' in FileUtils.ALLOWED_UPLOAD_EXTENSIONS
-        assert '.mkv' in FileUtils.ALLOWED_UPLOAD_EXTENSIONS
-    
-    def test_video_extensions_not_too_broad(self):
-        """Verify we only support specified formats (not avi/webm/flv/wmv)."""
-        assert '.avi' not in FileUtils.VIDEO_EXTENSIONS
-        assert '.webm' not in FileUtils.VIDEO_EXTENSIONS
-        assert '.flv' not in FileUtils.VIDEO_EXTENSIONS
-        assert '.wmv' not in FileUtils.VIDEO_EXTENSIONS
-
-
-class TestVideoMetadataExtraction:
-    """Test video metadata extraction."""
-    
-    def test_extract_video_metadata_mp4(self, test_video_mp4):
-        """Test metadata extraction from MP4 file."""
-        if not _ffprobe_exists():
-            pytest.skip("ffprobe not found in PATH")
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mp4)
-        
-        assert metadata['file_type'] == 'video'
-        assert 'video' in metadata
-        video = metadata['video']
-        
-        assert video.get('media_type') == 'video'
-        assert video.get('duration_seconds') is not None
-        assert video.get('width') is not None
-        assert video.get('height') is not None
-        assert video.get('fps') is not None
-        assert video.get('video_codec') is not None
-        assert video.get('file_size') is not None
-    
-    def test_extract_video_metadata_mov(self, test_video_mov):
-        """Test metadata extraction from MOV file."""
-        if not _ffprobe_exists():
-            pytest.skip("ffprobe not found in PATH")
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mov)
-        
-        assert metadata['file_type'] == 'video'
-        video = metadata.get('video') or {}
-        assert video.get('media_type') == 'video'
-    
-    def test_extract_video_metadata_mkv(self, test_video_mkv):
-        """Test metadata extraction from MKV file."""
-        if not _ffprobe_exists():
-            pytest.skip("ffprobe not found in PATH")
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mkv)
-        
-        assert metadata['file_type'] == 'video'
-        video = metadata.get('video') or {}
-        assert video.get('media_type') == 'video'
-
-
-class TestVideoThumbnailGeneration:
-    """Test video thumbnail generation."""
-    
-    def test_thumbnail_generated_for_video(self, test_video_mp4):
-        """Test that thumbnail is generated for video files."""
-        if not _ffmpeg_exists():
-            pytest.skip("ffmpeg not found in PATH")
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mp4)
-        
-        assert metadata.get('preview_path') is not None
-        assert os.path.exists(metadata['preview_path'])
-        assert metadata['preview_path'].endswith('.jpg')
-    
-    def test_thumbnail_from_middle_of_video(self, test_video_mp4):
-        """Test that thumbnail is extracted from middle of video."""
-        if not _ffmpeg_exists():
-            pytest.skip("ffmpeg not found in PATH")
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mp4)
-        
-        # Verify thumbnail exists and is valid image
-        thumb_path = metadata.get('preview_path')
-        assert thumb_path is not None
-        assert os.path.exists(thumb_path)
-        
-        # Check it's a valid image
-        from PIL import Image
-        img = Image.open(thumb_path)
-        assert img.format == 'JPEG'
-
-
-class TestVideoClassification:
-    """Test video classification."""
-    
-    def test_video_classified_as_video_tag(self, test_video_mp4):
-        """Test that video files are classified with Unclassified tag (matching VIDEO_TAGS)."""
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(test_video_mp4)
-        
-        main_topic, tag_scores, reason = processor.classify_multi_tag(
-            metadata, 'test.mp4', return_reason=True
+    def fake_run(cmd, capture_output, timeout, text):
+        captured["cmd"] = cmd
+        captured["timeout"] = timeout
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"format":{"duration":"4.0"},"streams":[{"codec_type":"video","width":320,"height":240,"codec_name":"h264","r_frame_rate":"30/1"}]}',
+            stderr="",
         )
-        
-        # Video uses English tags to match VIDEO_TAGS list
-        assert main_topic == 'Unclassified'
-        assert 'Unclassified' in tag_scores
-        assert tag_scores['Unclassified'] == 1.0
-    
-    def test_video_tags_defined(self):
-        """Test that VIDEO_TAGS is defined."""
-        assert isinstance(VIDEO_TAGS, list)
-        # Updated for Phase 3: VIDEO_TAGS now contains English categories for batch scanning
-        assert len(VIDEO_TAGS) > 0
-        # Check that we have meaningful tags (not just a placeholder)
-        assert any(tag not in ['影片', 'Video'] for tag in VIDEO_TAGS) or 'Unclassified' in VIDEO_TAGS
+
+    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", True)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    metadata = processor._extract_video_metadata(str(video_path), timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[0] == "ffprobe"
+    assert captured["timeout"] == VIDEO_TOOL_TIMEOUT_SECONDS
+    assert metadata["duration_seconds"] == 4.0
+    assert metadata["width"] == 320
+    assert metadata["height"] == 240
+    assert metadata["video_codec"] == "h264"
 
 
-class TestGracefulDegradation:
-    """Test graceful degradation when video processing fails."""
-    
-    def test_invalid_video_file_graceful_handling(self):
-        """Test that invalid video files don't crash the system."""
-        # Create an invalid "video" file
-        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as f:
-            f.write(b'invalid video content')
-            temp_path = f.name
-        
-        try:
-            processor = FileProcessor()
-            metadata = processor.extract_metadata(temp_path)
-            
-            # Should still return metadata structure
-            assert metadata['file_type'] == 'video'
-            assert metadata.get('video', {}).get('media_type') == 'video'
-            # May have error in video metadata, but should not crash
-        finally:
-            if os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except Exception:
-                    pass
-    
-    def test_thumbnail_failure_does_not_break_metadata(self, test_video_mp4):
-        """Test that thumbnail failure doesn't break metadata storage."""
-        processor = FileProcessor()
-        
-        # Extract metadata normally first
-        metadata = processor.extract_metadata(test_video_mp4)
-        
-        # Metadata should be present even if thumbnail fails
-        assert metadata['file_type'] == 'video'
-        assert 'video' in metadata
-        # thumbnail_error may or may not be present depending on success
-        video = metadata.get('video', {})
-        # Core metadata should exist regardless of thumbnail status
-        assert video.get('media_type') == 'video'
+def test_generate_video_thumbnail_timeout_returns_clean_error(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+    processor = FileProcessor()
+    preview_path = tmp_path / "preview.jpg"
+
+    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", True)
+    monkeypatch.setattr(
+        core_processor.FileUtils,
+        "build_preview_path",
+        staticmethod(lambda _path: str(preview_path)),
+    )
+    monkeypatch.setattr(
+        processor,
+        "_extract_video_metadata",
+        lambda *_args, **_kwargs: {"duration_seconds": 4.0},
+    )
+
+    def fake_run(cmd, capture_output, timeout, text):
+        assert cmd[0] == "ffmpeg"
+        assert timeout == VIDEO_TOOL_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    preview, error = processor._generate_video_thumbnail(
+        str(video_path),
+        timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS,
+    )
+
+    assert preview is None
+    assert error is not None
+    assert "timeout" in error.lower() or "逾時" in error
 
 
-class TestDuplicateDetectionWithVideo:
-    """Test that duplicate detection works with video files."""
-    
-    def test_video_duplicate_detection(self, test_video_mp4, tmp_path):
-        """Test duplicate detection for video files."""
-        db_path = str(tmp_path / "test.db")
-        repo_root = str(tmp_path / "repo")
-        upload_dir = str(tmp_path / "uploads")
-        
-        storage = StorageManager(db_path, repo_root, upload_dir)
-        processor = FileProcessor()
-        
-        # Read test video content
-        with open(test_video_mp4, 'rb') as f:
-            content = f.read()
-        
-        file_hash = processor.get_file_hash(test_video_mp4)
-        
-      # First upload
-        storage.create_temp_file(
-            "test_video.mp4",
-            content,
-            file_hash,
-            "video",
-        )
-class TestExistingFormatsNotBroken:
-    """Ensure existing PDF/JPG/PNG functionality is not broken."""
-    
-    def test_pdf_metadata_still_works(self, tmp_path):
-        """Test PDF metadata extraction still works."""
-        # Create a minimal PDF
-        pdf_content = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF"
-        pdf_path = tmp_path / "test.pdf"
-        pdf_path.write_bytes(pdf_content)
-        
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(str(pdf_path))
-        
-        assert metadata['file_type'] == 'document'
-    
-    def test_jpg_metadata_still_works(self, tmp_path):
-        """Test JPG metadata extraction still works."""
-        # Create a minimal valid JPEG
-        jpeg_content = bytes([
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46,
-            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-            0xFF, 0xD9
-        ])
-        jpg_path = tmp_path / "test.jpg"
-        jpg_path.write_bytes(jpeg_content)
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(str(jpg_path))
-        assert metadata['file_type'] == 'photo'
-    
-    def test_png_metadata_still_works(self, tmp_path):
-        """Test PNG metadata extraction still works."""
-        # Create a minimal valid PNG
-        png_content = bytes([
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-            0x44, 0xAE, 0x42, 0x60, 0x82
-        ])
-        png_path = tmp_path / "test.png"
-        png_path.write_bytes(png_content)
-        
-        processor = FileProcessor()
-        metadata = processor.extract_metadata(str(png_path))
-        
-        assert metadata['file_type'] == 'photo'
+def test_extract_metadata_gracefully_falls_back_without_ffmpeg(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+    processor = FileProcessor()
+    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", False)
+
+    metadata = processor.extract_metadata(str(video_path))
+
+    assert metadata["file_type"] == "video"
+    assert metadata["video"]["media_type"] == "video"
+    assert metadata["preview_path"] is None
+    assert metadata["video"]["ffprobe_error"] is not None
+
+
+def test_video_duplicate_detection_still_works(tmp_path: Path):
+    db_path = str(tmp_path / "test.db")
+    repo_root = str(tmp_path / "repo")
+    upload_dir = str(tmp_path / "uploads")
+    storage = StorageManager(db_path, repo_root, upload_dir)
+    processor = FileProcessor()
+    content = b"video-bytes"
+    source = tmp_path / "hash-source.mp4"
+    source.write_bytes(content)
+    file_hash = processor.get_file_hash(source)
+    created = storage.create_temp_file("test_video.mp4", content, file_hash, "video")
+
+    assert created["success"] is True

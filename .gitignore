@@ -1,20 +1,24 @@
 # Python
 __pycache__/
 *.pyc
+*.pyc*
 *.pyo
 *.pyd
 
 # Test files
 tests/_tmp_pytest/
+tests/_tmp*/
+tmp_test_write/
 *.db
+*.sqlite
+*.sqlite3
 
 # Logs
 *.log
 
 # Environment
 .env
-.env.local
-*.env.*
+.env.*
 
 # Dependencies
 .venv/

@@ -15,7 +15,15 @@ import sys
 import sysconfig
 import importlib.util
 import builtins
+from typing import TypedDict
 from types import ModuleType
+
+
+class CompileFlags(TypedDict):
+    quiet: int
+    force: bool
+    legacy: bool
+    recurse: bool
 
 
 def _load_stdlib_compileall() -> ModuleType:
@@ -27,7 +35,7 @@ def _load_stdlib_compileall() -> ModuleType:
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load stdlib compileall from {stdlib_path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # type: ignore[assignment]
+    spec.loader.exec_module(module)
     return module
 
 
@@ -61,7 +69,7 @@ def _extract_existing_x(argv: list[str]) -> tuple[list[str], str | None]:
     return cleaned, rx
 
 
-def _parse_flags(argv: list[str]) -> tuple[list[str], dict[str, object]]:
+def _parse_flags(argv: list[str]) -> tuple[list[str], CompileFlags]:
     """
     Minimal CLI parsing for project needs.
 
@@ -194,15 +202,18 @@ def main() -> None:
         ok = _compile_targets(
             std,
             targets,
-            quiet=int(flags["quiet"]),
-            force=bool(flags["force"]),
-            legacy=bool(flags["legacy"]),
-            recurse=bool(flags["recurse"]),
+            quiet=flags["quiet"],
+            force=flags["force"],
+            legacy=flags["legacy"],
+            recurse=flags["recurse"],
         )
         raise SystemExit(0 if ok else 1)
 
     # Otherwise, fall back to stdlib behavior (compile `sys.path`).
-    ok = bool(std.main())  # type: ignore[attr-defined]
+    main_fn = getattr(std, "main", None)
+    if not callable(main_fn):
+        raise RuntimeError("stdlib compileall.main not found")
+    ok = bool(main_fn())
     raise SystemExit(0 if ok else 1)
 
 

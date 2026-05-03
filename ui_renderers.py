@@ -7,12 +7,24 @@ import streamlit as st
 from contracts import ExtractedMetadata
 
 
+def _to_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _format_duration_mmss(duration_seconds: object) -> str:
     if duration_seconds is None:
         return "N/A"
-    try:
-        seconds = float(duration_seconds)
-    except (TypeError, ValueError):
+    seconds = _to_float(duration_seconds)
+    if seconds is None:
         return "N/A"
     if seconds < 0:
         return "N/A"
@@ -24,9 +36,8 @@ def _format_duration_mmss(duration_seconds: object) -> str:
 def _format_file_size(size_bytes: object) -> str:
     if size_bytes is None:
         return "N/A"
-    try:
-        size = float(size_bytes)
-    except (TypeError, ValueError):
+    size = _to_float(size_bytes)
+    if size is None:
         return "N/A"
     if size < 0:
         return "N/A"
@@ -103,4 +114,3 @@ def render_video_details(metadata: ExtractedMetadata | dict[str, Any]) -> None:
     thumb_error = video.get("thumbnail_error")
     if thumb_error:
         st.warning(f"影片縮圖產生失敗：{thumb_error}")
-

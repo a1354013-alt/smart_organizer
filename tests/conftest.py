@@ -1,9 +1,11 @@
+import atexit
 import os
 import shutil
 import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -11,15 +13,32 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+sys.dont_write_bytecode = True
 
-# Ensure temp directories are writable/cleanable inside the repo.
-# Some Windows environments can cause PermissionError for paths under the
-# default %TEMP%, which breaks tests that rely on tempfile / sqlite.
-REPO_TMP = PROJECT_ROOT / "tmp_test_write"
-REPO_TMP.mkdir(parents=True, exist_ok=True)
-os.environ["TMP"] = str(REPO_TMP)
-os.environ["TEMP"] = str(REPO_TMP)
-tempfile.tempdir = str(REPO_TMP)
+# Keep pytest temp writes outside the repo so delivery cleanliness tests stay meaningful.
+TEST_TMP = Path(tempfile.mkdtemp(prefix="smart_organizer_tests_"))
+os.environ["TMP"] = str(TEST_TMP)
+os.environ["TEMP"] = str(TEST_TMP)
+tempfile.tempdir = str(TEST_TMP)
+
+
+@atexit.register
+def _cleanup_test_tmp() -> None:
+    shutil.rmtree(TEST_TMP, ignore_errors=True)
+
+
+def _cleanup_repo_caches() -> None:
+    for path in PROJECT_ROOT.rglob("__pycache__"):
+        shutil.rmtree(path, ignore_errors=True)
+    for pattern in ("*.pyc", "*.pyc.*"):
+        for path in PROJECT_ROOT.rglob(pattern):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+_cleanup_repo_caches()
 
 
 def _retry(
@@ -68,9 +87,9 @@ def _robust_rmtree(path, *args, **kwargs):
     return _retry(_ORIG_RMTREE, path, *args, **kwargs)
 
 
-os.unlink = _robust_unlink  # type: ignore[assignment]
-os.remove = _robust_remove  # type: ignore[assignment]
-shutil.rmtree = _robust_rmtree  # type: ignore[assignment]
+os.unlink = cast(Any, _robust_unlink)
+os.remove = cast(Any, _robust_remove)
+shutil.rmtree = cast(Any, _robust_rmtree)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -98,4 +117,3 @@ def pytest_sessionfinish(session, exitstatus):
             time.sleep(0.25)
         except FileNotFoundError:
             return
-

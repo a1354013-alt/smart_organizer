@@ -62,24 +62,28 @@ try:
 except Exception:  # pragma: no cover
     OpenAI = None
 
-# Video processing dependencies (optional, graceful degradation if missing)
-FFMPEG_AVAILABLE = False
-try:
+VIDEO_TOOL_TIMEOUT_SECONDS = max(1, int(os.getenv("VIDEO_TOOL_TIMEOUT_SECONDS", "10")))
+
+
+def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None):
     import subprocess
 
-    # Use shutil.which for a cleaner check before running subprocess
-    if shutil.which("ffprobe"):
-        _ffprobe_check = subprocess.run(
-            ["ffprobe", "-version"],
-            capture_output=True,
-            timeout=5,
-            text=True,
-        )
-        FFMPEG_AVAILABLE = _ffprobe_check.returncode == 0
-    else:
-        FFMPEG_AVAILABLE = False
-except Exception:
-    FFMPEG_AVAILABLE = False
+    timeout = max(1, int(timeout_seconds or VIDEO_TOOL_TIMEOUT_SECONDS))
+    return subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
+
+
+def _detect_ffmpeg_available() -> bool:
+    if not shutil.which("ffprobe") or not shutil.which("ffmpeg"):
+        return False
+    try:
+        probe = _run_video_subprocess(["ffprobe", "-version"], timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
+        ffmpeg = _run_video_subprocess(["ffmpeg", "-version"], timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
+        return probe.returncode == 0 and ffmpeg.returncode == 0
+    except Exception:
+        return False
+
+
+FFMPEG_AVAILABLE = _detect_ffmpeg_available()
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +97,12 @@ class FileProcessor:
         self.poppler_path = (os.getenv("POPPLER_PATH") or "").strip() or None
         self.pdf_preview_max_pages = self._read_int_env("PDF_PREVIEW_MAX_PAGES", 1, min_value=1, max_value=10)
         self.pdf_ocr_max_pages = self._read_int_env("PDF_OCR_MAX_PAGES", 3, min_value=1, max_value=10)
+        self.video_tool_timeout_seconds = self._read_int_env(
+            "VIDEO_TOOL_TIMEOUT_SECONDS",
+            VIDEO_TOOL_TIMEOUT_SECONDS,
+            min_value=1,
+            max_value=10,
+        )
 
     def _read_int_env(self, key, default, min_value=None, max_value=None):
         raw = os.getenv(key, "")
@@ -194,8 +204,8 @@ class FileProcessor:
                 notes.append("檔案過大，已跳過影片 metadata 提取與縮圖產生")
                 video = {"media_type": "video"}  
             else:
-                meta_timeout = int(options.get("video_metadata_timeout_seconds") or 10)
-                thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or 10)
+                meta_timeout = int(options.get("video_metadata_timeout_seconds") or self.video_tool_timeout_seconds)
+                thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or self.video_tool_timeout_seconds)
 
                 started = time.perf_counter()
                 video_meta = self._extract_video_metadata(file_path, timeout_seconds=meta_timeout)
@@ -399,7 +409,7 @@ class FileProcessor:
                 file_path,
             ]
             try:
-                proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)), text=True)
+                proc = _run_video_subprocess(cmd, timeout_seconds=timeout_seconds)
                 if proc.returncode != 0:
                     result["ffprobe_error"] = (proc.stderr or "").strip() or "ffprobe failed"
                     return result

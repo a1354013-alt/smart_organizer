@@ -34,7 +34,11 @@ if ([string]::IsNullOrWhiteSpace($ZipName)) {
     $ZipName = "$projectName-v$version-runtime-demo-$timestamp.zip"
 }
 
-$outputRoot = Join-Path $projectRoot $OutputDir
+$outputRoot = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
+    $OutputDir
+} else {
+    Join-Path $projectRoot $OutputDir
+}
 $stagingRoot = Join-Path $outputRoot "_staging_$timestamp"
 $zipPath = Join-Path $outputRoot $ZipName
 
@@ -60,6 +64,15 @@ $includePaths = @(
     "storage_cleanup.py",
     "storage_manager.py",
     "logging_config.py",
+    "frontend_safety.py",
+    "ui_common.py",
+    "ui_state.py",
+    "ui_home.py",
+    "ui_upload.py",
+    "ui_review.py",
+    "ui_execute.py",
+    "ui_search.py",
+    "ui_records.py",
     "ui_renderers.py",
     "version.py",
     "contracts.py",
