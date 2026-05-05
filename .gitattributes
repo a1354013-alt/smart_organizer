@@ -1,10 +1,14 @@
 .git/ export-ignore
+release/ export-ignore
+release_ci*/ export-ignore
+*.zip export-ignore
 __pycache__/ export-ignore
 *.pyc export-ignore
 *.pyc* export-ignore
 *.pyo export-ignore
 *.pyd export-ignore
 .pytest_cache/ export-ignore
+.pytest_runtime_tmp*/ export-ignore
 .mypy_cache/ export-ignore
 .ruff_cache/ export-ignore
 .coverage export-ignore

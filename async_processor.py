@@ -1,102 +1,124 @@
 from __future__ import annotations
 
-"""
-非同步（多執行緒）處理與進度回饋模組。
-
-此模組以 ThreadPoolExecutor 進行並行處理；不提供持久化的 job queue。
-"""
 import concurrent.futures
 import threading
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence, TypeVar
+from typing import Callable, Generic, Optional, Sequence, TypeVar
 
 TItem = TypeVar("TItem")
 TResult = TypeVar("TResult")
 
+
 @dataclass
 class ProgressState:
-    """進度狀態物件"""
     total: int = 0
     current: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
     cancelled: bool = False
-    
-    def update(self, completed: int = 1):
+    skipped_count: int = 0
+    completed_count: int = 0
+    failed_count: int = 0
+
+    def update(self, completed: int = 1) -> None:
         self.current += completed
-    
-    def add_error(self, filename: str, error: str):
+
+    def add_error(self, filename: str, error: str) -> None:
         self.errors.append({"file": filename, "error": error})
-    
+
     @property
     def percentage(self) -> float:
         if self.total == 0:
             return 0.0
         return min(100.0, (self.current / self.total) * 100.0)
 
+
+@dataclass
+class BatchProcessResult(Generic[TResult]):
+    results: list[TResult]
+    cancelled: bool
+    skipped_count: int
+    completed_count: int
+    failed_count: int
+
+
 class AsyncProcessor:
-    """非同步處理器"""
-    
     def __init__(self, max_workers: int = 4):
         self.max_workers = max_workers
         self._cancel_event = threading.Event()
-    
-    def cancel(self):
-        """請求取消所有進行中的任務"""
+
+    def cancel(self) -> None:
         self._cancel_event.set()
-    
+
     def is_cancelled(self) -> bool:
         return self._cancel_event.is_set()
-    
-    def reset_cancel(self):
-        """重置取消狀態"""
+
+    def reset_cancel(self) -> None:
         self._cancel_event.clear()
-    
+
     def process_batch(
         self,
         items: Sequence[TItem],
         process_fn: Callable[[TItem], TResult],
         progress_callback: Optional[Callable[[ProgressState], None]] = None,
-        item_name: str = "項目"
-    ) -> list[TResult]:
-        """
-        批量處理項目
-        
-        Args:
-            items: 待處理項目列表
-            process_fn: 處理函式 (item) -> result
-            progress_callback: 進度回調函式 (ProgressState) -> None
-            item_name: 項目名稱 (用於錯誤訊息)
-        
-        Returns:
-            處理結果列表
-        """
+        item_name: str = "item",
+    ) -> BatchProcessResult[TResult]:
         self.reset_cancel()
         progress = ProgressState(total=len(items))
         results: list[TResult | None] = [None] * len(items)
-        
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_index = {executor.submit(process_fn, item): idx for idx, item in enumerate(items)}
-            
-            # 處理完成任務
-            for future in concurrent.futures.as_completed(future_to_index):
+            future_to_index: dict[concurrent.futures.Future[TResult], int] = {}
+            next_index = 0
+
+            def submit_until_full() -> None:
+                nonlocal next_index
+                while next_index < len(items) and len(future_to_index) < max(1, self.max_workers) and not self.is_cancelled():
+                    future = executor.submit(process_fn, items[next_index])
+                    future_to_index[future] = next_index
+                    next_index += 1
+
+            submit_until_full()
+
+            while future_to_index:
+                done, _pending = concurrent.futures.wait(
+                    future_to_index,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+
+                for future in done:
+                    idx = future_to_index.pop(future)
+                    item = items[idx]
+
+                    try:
+                        results[idx] = future.result()
+                        progress.completed_count += 1
+                    except Exception as exc:
+                        progress.failed_count += 1
+                        progress.add_error(getattr(item, "name", None) or f"{item_name}:{item}", str(exc))
+                    finally:
+                        if self.is_cancelled():
+                            progress.cancelled = True
+                        progress.update()
+                        if progress_callback:
+                            progress_callback(progress)
+
                 if self.is_cancelled():
                     progress.cancelled = True
+                    remaining = len(items) - next_index
+                    if remaining > 0:
+                        progress.skipped_count += remaining
+                        progress.current += remaining
                     break
-                    
-                idx = future_to_index[future]
-                item = items[idx]
-                try:
-                    result = future.result()
-                    results[idx] = result
-                except Exception as e:
-                    progress.add_error(getattr(item, "name", None) or str(item), str(e))
-                    # 單項失敗不中斷整體流程
-                finally:
-                    progress.update()
-                    if progress_callback:
-                        progress_callback(progress)
-        
-        return [r for r in results if r is not None]
 
-# 全域單例 (供 app.py 使用)
+                submit_until_full()
+
+        return BatchProcessResult(
+            results=[result for result in results if result is not None],
+            cancelled=progress.cancelled,
+            skipped_count=progress.skipped_count,
+            completed_count=progress.completed_count,
+            failed_count=progress.failed_count,
+        )
+
+
 async_processor = AsyncProcessor(max_workers=4)

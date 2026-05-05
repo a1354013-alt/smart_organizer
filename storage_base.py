@@ -27,6 +27,7 @@ class StorageBase:
         self.db_path = db_path
         self._db_uri = False
         self._keepalive_conn: sqlite3.Connection | None = None
+        self._closed = False
 
         if str(self.db_path) == ":memory:":
             self.db_path = f"file:smart_organizer_memdb_{uuid.uuid4().hex}?mode=memory&cache=shared"
@@ -55,6 +56,9 @@ class StorageBase:
                 self._keepalive_conn = None
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         keepalive = self._keepalive_conn
         self._keepalive_conn = None
         if keepalive is None:
@@ -65,6 +69,8 @@ class StorageBase:
             logger.debug("keepalive close failed", exc_info=True)
 
     def _get_connection(self, timeout: int = 30000) -> sqlite3.Connection:
+        if self._closed:
+            raise RuntimeError("StorageManager is closed. Create a new instance before continuing.")
         try:
             conn = sqlite3.connect(self.db_path, timeout=timeout / 1000, uri=self._db_uri)
             try:

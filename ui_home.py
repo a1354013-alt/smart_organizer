@@ -7,9 +7,11 @@ import streamlit as st
 
 from folder_models import FolderOrganizerError, ScanPathError, human_bytes, safe_int
 from folder_service import (
+    build_report_snapshot,
     get_quarantine_items,
     preview_selected_actions,
     quarantine_selected_files,
+    resolve_report_inputs,
     restore_quarantine_selection,
     scan_folder,
 )
@@ -25,9 +27,10 @@ from ui_renderers import render_dependency_status
 from ui_state import (
     SESSION_AI_ENABLED,
     SESSION_DEBUG_MODE,
-    SESSION_FOLDER_OPERATION_RESULT,
+    SESSION_FOLDER_LAST_OPERATION_RESULT,
+    SESSION_FOLDER_REPORT_SNAPSHOT,
     SESSION_FOLDER_RESTORE_RESULT,
-    SESSION_FOLDER_SCAN,
+    SESSION_FOLDER_SCAN_CURRENT,
     SESSION_FOLDER_SCAN_OPTIONS,
     SESSION_FOLDER_SCAN_PATH,
     SESSION_PROCESSING_OPTIONS,
@@ -212,7 +215,7 @@ def render_home(context: UIContext) -> None:
                     progress_bar.progress(min(1.0, scanned / max(1, cap)))
                     status_text.text(f"Scanning... {scanned} files inspected")
 
-                st.session_state[SESSION_FOLDER_SCAN] = scan_folder(
+                st.session_state[SESSION_FOLDER_SCAN_CURRENT] = scan_folder(
                     folder_path,
                     recursive=recursive,
                     max_files=max_files,
@@ -222,7 +225,10 @@ def render_home(context: UIContext) -> None:
                 )
                 progress_bar.progress(1.0)
                 status_text.text("Scan complete.")
-                st.session_state[SESSION_FOLDER_OPERATION_RESULT] = None
+                st.session_state[SESSION_FOLDER_REPORT_SNAPSHOT] = build_report_snapshot(
+                    cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {})
+                )
+                st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = None
                 st.session_state[SESSION_FOLDER_RESTORE_RESULT] = None
             except ScanPathError as exc:
                 st.error(str(exc))
@@ -233,7 +239,7 @@ def render_home(context: UIContext) -> None:
             except Exception as exc:
                 handle_ui_exception("Folder scan failed.", exc)
 
-        scan = st.session_state.get(SESSION_FOLDER_SCAN)
+        scan = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
         if scan:
             stats_obj = scan.get("stats")
             stats = cast(dict[str, object], stats_obj) if isinstance(stats_obj, dict) else {}
@@ -272,14 +278,14 @@ def render_home(context: UIContext) -> None:
             action_col1, action_col2 = st.columns(2)
             with action_col1:
                 if st.button("Preview selected actions", key="preview_folder_action", disabled=not selected_paths):
-                    st.session_state[SESSION_FOLDER_OPERATION_RESULT] = preview_selected_actions(scan, selected_paths)
+                    st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = preview_selected_actions(scan, selected_paths)
             with action_col2:
                 if st.button(
                     "Move selected files to quarantine",
                     key="run_folder_action",
                     disabled=(not selected_paths or not confirm_quarantine),
                 ):
-                    operation_result, refreshed_scan = quarantine_selected_files(
+                    operation_result, refreshed_scan, report_snapshot = quarantine_selected_files(
                         scan,
                         selected_paths,
                         recursive=recursive,
@@ -287,15 +293,22 @@ def render_home(context: UIContext) -> None:
                         stale_days=stale_days,
                         large_file_bytes=large_file_bytes,
                     )
-                    st.session_state[SESSION_FOLDER_OPERATION_RESULT] = operation_result
-                    st.session_state[SESSION_FOLDER_SCAN] = refreshed_scan
+                    st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = operation_result
+                    st.session_state[SESSION_FOLDER_REPORT_SNAPSHOT] = report_snapshot
+                    st.session_state[SESSION_FOLDER_SCAN_CURRENT] = refreshed_scan
 
             st.subheader("Operation results")
-            _render_operation_results(st.session_state.get(SESSION_FOLDER_OPERATION_RESULT))
+            _render_operation_results(st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT))
+
+            export_scan, export_operation = resolve_report_inputs(
+                cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {}),
+                cast(dict[str, object], st.session_state.get(SESSION_FOLDER_REPORT_SNAPSHOT) or {}),
+                cast(dict[str, object], st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT) or {}),
+            )
 
             report_payload = export_folder_report_markdown(
-                st.session_state.get(SESSION_FOLDER_SCAN) or scan,
-                st.session_state.get(SESSION_FOLDER_OPERATION_RESULT),
+                export_scan,
+                export_operation,
             )
             st.download_button(
                 "Export Markdown report",
@@ -306,8 +319,8 @@ def render_home(context: UIContext) -> None:
             st.download_button(
                 "Export CSV report",
                 export_folder_report_csv(
-                    st.session_state.get(SESSION_FOLDER_SCAN) or scan,
-                    st.session_state.get(SESSION_FOLDER_OPERATION_RESULT),
+                    export_scan,
+                    export_operation,
                 ),
                 file_name="smart-organizer-report.csv",
                 mime="text/csv",
@@ -350,7 +363,7 @@ def render_home(context: UIContext) -> None:
             '<div class="card-muted">Selected files are moved into a hidden quarantine folder inside the scanned root. Nothing is permanently deleted here.</div>',
             unsafe_allow_html=True,
         )
-        current_scan = cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN) or {})
+        current_scan = cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {})
         quarantine_items = get_quarantine_items(str(current_scan.get("path") or folder_path or "")) if (current_scan or folder_path) else []
         if quarantine_items:
             restore_choices = st.multiselect(
@@ -372,7 +385,7 @@ def render_home(context: UIContext) -> None:
                 restored_scan: dict[str, object] | None = restore_pair[1]
                 st.session_state[SESSION_FOLDER_RESTORE_RESULT] = restore_result
                 if restored_scan is not None:
-                    st.session_state[SESSION_FOLDER_SCAN] = restored_scan
+                    st.session_state[SESSION_FOLDER_SCAN_CURRENT] = restored_scan
             _render_operation_results(st.session_state.get(SESSION_FOLDER_RESTORE_RESULT))
         else:
             st.info("No active quarantine items for the current folder.")

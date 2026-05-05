@@ -6,8 +6,8 @@ exclude = [
   ".pytest_cache",
   "__pycache__",
   "release",
-  "release_test",
-  "release_tmp",
+  "release_ci2",
+  "release_ci3",
 ]
 
 [tool.ruff.lint]
@@ -20,4 +20,24 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 no_implicit_optional = true
 check_untyped_defs = false
+files = [
+  "app_main.py",
+  "ui_state.py",
+  "ui_common.py",
+  "ui_home.py",
+  "ui_upload.py",
+  "ui_review.py",
+  "ui_execute.py",
+  "ui_search.py",
+  "ui_renderers.py",
+  "ui_records.py",
+  "frontend_safety.py",
+  "logging_config.py",
+  "report_exports.py",
+  "folder_models.py",
+  "folder_organizer.py",
+  "folder_service.py",
+  "folder_report.py",
+  "scripts/create_release_zip.py",
+]
 

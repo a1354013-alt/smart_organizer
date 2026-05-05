@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import atexit
 import importlib
-from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
+from config import DB_PATH, PROJECT_ROOT, REPO_ROOT, UPLOAD_DIR
 from core import FileProcessor
 from frontend_safety import inject_browser_storage_sanitizer
 from logging_config import setup_logging
@@ -20,10 +21,7 @@ from ui_state import init_session_state
 from ui_upload import render_upload
 from version import APP_NAME
 
-PROJECT_ROOT = Path(__file__).parent
-UPLOAD_DIR = PROJECT_ROOT / "uploads"
-REPO_ROOT = PROJECT_ROOT / "repo"
-DB_PATH = PROJECT_ROOT / "smart_organizer.db"
+_REGISTERED_STORAGE_CLOSE_IDS: set[int] = set()
 
 
 def _optional_import(module_name: str) -> Any:
@@ -40,10 +38,19 @@ def _configure_page() -> None:
     setup_logging()
 
 
+def _register_storage_close(storage: StorageManager) -> None:
+    storage_id = id(storage)
+    if storage_id in _REGISTERED_STORAGE_CLOSE_IDS:
+        return
+    atexit.register(storage.close)
+    _REGISTERED_STORAGE_CLOSE_IDS.add(storage_id)
+
+
 @st.cache_resource
 def _bootstrap_services() -> tuple[FileProcessor, StorageManager]:
     processor = FileProcessor()
     storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
+    _register_storage_close(storage)
     return processor, storage
 
 

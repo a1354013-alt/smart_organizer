@@ -12,6 +12,19 @@ from ui_common import UIContext, handle_ui_exception
 logger = logging.getLogger(__name__)
 
 
+def build_records_maintenance_actions(file_id_options: list[object]) -> list[dict[str, object]]:
+    return [
+        {"key": "refresh_locations", "label": "Refresh file locations", "requires_selection": False},
+        {"key": "rebuild_fts", "label": "Rebuild FTS rows", "requires_selection": False},
+        {
+            "key": "do_reclassify",
+            "label": "Reclassify selected record",
+            "requires_selection": True,
+            "enabled": bool(file_id_options),
+        },
+    ]
+
+
 def render_records(context: UIContext) -> None:
     st.header("Organization Records")
 
@@ -44,15 +57,17 @@ def render_records(context: UIContext) -> None:
     )
     records = list(page.get("items") or [])
     total = int(page.get("total") or 0)
-
-    if not records:
-        st.info("No records match the current filters.")
-        return
+    file_id_options = [record.get("file_id") for record in records if record.get("file_id") is not None]
 
     page_count = max(1, math.ceil(total / page_size))
-    st.caption(f"Showing page {current_page} of {page_count} ({total} records)")
+    if records:
+        st.caption(f"Showing page {current_page} of {page_count} ({total} records)")
+    else:
+        st.info("No records match the current filters.")
+        if search or status != "All" or topic != "All" or file_type != "All" or date_from or date_to:
+            st.caption("Reset filters or clear search to bring records back into view.")
 
-    if context.pandas is not None:
+    if records and context.pandas is not None:
         df = context.pandas.DataFrame(records)
         cols = [
             "file_id",
@@ -67,21 +82,23 @@ def render_records(context: UIContext) -> None:
             "created_at",
         ]
         st.dataframe(df[[col for col in cols if col in df.columns]], use_container_width=True)
-    else:
+    elif records:
         st.dataframe(records, use_container_width=True)
 
-    csv_payload = export_records_csv(records)
-    md_payload = export_records_markdown(records)
-    export_col1, export_col2 = st.columns(2)
-    with export_col1:
-        st.download_button("Export current page as CSV", csv_payload, file_name="smart-organizer-records.csv", mime="text/csv")
-    with export_col2:
-        st.download_button("Export current page as Markdown", md_payload, file_name="smart-organizer-records.md", mime="text/markdown")
+    if records:
+        csv_payload = export_records_csv(records)
+        md_payload = export_records_markdown(records)
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            st.download_button("Export current page as CSV", csv_payload, file_name="smart-organizer-records.csv", mime="text/csv")
+        with export_col2:
+            st.download_button("Export current page as Markdown", md_payload, file_name="smart-organizer-records.md", mime="text/markdown")
 
     st.subheader("Maintenance")
+    maintenance_actions = build_records_maintenance_actions(file_id_options)
     col_a, col_b, col_c = st.columns(3)
     with col_a:
-        if st.button("Refresh file locations", key="refresh_locations"):
+        if st.button(str(maintenance_actions[0]["label"]), key=str(maintenance_actions[0]["key"])):
             try:
                 with st.spinner("Refreshing file locations..."):
                     result = context.storage.refresh_file_locations(fix_moving=True)
@@ -93,7 +110,7 @@ def render_records(context: UIContext) -> None:
                 handle_ui_exception("Failed to refresh file locations.", exc)
 
     with col_b:
-        if st.button("Rebuild FTS rows", key="rebuild_fts"):
+        if st.button(str(maintenance_actions[1]["label"]), key=str(maintenance_actions[1]["key"])):
             try:
                 with st.spinner("Rebuilding FTS rows..."):
                     result = context.storage.reconcile_fts_rows()
@@ -107,10 +124,9 @@ def render_records(context: UIContext) -> None:
     with col_c:
         st.caption("Use reclassify when a record needs a fresh metadata-based topic assignment.")
 
-    file_id_options = [record.get("file_id") for record in records if record.get("file_id") is not None]
     if file_id_options:
         selected_file_id = st.selectbox("Reclassify file_id", file_id_options, index=0, key="reclassify_file_id")
-        if st.button("Reclassify selected record", key="do_reclassify"):
+        if st.button(str(maintenance_actions[2]["label"]), key=str(maintenance_actions[2]["key"])):
             try:
                 with st.spinner("Reclassifying..."):
                     main_topic = reclassify_record(
@@ -125,3 +141,5 @@ def render_records(context: UIContext) -> None:
             except Exception as exc:
                 logger.exception("reclassify_record failed")
                 handle_ui_exception("Failed to reclassify record.", exc)
+    else:
+        st.caption("Reclassify becomes available after records are loaded. Refresh, rebuild, and reset remain available.")

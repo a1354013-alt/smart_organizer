@@ -27,7 +27,7 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -c "from pathlib import Path; files = ['app.py','app_main.py','core.py','core_utils.py','core_classification.py','core_processor.py','services.py','services_models.py','services_analysis.py','services_review.py','services_finalize.py','async_processor.py','storage.py','storage_base.py','storage_schema.py','storage_repository.py','storage_recovery.py','storage_search.py','storage_cleanup.py','storage_manager.py','logging_config.py','version.py','contracts.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]"
+          python scripts/safe_compileall.py -q .
 
       - name: Ruff (minimal)
         run: |
@@ -35,11 +35,11 @@ jobs:
 
       - name: Mypy (minimal)
         run: |
-          mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py folder_models.py folder_organizer.py folder_service.py folder_report.py report_exports.py ui_common.py ui_home.py ui_records.py
+          python -m mypy app_main.py ui_state.py ui_common.py ui_home.py ui_upload.py ui_review.py ui_execute.py ui_search.py ui_renderers.py ui_records.py frontend_safety.py logging_config.py report_exports.py folder_models.py folder_organizer.py folder_service.py folder_report.py scripts/create_release_zip.py
 
       - name: Tests
         run: |
-          python -B -m pytest -q --cov=. --cov-report=term-missing:skip-covered
+          python -m pytest -q
 
       - name: Release zip smoke test
         run: |

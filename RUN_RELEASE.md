@@ -4,48 +4,16 @@ This document applies to the official Smart Organizer runtime/demo release zip.
 
 ## Files included
 
-Runtime files:
+The release zip is built from the allowlist in `scripts/create_release_zip.py`.
 
-- `app.py`
-- `app_main.py`
-- `core.py`
-- `core_utils.py`
-- `core_classification.py`
-- `core_processor.py`
-- `services.py`
-- `services_models.py`
-- `services_analysis.py`
-- `services_review.py`
-- `services_finalize.py`
-- `storage.py`
-- `storage_base.py`
-- `storage_schema.py`
-- `storage_repository.py`
-- `storage_recovery.py`
-- `storage_search.py`
-- `storage_cleanup.py`
-- `storage_manager.py`
-- `ui_common.py`
-- `ui_state.py`
-- `ui_home.py`
-- `ui_upload.py`
-- `ui_review.py`
-- `ui_execute.py`
-- `ui_search.py`
-- `ui_records.py`
-- `ui_renderers.py`
-- `requirements.txt`
-- `README.md`
-- `RELEASE_PACKAGING.md`
-- `RUN_RELEASE.md`
+Key runtime groups:
 
-Supporting modules required by the runtime entrypoints:
-
-- `async_processor.py`
-- `contracts.py`
-- `frontend_safety.py`
-- `logging_config.py`
-- `version.py`
+- app entry: `app.py`, `app_main.py`
+- core/storage/config: `core*.py`, `storage*.py`, `config.py`
+- UI modules: `ui_*.py`
+- folder organizer/report modules: `folder_*.py`, `report_exports.py`
+- docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 Not included:
 
@@ -61,13 +29,25 @@ Not included:
 ## Install
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Start
 
 ```bash
 streamlit run app.py
+```
+
+## Packaging command
+
+```bash
+python scripts/create_release_zip.py
+```
+
+Windows entrypoint:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1
 ```
 
 ## System dependencies

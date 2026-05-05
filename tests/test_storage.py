@@ -1,7 +1,6 @@
 import hashlib
 import os
 import sqlite3
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -95,19 +94,18 @@ def test_search_content_fts_and_fallback():
     assert r3 == []
 
 
-def test_migration_failure_aborts_startup():
-    with tempfile.TemporaryDirectory() as td:
-        db_path = os.path.join(td, "bad.db")
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
-            conn.execute('INSERT INTO sys_config(key, value) VALUES ("schema_version", "not-an-int")')
-            conn.commit()
-        finally:
-            conn.close()
+def test_migration_failure_aborts_startup(tmp_path):
+    db_path = os.path.join(str(tmp_path), "bad.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute('INSERT INTO sys_config(key, value) VALUES ("schema_version", "not-an-int")')
+        conn.commit()
+    finally:
+        conn.close()
 
-        with pytest.raises(RuntimeError):
-            StorageManager(db_path, ":memory:", ":memory:")
+    with pytest.raises(RuntimeError):
+        StorageManager(db_path, ":memory:", ":memory:")
 
 
 def test_close_is_idempotent():

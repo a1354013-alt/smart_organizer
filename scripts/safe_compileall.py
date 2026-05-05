@@ -2,21 +2,19 @@
 Project-local wrapper for `python -m compileall`.
 
 Why this exists:
-- The workspace may include a local `.venv/` directory with restricted permissions.
-- Running `python -m compileall .` would recurse into `.venv/` and fail with PermissionError.
-
-This wrapper preserves the standard CLI behavior while skipping common non-project trees.
+- The workspace may include local runtime directories that should not be compiled.
+- Running `python -m compileall .` directly would recurse into folders like `.venv/` and release artifacts.
 """
 
 from __future__ import annotations
 
+import builtins
+import importlib.util
 import os
 import sys
 import sysconfig
-import importlib.util
-import builtins
-from typing import TypedDict
 from types import ModuleType
+from typing import TypedDict
 
 
 class CompileFlags(TypedDict):
@@ -39,18 +37,7 @@ def _load_stdlib_compileall() -> ModuleType:
     return module
 
 
-def _merge_rx(existing: str | None, extra: str) -> str:
-    if not existing:
-        return extra
-    return f"(?:{existing})|(?:{extra})"
-
-
 def _extract_existing_x(argv: list[str]) -> tuple[list[str], str | None]:
-    """
-    Extract `-x <regex>` from argv if present, returning (argv_without_x, regex_or_none).
-
-    Handles `-xREGEX` and `-x REGEX` forms.
-    """
     cleaned: list[str] = []
     rx: str | None = None
     i = 0
@@ -70,11 +57,6 @@ def _extract_existing_x(argv: list[str]) -> tuple[list[str], str | None]:
 
 
 def _parse_flags(argv: list[str]) -> tuple[list[str], CompileFlags]:
-    """
-    Minimal CLI parsing for project needs.
-
-    Supports: -q/-qq, -f, -l, -b. Unknown flags are preserved for stdlib fallback.
-    """
     cleaned: list[str] = []
     quiet = 0
     force = False
@@ -99,10 +81,8 @@ def _parse_flags(argv: list[str]) -> tuple[list[str], CompileFlags]:
             continue
         cleaned.append(token)
 
-    # Default to legacy bytecode locations to avoid `__pycache__` write failures in locked workspaces.
     legacy = True if not legacy else legacy
-
-    return cleaned, {"quiet": int(min(quiet, 2)), "force": bool(force), "legacy": bool(legacy), "recurse": bool(recurse)}
+    return cleaned, {"quiet": int(min(quiet, 2)), "force": force, "legacy": legacy, "recurse": recurse}
 
 
 def _should_skip_dir(name: str) -> bool:
@@ -116,19 +96,46 @@ def _should_skip_dir(name: str) -> bool:
         ".pytest_cache",
         "uploads",
         "repo",
-        "tests",
-    }
+        "release",
+    } or lowered.startswith("release_ci") or lowered.startswith("_tmp_pytest") or lowered.startswith(".pytest_runtime_tmp")
+
+
+def _compile_one(source_path: str, *, quiet: int) -> bool:
+    try:
+        with open(source_path, "rb") as handle:
+            source_bytes = handle.read()
+        source_text = source_bytes.decode("utf-8")
+        builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
+        return True
+    except UnicodeDecodeError:
+        with open(source_path, "r", encoding="utf-8", errors="replace") as handle:
+            source_text = handle.read()
+        try:
+            builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
+            return True
+        except SyntaxError as exc:
+            if quiet < 2:
+                print(f"SyntaxError: {source_path}:{exc.lineno}:{exc.offset} {exc.msg}")
+            return False
+    except SyntaxError as exc:
+        if quiet < 2:
+            print(f"SyntaxError: {source_path}:{exc.lineno}:{exc.offset} {exc.msg}")
+        return False
+    except Exception as exc:
+        if quiet < 2:
+            print(f"Compile failed: {source_path} ({exc})")
+        return False
 
 
 def _compile_targets(std: ModuleType, targets: list[str], *, quiet: int, force: bool, legacy: bool, recurse: bool) -> bool:
+    del std, force, legacy
     ok = True
 
     for target in targets:
         path = os.path.abspath(target)
         if os.path.isfile(path):
-            if not path.lower().endswith(".py"):
-                continue
-            ok = _compile_one(path, quiet=quiet) and ok
+            if path.lower().endswith(".py"):
+                ok = _compile_one(path, quiet=quiet) and ok
             continue
 
         if not os.path.isdir(path):
@@ -141,63 +148,24 @@ def _compile_targets(std: ModuleType, targets: list[str], *, quiet: int, force: 
                 print(f"Can't list '{getattr(err, 'filename', path)}'")
 
         for dirpath, dirnames, filenames in os.walk(path, topdown=True, onerror=_onerror):
-            dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+            dirnames[:] = [dirname for dirname in dirnames if not _should_skip_dir(dirname)]
             if not recurse:
                 dirnames[:] = []
 
             for filename in filenames:
-                if not filename.lower().endswith(".py"):
-                    continue
-                fullpath = os.path.join(dirpath, filename)
-                ok = _compile_one(fullpath, quiet=quiet) and ok
+                if filename.lower().endswith(".py"):
+                    ok = _compile_one(os.path.join(dirpath, filename), quiet=quiet) and ok
 
     return ok
 
 
-def _compile_one(source_path: str, *, quiet: int) -> bool:
-    """
-    Compile a single `.py` file (syntax + bytecode generation in-memory).
-
-    This avoids permission issues when `__pycache__/` or `.pyc` writes are blocked
-    by the workspace ACL/antivirus.
-    """
-    try:
-        with open(source_path, "rb") as f:
-            source_bytes = f.read()
-        source_text = source_bytes.decode("utf-8")
-        builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
-        return True
-    except UnicodeDecodeError:
-        # Fallback for non-utf8 source files.
-        with open(source_path, "r", encoding="utf-8", errors="replace") as f:
-            source_text = f.read()
-        try:
-            builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
-            return True
-        except SyntaxError as e:
-            if quiet < 2:
-                print(f"SyntaxError: {source_path}:{e.lineno}:{e.offset} {e.msg}")
-            return False
-    except SyntaxError as e:
-        if quiet < 2:
-            print(f"SyntaxError: {source_path}:{e.lineno}:{e.offset} {e.msg}")
-        return False
-    except Exception as e:
-        if quiet < 2:
-            print(f"Compile failed: {source_path} ({e})")
-        return False
-
-
 def main() -> None:
     std = _load_stdlib_compileall()
-
     argv = sys.argv[1:]
     argv, _existing_rx = _extract_existing_x(argv)
     argv, flags = _parse_flags(argv)
 
-    # If explicit targets are provided, compile them with a directory-pruning walk.
-    # This avoids permission issues when the workspace contains locked folders like `.venv/`.
-    targets = [t for t in argv if not t.startswith("-")]
+    targets = [token for token in argv if not token.startswith("-")]
     if targets:
         ok = _compile_targets(
             std,
@@ -209,7 +177,6 @@ def main() -> None:
         )
         raise SystemExit(0 if ok else 1)
 
-    # Otherwise, fall back to stdlib behavior (compile `sys.path`).
     main_fn = getattr(std, "main", None)
     if not callable(main_fn):
         raise RuntimeError("stdlib compileall.main not found")

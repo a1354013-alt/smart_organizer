@@ -35,8 +35,12 @@ target/
 .ruff_cache/
 
 # Runtime artifacts (local runs)
+release/
+release_ci*/
+*.zip
 uploads/
 repo/
+smart_organizer.db
 .compileall_cache/
 previews/
 tmp/
@@ -62,3 +66,4 @@ htmlcov/
 
 # PyTest
 .pytest_cache/
+.pytest_runtime_tmp*/

@@ -235,14 +235,14 @@ def analyze_upload_batch_async(
         for error_info in progress.errors[-1:]:
             logger.warning("Async processing error: %s - %s", error_info["file"], error_info["error"])
 
-    outcomes = async_proc.process_batch(
+    batch_result = async_proc.process_batch(
         items=upload_list,
         process_fn=process_single,
         progress_callback=on_progress,
         item_name="upload",
     )
 
-    for outcome in outcomes:
+    for outcome in batch_result.results:
         if outcome is None:
             errors.append("Async processing failed: empty outcome")
             continue
@@ -253,9 +253,21 @@ def analyze_upload_batch_async(
             duplicates.append(dup)
         if err is not None:
             errors.append(err)
+    if batch_result.cancelled:
+        errors.append(
+            "Async processing cancelled "
+            f"(completed={batch_result.completed_count}, skipped={batch_result.skipped_count}, failed={batch_result.failed_count})."
+        )
 
     logger.info(
         "analyze_upload_batch_async done%s",
-        _log_context(files=total, analyzed=len(results), duplicates=len(duplicates), errors=len(errors)),
+        _log_context(
+            files=total,
+            analyzed=len(results),
+            duplicates=len(duplicates),
+            errors=len(errors),
+            cancelled=batch_result.cancelled,
+            skipped=batch_result.skipped_count,
+        ),
     )
     return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)

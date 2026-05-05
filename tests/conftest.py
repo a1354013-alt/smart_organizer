@@ -4,10 +4,13 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from _pytest import pathlib as pytest_pathlib
+from _pytest import tmpdir as pytest_tmpdir
 
 from storage import StorageManager
 
@@ -18,10 +21,29 @@ if str(PROJECT_ROOT) not in sys.path:
 sys.dont_write_bytecode = True
 
 # Keep pytest temp writes outside the repo so delivery cleanliness tests stay meaningful.
-TEST_TMP = Path(tempfile.mkdtemp(prefix="smart_organizer_tests_"))
+TEST_TMP = Path(tempfile.gettempdir()) / f"smart_organizer_tests_{uuid.uuid4().hex}"
+TEST_TMP.mkdir(parents=True, exist_ok=True)
 os.environ["TMP"] = str(TEST_TMP)
 os.environ["TEMP"] = str(TEST_TMP)
+os.environ["PYTEST_DEBUG_TEMPROOT"] = str(TEST_TMP)
 tempfile.tempdir = str(TEST_TMP)
+
+_ORIG_CLEANUP_DEAD_SYMLINKS = pytest_pathlib.cleanup_dead_symlinks
+
+
+def _safe_cleanup_dead_symlinks(root: Path) -> None:
+    try:
+        _ORIG_CLEANUP_DEAD_SYMLINKS(root)
+    except PermissionError:
+        return
+
+
+pytest_pathlib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
+pytest_tmpdir.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
+
+
+def pytest_configure(config) -> None:
+    config.option.basetemp = str(PROJECT_ROOT / f".pytest_runtime_tmp_{uuid.uuid4().hex}")
 
 
 @atexit.register
@@ -31,12 +53,15 @@ def _cleanup_test_tmp() -> None:
 
 def _cleanup_repo_caches() -> None:
     for path in PROJECT_ROOT.rglob("__pycache__"):
-        shutil.rmtree(path, ignore_errors=True)
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except PermissionError:
+            pass
     for pattern in ("*.pyc", "*.pyc.*"):
         for path in PROJECT_ROOT.rglob(pattern):
             try:
                 path.unlink()
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 pass
 
 
@@ -136,3 +161,13 @@ def _close_storage_managers(monkeypatch):
     finally:
         for storage in reversed(created):
             storage.close()
+
+
+@pytest.fixture
+def tmp_path():
+    path = TEST_TMP / f"case_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)

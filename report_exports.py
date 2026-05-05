@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 import csv
+import html
 from io import StringIO
+
+
+def escape_markdown_table_cell(value: object) -> str:
+    text = str(value if value not in (None, "") else "-")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.replace("|", r"\|").replace("\n", "<br>")
+
+
+def escape_display_text(value: object) -> str:
+    return html.escape(str(value if value not in (None, "") else "-"), quote=True)
 
 
 def export_records_csv(records: list[dict[str, object]]) -> str:
@@ -38,13 +49,13 @@ def export_records_markdown(records: list[dict[str, object]]) -> str:
             "| "
             + " | ".join(
                 [
-                    str(record.get("file_id") or "-"),
-                    str(record.get("original_name") or "-"),
-                    str(record.get("file_type") or "-"),
-                    str(record.get("main_topic") or "-"),
-                    str(record.get("status") or "-"),
-                    str(record.get("created_at") or "-"),
-                    str(record.get("last_error") or "-"),
+                    escape_markdown_table_cell(record.get("file_id")),
+                    escape_markdown_table_cell(record.get("original_name")),
+                    escape_markdown_table_cell(record.get("file_type")),
+                    escape_markdown_table_cell(record.get("main_topic")),
+                    escape_markdown_table_cell(record.get("status")),
+                    escape_markdown_table_cell(record.get("created_at")),
+                    escape_markdown_table_cell(record.get("last_error")),
                 ]
             )
             + " |"

@@ -49,6 +49,15 @@ def preview_selected_actions(scan_result: dict[str, object], selected_paths: lis
     return run_folder_organizer(scan_result, selected_paths, dry_run=True)
 
 
+def build_report_snapshot(scan_result: dict[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(scan_result, dict):
+        return None
+    return {
+        key: value
+        for key, value in scan_result.items()
+    }
+
+
 def quarantine_selected_files(
     scan_result: dict[str, object],
     selected_paths: list[str],
@@ -57,7 +66,8 @@ def quarantine_selected_files(
     max_files: int,
     stale_days: int,
     large_file_bytes: int,
-) -> tuple[dict[str, object], dict[str, object]]:
+) -> tuple[dict[str, object], dict[str, object], dict[str, object] | None]:
+    report_snapshot = build_report_snapshot(scan_result)
     operation_result = run_folder_organizer(scan_result, selected_paths, dry_run=False)
     refreshed_scan = scan_local_folder(
         str(scan_result.get("path") or ""),
@@ -66,7 +76,7 @@ def quarantine_selected_files(
         stale_days=stale_days,
         large_file_bytes=large_file_bytes,
     )
-    return operation_result, refreshed_scan
+    return operation_result, refreshed_scan, report_snapshot
 
 
 def restore_quarantine_selection(
@@ -96,3 +106,15 @@ def restore_quarantine_selection(
 
 def get_quarantine_items(folder_path: str) -> list[dict[str, object]]:
     return list_quarantine_items(folder_path)
+
+
+def resolve_report_inputs(
+    current_scan: dict[str, object] | None,
+    report_snapshot: dict[str, object] | None,
+    operation_result: dict[str, object] | None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    export_scan = report_snapshot if isinstance(report_snapshot, dict) else current_scan
+    if not isinstance(export_scan, dict):
+        export_scan = {}
+    export_operation = operation_result if isinstance(operation_result, dict) else None
+    return export_scan, export_operation

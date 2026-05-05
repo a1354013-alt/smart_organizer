@@ -1,56 +1,58 @@
+from __future__ import annotations
+
+import importlib.util
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_PATH = PROJECT_ROOT / "scripts" / "create_release_zip.py"
 
-def test_official_release_zip_does_not_include_tests_allowlist():
-    """The official runtime/demo zip must stay on a strict allowlist."""
-    ps1 = Path("create_release_zip.ps1").read_text(encoding="utf-8-sig")
-    py_script = Path("scripts/create_release_zip.py").read_text(encoding="utf-8")
 
-    assert '"tests"' not in ps1
-    assert '"pytest.ini"' not in ps1
+def _load_release_script():
+    spec = importlib.util.spec_from_file_location("release_script_under_test", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    for required in [
-        '"app.py"',
-        '"app_main.py"',
-        '"core.py"',
-        '"core_utils.py"',
-        '"core_classification.py"',
-        '"core_processor.py"',
-        '"services.py"',
-        '"services_models.py"',
-        '"services_analysis.py"',
-        '"services_review.py"',
-        '"services_finalize.py"',
-        '"async_processor.py"',
-        '"storage.py"',
-        '"storage_base.py"',
-        '"storage_schema.py"',
-        '"storage_repository.py"',
-        '"storage_recovery.py"',
-        '"storage_search.py"',
-        '"storage_cleanup.py"',
-        '"storage_manager.py"',
-        '"logging_config.py"',
-        '"frontend_safety.py"',
-        '"ui_common.py"',
-        '"ui_state.py"',
-        '"ui_home.py"',
-        '"ui_upload.py"',
-        '"ui_review.py"',
-        '"ui_execute.py"',
-        '"ui_search.py"',
-        '"ui_records.py"',
-        '"ui_renderers.py"',
-        '"RELEASE_PACKAGING.md"',
-        '"version.py"',
-        '"contracts.py"',
-        '"README.md"',
-        '"RUN_RELEASE.md"',
-        '"requirements.txt"',
-    ]:
-        assert required in ps1
-        assert required.replace('"', "'") in py_script or required in py_script
 
-    assert '"docs"' not in ps1
-    assert "smart_file_organizer_plan.md" not in ps1
-    assert "fastapi_celery_stability_report.md" not in ps1
+def test_release_allowlist_is_importable_and_contains_runtime_files():
+    module = _load_release_script()
+    allowlist = list(module.RELEASE_ALLOWLIST)
+    required = {
+        "app_main.py",
+        "core.py",
+        "storage.py",
+        "config.py",
+        "ui_common.py",
+        "ui_home.py",
+        "folder_models.py",
+        "folder_organizer.py",
+        "folder_service.py",
+        "folder_report.py",
+        "report_exports.py",
+        "docs/KNOWN_LIMITATIONS.md",
+    }
+    assert required.issubset(set(allowlist))
+    assert "compileall.py" not in allowlist
+
+
+def test_release_packaging_docs_match_current_policy():
+    module = _load_release_script()
+    allowlist = set(module.RELEASE_ALLOWLIST)
+    packaging = (PROJECT_ROOT / "RELEASE_PACKAGING.md").read_text(encoding="utf-8")
+    run_release = (PROJECT_ROOT / "RUN_RELEASE.md").read_text(encoding="utf-8")
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    ps1 = (PROJECT_ROOT / "create_release_zip.ps1").read_text(encoding="utf-8-sig")
+
+    for expected in ["app.py", "app_main.py", "config.py", "docs/KNOWN_LIMITATIONS.md", "requirements.txt"]:
+        assert expected in allowlist
+        assert expected in packaging
+
+    assert "python scripts/create_release_zip.py" in readme
+    assert "python scripts/create_release_zip.py" in run_release
+    assert "python -m pip install -r requirements.txt" in readme
+    assert "python -m pip install -r requirements.txt" in run_release
+    assert "streamlit run app.py" in readme
+    assert "streamlit run app.py" in run_release
+    assert "$includePaths" not in ps1
+    assert "python scripts/create_release_zip.py" in ps1 or "scripts\\create_release_zip.py" in ps1

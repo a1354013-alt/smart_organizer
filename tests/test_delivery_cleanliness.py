@@ -8,9 +8,12 @@ from pathlib import Path
 from scripts.create_release_zip import FORBIDDEN_PATTERNS, RELEASE_ALLOWLIST, build_zip, zip_contains_forbidden_entries
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-FORBIDDEN_DIR_NAMES = {"tmp_test_write", "__pycache__", ".compileall_cache"}
-FORBIDDEN_FILE_PATTERNS = ("*.pyc", "*.pyc.*")
+FORBIDDEN_DIR_NAMES = {"tmp_test_write", ".compileall_cache"}
+FORBIDDEN_FILE_PATTERNS: tuple[str, ...] = ()
 REQUIRED_GITIGNORE_RULES = [
+    "release/",
+    "release_ci*/",
+    "*.zip",
     "__pycache__/",
     "*.pyc",
     "*.pyc*",
@@ -21,6 +24,7 @@ REQUIRED_GITIGNORE_RULES = [
     "venv/",
     "uploads/",
     "repo/",
+    "smart_organizer.db",
     "previews/",
     "tmp/",
     "tmp_*/",
@@ -30,8 +34,13 @@ REQUIRED_GITIGNORE_RULES = [
     "node_modules/",
     "*.db",
     "*.sqlite",
+    ".coverage",
+    "htmlcov/",
 ]
 REQUIRED_GITATTR_RULES = [
+    "release/ export-ignore",
+    "release_ci*/ export-ignore",
+    "*.zip export-ignore",
     "__pycache__/ export-ignore",
     "*.pyc export-ignore",
     "*.pyc* export-ignore",
@@ -112,3 +121,8 @@ def test_release_zip_extracts_and_app_main_imports(tmp_path: Path):
         assert hasattr(module, "main")
     finally:
         sys.path = [entry for entry in sys.path if entry != str(extract_dir)]
+
+
+def test_workspace_no_longer_contains_root_compileall_wrapper():
+    assert not (PROJECT_ROOT / "compileall.py").exists()
+    assert (PROJECT_ROOT / "scripts" / "safe_compileall.py").exists()
