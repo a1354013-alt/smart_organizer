@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 
 from services import UploadedFileData
+from ui_state import SESSION_DEBUG_MODE
 
 
 @dataclass(slots=True)
@@ -164,7 +165,7 @@ def card_close() -> None:
 
 
 def is_debug() -> bool:
-    return bool(st.session_state.get("debug_mode", False))
+    return bool(st.session_state.get(SESSION_DEBUG_MODE, False))
 
 
 def handle_ui_exception(user_message: str, exc: Exception) -> None:

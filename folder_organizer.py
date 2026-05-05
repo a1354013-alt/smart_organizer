@@ -10,6 +10,12 @@ from typing import Callable
 
 from folder_models import (
     QUARANTINE_DIRNAME,
+    FolderOperationResult,
+    FolderOperationRow,
+    FolderOperationSummary,
+    FolderScanRecord,
+    FolderScanResult,
+    FolderScanStats,
     dict_object,
     human_bytes,
     infer_local_file_kind,
@@ -54,7 +60,7 @@ def scan_local_folder(
 ) -> dict[str, object]:
     started = time.perf_counter()
     root = Path(folder_path).expanduser()
-    records: list[dict[str, object]] = []
+    records: list[FolderScanRecord] = []
     errors: list[str] = []
     now = datetime.datetime.now(datetime.timezone.utc)
     stale_delta = datetime.timedelta(days=max(0, int(stale_days)))
@@ -73,20 +79,20 @@ def scan_local_folder(
         )
         reasons = _candidate_reasons(int(stat_result.st_size), stale_age_days, int(large_file_bytes))
         records.append(
-            {
-                "path": str(path_obj),
-                "name": path_obj.name,
-                "ext": path_obj.suffix.lower(),
-                "size_bytes": int(stat_result.st_size),
-                "mtime": mtime.isoformat(),
-                "atime": atime.isoformat(),
-                "days_since_access": age_days,
-                "file_kind": infer_local_file_kind(str(path_obj)),
-                "is_stale": stale_age_days is not None,
-                "is_large": int(stat_result.st_size) >= int(large_file_bytes),
-                "candidate_reasons": reasons,
-                "recommendation": _recommendation(reasons),
-            }
+            FolderScanRecord(
+                path=str(path_obj),
+                name=path_obj.name,
+                ext=path_obj.suffix.lower(),
+                size_bytes=int(stat_result.st_size),
+                mtime=mtime.isoformat(),
+                atime=atime.isoformat(),
+                days_since_access=age_days,
+                file_kind=infer_local_file_kind(str(path_obj)),
+                is_stale=stale_age_days is not None,
+                is_large=int(stat_result.st_size) >= int(large_file_bytes),
+                candidate_reasons=reasons,
+                recommendation=_recommendation(reasons),
+            )
         )
         scanned += 1
         if progress_callback is not None:
@@ -134,26 +140,26 @@ def scan_local_folder(
             errors.append(f"Permission denied: {root}")
 
     quarantine_items = list_quarantine_items(str(root))
-    stats = {
-        "scanned_files": scanned,
-        "visited_files": visited,
-        "total_bytes": sum(safe_int(item.get("size_bytes")) for item in records),
-        "stale_candidates": sum(1 for item in records if item.get("is_stale")),
-        "large_candidates": sum(1 for item in records if item.get("is_large")),
-        "quarantine_files": len(quarantine_items),
-    }
-    return {
-        "path": str(root),
-        "recursive": bool(recursive),
-        "max_files": int(max_files),
-        "stale_days": int(stale_days),
-        "large_file_bytes": int(large_file_bytes),
-        "scanned_at": iso_now(),
-        "elapsed_seconds": round(time.perf_counter() - started, 3),
-        "records": records,
-        "errors": errors[:50],
-        "stats": stats,
-    }
+    stats = FolderScanStats(
+        scanned_files=scanned,
+        visited_files=visited,
+        total_bytes=sum(item.size_bytes for item in records),
+        stale_candidates=sum(1 for item in records if item.is_stale),
+        large_candidates=sum(1 for item in records if item.is_large),
+        quarantine_files=len(quarantine_items),
+    )
+    return FolderScanResult(
+        path=str(root),
+        recursive=bool(recursive),
+        max_files=int(max_files),
+        stale_days=int(stale_days),
+        large_file_bytes=int(large_file_bytes),
+        scanned_at=iso_now(),
+        elapsed_seconds=round(time.perf_counter() - started, 3),
+        records=records,
+        errors=errors[:50],
+        stats=stats,
+    ).to_dict()
 
 
 def run_folder_organizer(
@@ -168,7 +174,7 @@ def run_folder_organizer(
         for item in object_list(scan_result.get("records"))
     }
     operation_id = uuid.uuid4().hex
-    results: list[dict[str, object]] = []
+    results: list[FolderOperationRow] = []
     manifest = load_manifest(root)
     manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
 
@@ -176,17 +182,17 @@ def run_folder_organizer(
         record = records.get(selected_path)
         if not record:
             results.append(
-                {
-                    "original_path": selected_path,
-                    "new_path": None,
-                    "status": "FAILED",
-                    "reason": "Not found in current scan result",
-                    "file_size": 0,
-                    "last_modified": None,
-                    "processed_at": iso_now(),
-                    "error_message": "Selected file is not available in the current scan result.",
-                    "operation_id": operation_id,
-                }
+                FolderOperationRow(
+                    original_path=selected_path,
+                    new_path=None,
+                    status="FAILED",
+                    reason="Not found in current scan result",
+                    file_size=0,
+                    last_modified=None,
+                    processed_at=iso_now(),
+                    error_message="Selected file is not available in the current scan result.",
+                    operation_id=operation_id,
+                )
             )
             continue
 
@@ -196,17 +202,17 @@ def run_folder_organizer(
         last_modified = record.get("mtime")
         if dry_run:
             results.append(
-                {
-                    "original_path": str(original_path),
-                    "new_path": str(quarantine_dir(root) / operation_id / original_path.name),
-                    "status": "SKIPPED",
-                    "reason": reasons,
-                    "file_size": file_size,
-                    "last_modified": last_modified,
-                    "processed_at": iso_now(),
-                    "error_message": "Dry-run preview only.",
-                    "operation_id": operation_id,
-                }
+                FolderOperationRow(
+                    original_path=str(original_path),
+                    new_path=str(quarantine_dir(root) / operation_id / original_path.name),
+                    status="SKIPPED",
+                    reason=reasons,
+                    file_size=file_size,
+                    last_modified=str(last_modified) if last_modified is not None else None,
+                    processed_at=iso_now(),
+                    error_message="Dry-run preview only.",
+                    operation_id=operation_id,
+                )
             )
             continue
 
@@ -234,48 +240,48 @@ def run_folder_organizer(
                 }
             )
             results.append(
-                {
-                    "original_path": str(original_path),
-                    "new_path": str(destination),
-                    "status": "SUCCESS",
-                    "reason": reasons,
-                    "file_size": file_size,
-                    "last_modified": last_modified,
-                    "processed_at": iso_now(),
-                    "error_message": None,
-                    "operation_id": operation_id,
-                }
+                FolderOperationRow(
+                    original_path=str(original_path),
+                    new_path=str(destination),
+                    status="SUCCESS",
+                    reason=reasons,
+                    file_size=file_size,
+                    last_modified=str(last_modified) if last_modified is not None else None,
+                    processed_at=iso_now(),
+                    error_message=None,
+                    operation_id=operation_id,
+                )
             )
         except Exception as exc:
             results.append(
-                {
-                    "original_path": str(original_path),
-                    "new_path": None,
-                    "status": "FAILED",
-                    "reason": reasons,
-                    "file_size": file_size,
-                    "last_modified": last_modified,
-                    "processed_at": iso_now(),
-                    "error_message": str(exc) or type(exc).__name__,
-                    "operation_id": operation_id,
-                }
+                FolderOperationRow(
+                    original_path=str(original_path),
+                    new_path=None,
+                    status="FAILED",
+                    reason=reasons,
+                    file_size=file_size,
+                    last_modified=str(last_modified) if last_modified is not None else None,
+                    processed_at=iso_now(),
+                    error_message=str(exc) or type(exc).__name__,
+                    operation_id=operation_id,
+                )
             )
 
     if not dry_run:
         manifest["items"] = manifest_items
         save_manifest(root, manifest)
 
-    return {
-        "operation_id": operation_id,
-        "dry_run": dry_run,
-        "results": results,
-        "summary": {
-            "selected": len(selected_paths),
-            "success": sum(1 for item in results if item["status"] == "SUCCESS"),
-            "failed": sum(1 for item in results if item["status"] == "FAILED"),
-            "skipped": sum(1 for item in results if item["status"] == "SKIPPED"),
-        },
-    }
+    return FolderOperationResult(
+        operation_id=operation_id,
+        dry_run=dry_run,
+        results=results,
+        summary=FolderOperationSummary(
+            selected=len(selected_paths),
+            success=sum(1 for item in results if item.status == "SUCCESS"),
+            failed=sum(1 for item in results if item.status == "FAILED"),
+            skipped=sum(1 for item in results if item.status == "SKIPPED"),
+        ),
+    ).to_dict()
 
 
 def list_quarantine_items(folder_path: str) -> list[dict[str, object]]:
@@ -294,23 +300,23 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
     manifest = load_manifest(root)
     items = [dict_object(item) for item in object_list(manifest.get("items"))]
     lookup = {str(item.get("quarantine_path")): item for item in items}
-    results: list[dict[str, object]] = []
+    results: list[FolderOperationRow] = []
 
     for quarantine_path in quarantine_paths:
         item = lookup.get(quarantine_path)
         if item is None:
             results.append(
-                {
-                    "original_path": None,
-                    "new_path": None,
-                    "status": "FAILED",
-                    "reason": "Manifest entry not found",
-                    "file_size": 0,
-                    "last_modified": None,
-                    "processed_at": iso_now(),
-                    "error_message": "Manifest entry not found.",
-                    "operation_id": None,
-                }
+                FolderOperationRow(
+                    original_path=None,
+                    new_path=None,
+                    status="FAILED",
+                    reason="Manifest entry not found",
+                    file_size=0,
+                    last_modified=None,
+                    processed_at=iso_now(),
+                    error_message="Manifest entry not found.",
+                    operation_id=None,
+                )
             )
             continue
         source = Path(str(item.get("quarantine_path") or ""))
@@ -325,41 +331,43 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
             item["restored_at"] = iso_now()
             item["restored_path"] = str(destination)
             results.append(
-                {
-                    "original_path": str(original),
-                    "new_path": str(destination),
-                    "status": "SUCCESS",
-                    "reason": item.get("reason"),
-                    "file_size": safe_int(item.get("file_size")),
-                    "last_modified": item.get("last_modified"),
-                    "processed_at": iso_now(),
-                    "error_message": None,
-                    "operation_id": item.get("operation_id"),
-                }
+                FolderOperationRow(
+                    original_path=str(original),
+                    new_path=str(destination),
+                    status="SUCCESS",
+                    reason=str(item.get("reason") or ""),
+                    file_size=safe_int(item.get("file_size")),
+                    last_modified=str(item.get("last_modified") or "") or None,
+                    processed_at=iso_now(),
+                    error_message=None,
+                    operation_id=str(item.get("operation_id") or "") or None,
+                )
             )
         except Exception as exc:
             results.append(
-                {
-                    "original_path": str(original) if item.get("original_path") else None,
-                    "new_path": None,
-                    "status": "FAILED",
-                    "reason": item.get("reason"),
-                    "file_size": safe_int(item.get("file_size")),
-                    "last_modified": item.get("last_modified"),
-                    "processed_at": iso_now(),
-                    "error_message": str(exc) or type(exc).__name__,
-                    "operation_id": item.get("operation_id"),
-                }
+                FolderOperationRow(
+                    original_path=str(original) if item.get("original_path") else None,
+                    new_path=None,
+                    status="FAILED",
+                    reason=str(item.get("reason") or ""),
+                    file_size=safe_int(item.get("file_size")),
+                    last_modified=str(item.get("last_modified") or "") or None,
+                    processed_at=iso_now(),
+                    error_message=str(exc) or type(exc).__name__,
+                    operation_id=str(item.get("operation_id") or "") or None,
+                )
             )
 
     manifest["items"] = items
     save_manifest(root, manifest)
-    return {
-        "results": results,
-        "summary": {
-            "selected": len(quarantine_paths),
-            "success": sum(1 for item in results if item["status"] == "SUCCESS"),
-            "failed": sum(1 for item in results if item["status"] == "FAILED"),
-            "skipped": 0,
-        },
-    }
+    return FolderOperationResult(
+        operation_id=None,
+        dry_run=False,
+        results=results,
+        summary=FolderOperationSummary(
+            selected=len(quarantine_paths),
+            success=sum(1 for item in results if item.status == "SUCCESS"),
+            failed=sum(1 for item in results if item.status == "FAILED"),
+            skipped=0,
+        ),
+    ).to_dict()

@@ -31,6 +31,7 @@ RELEASE_ALLOWLIST = [
     "storage_manager.py",
     "folder_models.py",
     "folder_organizer.py",
+    "folder_service.py",
     "folder_report.py",
     "report_exports.py",
     "ui_common.py",

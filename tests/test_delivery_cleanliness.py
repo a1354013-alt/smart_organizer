@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 import zipfile
 from pathlib import Path
 
@@ -85,3 +87,28 @@ def test_release_zip_excludes_forbidden_paths(tmp_path: Path):
             assert not any(token in name for name in names), f"forbidden zip entry matched: {fragment}"
         else:
             assert not any(token in [part for part in name.split("/") if part] for name in names), f"forbidden zip entry matched: {fragment}"
+
+
+def test_release_zip_extracts_and_app_main_imports(tmp_path: Path):
+    zip_path = build_zip(tmp_path / "release", "smoke-check.zip")
+    extract_dir = tmp_path / "unzipped"
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(extract_dir)
+
+    extracted_app_main = extract_dir / "app_main.py"
+    extracted_app = extract_dir / "app.py"
+    assert extracted_app_main.exists()
+    assert extracted_app.exists()
+
+    source = extracted_app_main.read_text(encoding="utf-8")
+    compile(source, str(extracted_app_main), "exec")
+
+    spec = importlib.util.spec_from_file_location("release_smoke_app_main", extracted_app_main)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(extract_dir))
+    try:
+        spec.loader.exec_module(module)
+        assert hasattr(module, "main")
+    finally:
+        sys.path = [entry for entry in sys.path if entry != str(extract_dir)]
