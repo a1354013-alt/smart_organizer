@@ -5,19 +5,20 @@ from typing import cast
 
 import streamlit as st
 
+from folder_models import human_bytes, safe_int
+from folder_organizer import (
+    list_quarantine_items,
+    restore_quarantined_items,
+    run_folder_organizer,
+    scan_local_folder,
+)
+from folder_report import export_folder_report_csv, export_folder_report_markdown
 from ui_common import (
     UIContext,
     card_close,
     card_open,
-    export_folder_report_markdown,
     handle_ui_exception,
-    human_bytes,
     is_debug,
-    list_quarantine_items,
-    _safe_int,
-    restore_quarantined_items,
-    run_folder_organizer,
-    scan_local_folder,
 )
 from ui_renderers import render_dependency_status
 from version import APP_NAME, APP_TITLE, __version__
@@ -171,10 +172,10 @@ def render_home(context: UIContext) -> None:
 
     scan_options_obj = st.session_state.get("folder_scan_options")
     scan_options = cast(dict[str, object], scan_options_obj) if isinstance(scan_options_obj, dict) else {}
-    stale_days = _safe_int(scan_options.get("stale_days", 365))
+    stale_days = safe_int(scan_options.get("stale_days", 365))
     recursive = bool(scan_options.get("recursive", True))
-    max_files = _safe_int(scan_options.get("max_files", 5000))
-    large_file_bytes = _safe_int(scan_options.get("large_file_bytes", 250 * 1024 * 1024))
+    max_files = safe_int(scan_options.get("max_files", 5000))
+    large_file_bytes = safe_int(scan_options.get("large_file_bytes", 250 * 1024 * 1024))
 
     col_main, col_side = st.columns([2, 1], gap="large")
     with col_main:
@@ -236,7 +237,7 @@ def render_home(context: UIContext) -> None:
             metric_cols = st.columns(5)
             metrics = [
                 (stats.get("scanned_files", 0), "Scanned files"),
-                (human_bytes(_safe_int(stats.get("total_bytes"))), "Total size"),
+                (human_bytes(safe_int(stats.get("total_bytes"))), "Total size"),
                 (stats.get("stale_candidates", 0), "Stale candidates"),
                 (stats.get("large_candidates", 0), "Large file candidates"),
                 (len(quarantine_items), "Quarantine items"),
@@ -294,6 +295,15 @@ def render_home(context: UIContext) -> None:
                 report_payload,
                 file_name="smart-organizer-report.md",
                 mime="text/markdown",
+            )
+            st.download_button(
+                "Export CSV report",
+                export_folder_report_csv(
+                    st.session_state.get("folder_scan") or scan,
+                    st.session_state.get("folder_operation_result"),
+                ),
+                file_name="smart-organizer-report.csv",
+                mime="text/csv",
             )
 
             st.subheader("Dashboard")

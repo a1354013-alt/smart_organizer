@@ -9,6 +9,7 @@ Smart Organizer is a Streamlit app for safe file organization demos. It supports
 - `core.py`, `core_utils.py`, `core_classification.py`, `core_processor.py`: metadata extraction, classification, OCR/PDF/video helpers.
 - `services.py`, `services_models.py`, `services_analysis.py`, `services_review.py`, `services_finalize.py`: upload analysis, review confirmation, and finalize flows.
 - `storage.py`, `storage_base.py`, `storage_schema.py`, `storage_repository.py`, `storage_recovery.py`, `storage_search.py`, `storage_cleanup.py`, `storage_manager.py`: persistence, search, recovery, and storage safety helpers.
+- `folder_models.py`, `folder_organizer.py`, `folder_report.py`, `report_exports.py`: non-UI folder cleanup and report services.
 - `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`: UI helpers and Streamlit screens.
 
 Supporting runtime modules also included in the official release zip:
@@ -27,7 +28,7 @@ Supporting runtime modules also included in the official release zip:
 4. Preview results with dry-run.
 5. Move selected files to `.smart_organizer_quarantine/`.
 6. Restore quarantined files later if needed.
-7. Export a Markdown cleanup report.
+7. Export Markdown or CSV cleanup reports.
 
 Each cleanup action records:
 
@@ -53,7 +54,7 @@ streamlit run app.py
 python -m compileall -q .
 python -m pytest -q
 ruff check .
-mypy .
+mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py folder_models.py folder_organizer.py folder_report.py report_exports.py ui_common.py ui_home.py ui_records.py
 ```
 
 ## Official release package
@@ -91,6 +92,10 @@ The official release zip is built from a strict allowlist. Runtime files include
 - `storage_search.py`
 - `storage_cleanup.py`
 - `storage_manager.py`
+- `folder_models.py`
+- `folder_organizer.py`
+- `folder_report.py`
+- `report_exports.py`
 - `ui_common.py`
 - `ui_state.py`
 - `ui_home.py`
@@ -104,6 +109,7 @@ The official release zip is built from a strict allowlist. Runtime files include
 - `README.md`
 - `RELEASE_PACKAGING.md`
 - `RUN_RELEASE.md`
+- `docs/KNOWN_LIMITATIONS.md`
 - `async_processor.py`
 - `contracts.py`
 - `frontend_safety.py`

@@ -9,6 +9,8 @@ from typing import Any, cast
 
 import pytest
 
+from storage import StorageManager
+
 # 讓 `pytest -q` 在專案根目錄可直接執行，不需手動設定 PYTHONPATH。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -117,3 +119,20 @@ def pytest_sessionfinish(session, exitstatus):
             time.sleep(0.25)
         except FileNotFoundError:
             return
+
+
+@pytest.fixture(autouse=True)
+def _close_storage_managers(monkeypatch):
+    created: list[StorageManager] = []
+    original_init = StorageManager.__init__
+
+    def tracked_init(self, db_path: str, repo_root: str, upload_dir: str):
+        original_init(self, db_path, repo_root, upload_dir)
+        created.append(self)
+
+    monkeypatch.setattr(StorageManager, "__init__", tracked_init)
+    try:
+        yield
+    finally:
+        for storage in reversed(created):
+            storage.close()

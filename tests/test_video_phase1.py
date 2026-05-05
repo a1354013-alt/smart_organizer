@@ -37,7 +37,8 @@ def test_extract_video_metadata_uses_timeout(monkeypatch, tmp_path: Path):
             stderr="",
         )
 
-    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", True)
+    core_processor.is_ffmpeg_available.cache_clear()
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: True)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     metadata = processor._extract_video_metadata(str(video_path), timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
@@ -58,7 +59,8 @@ def test_generate_video_thumbnail_timeout_returns_clean_error(monkeypatch, tmp_p
     processor = FileProcessor()
     preview_path = tmp_path / "preview.jpg"
 
-    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", True)
+    core_processor.is_ffmpeg_available.cache_clear()
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: True)
     monkeypatch.setattr(
         core_processor.FileUtils,
         "build_preview_path",
@@ -90,7 +92,8 @@ def test_extract_metadata_gracefully_falls_back_without_ffmpeg(monkeypatch, tmp_
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake-video")
     processor = FileProcessor()
-    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", False)
+    core_processor.is_ffmpeg_available.cache_clear()
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: False)
 
     metadata = processor.extract_metadata(str(video_path))
 
@@ -98,6 +101,26 @@ def test_extract_metadata_gracefully_falls_back_without_ffmpeg(monkeypatch, tmp_
     assert metadata["video"]["media_type"] == "video"
     assert metadata["preview_path"] is None
     assert metadata["video"]["ffprobe_error"] is not None
+
+
+def test_core_processor_import_does_not_run_ffmpeg_detection(monkeypatch):
+    import importlib
+    import sys
+
+    original_run = subprocess.run
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not execute during import")
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    sys.modules.pop("core_processor", None)
+    try:
+        reloaded = importlib.import_module("core_processor")
+        assert hasattr(reloaded, "is_ffmpeg_available")
+    finally:
+        monkeypatch.setattr(subprocess, "run", original_run)
+        sys.modules.pop("core_processor", None)
+        importlib.import_module("core_processor")
 
 
 def test_video_duplicate_detection_still_works(tmp_path: Path):

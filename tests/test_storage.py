@@ -108,3 +108,10 @@ def test_migration_failure_aborts_startup():
 
         with pytest.raises(RuntimeError):
             StorageManager(db_path, ":memory:", ":memory:")
+
+
+def test_close_is_idempotent():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+
+    storage.close()
+    storage.close()

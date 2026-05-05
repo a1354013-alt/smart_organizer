@@ -54,6 +54,16 @@ class StorageBase:
                 logger.warning("in-memory keepalive connection failed: %s", e)
                 self._keepalive_conn = None
 
+    def close(self) -> None:
+        keepalive = self._keepalive_conn
+        self._keepalive_conn = None
+        if keepalive is None:
+            return
+        try:
+            keepalive.close()
+        except Exception:
+            logger.debug("keepalive close failed", exc_info=True)
+
     def _get_connection(self, timeout: int = 30000) -> sqlite3.Connection:
         try:
             conn = sqlite3.connect(self.db_path, timeout=timeout / 1000, uri=self._db_uri)

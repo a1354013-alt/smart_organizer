@@ -5,8 +5,9 @@ import math
 
 import streamlit as st
 
+from report_exports import export_records_csv, export_records_markdown
 from services import reclassify_record
-from ui_common import UIContext, export_records_csv, export_records_markdown, handle_ui_exception
+from ui_common import UIContext, handle_ui_exception
 
 logger = logging.getLogger(__name__)
 

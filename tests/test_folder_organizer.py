@@ -1,14 +1,10 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
-from ui_common import (
-    export_folder_report_markdown,
-    list_quarantine_items,
-    restore_quarantined_items,
-    run_folder_organizer,
-    scan_local_folder,
-)
+from folder_organizer import list_quarantine_items, restore_quarantined_items, run_folder_organizer, scan_local_folder
+from folder_report import export_folder_report_csv, export_folder_report_markdown
 
 
 def test_scan_local_folder_marks_stale_and_large_candidates(tmp_path: Path):
@@ -63,3 +59,12 @@ def test_quarantine_move_restore_and_report(tmp_path: Path):
     report = export_folder_report_markdown(scan, moved)
     assert "Smart Organizer Report" in report
     assert "report.pdf" in report
+
+    csv_payload = export_folder_report_csv(scan, moved)
+    assert csv_payload.startswith(b"\xef\xbb\xbf")
+    decoded = csv_payload.decode("utf-8-sig")
+    rows = list(csv.DictReader(decoded.splitlines()))
+    assert rows
+    assert rows[0]["scan_path"] == str(tmp_path)
+    assert rows[0]["status"] == "SUCCESS"
+    assert rows[0]["operation_id"] == moved["operation_id"]
