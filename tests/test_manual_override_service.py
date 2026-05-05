@@ -77,3 +77,38 @@ def test_generate_summary_suggestion_uses_service_boundary():
 
     assert suggestion.summary == "short summary"
     assert suggestion.llm_tags == ["invoice"]
+
+
+def test_apply_manual_topic_override_preserves_analysis_diagnostics():
+    processor = FileProcessor()
+    original_topic = DOCUMENT_TAGS[0]
+    chosen_topic = DOCUMENT_TAGS[1]
+    result = AnalysisResult(
+        file_id=3,
+        original_name="invoice.pdf",
+        file_type="document",
+        standard_date="2026-01-01",
+        main_topic=original_topic,
+        suggested_main_topic=original_topic,
+        tag_scores={original_topic: 1.0},
+        classification_reason="rule",
+        final_decision_reason="rule decision",
+        metadata=_metadata(),
+        preview_path=None,
+        is_scanned=False,
+        analysis_status="PARTIAL",
+        last_error="timeout",
+        step_timings={"extract": 1.2},
+    )
+
+    updated = apply_manual_topic_override(
+        result,
+        processor=processor,
+        chosen_topic=chosen_topic,
+    )
+
+    assert updated.main_topic == chosen_topic
+    assert updated.manual_override is True
+    assert updated.analysis_status == "PARTIAL"
+    assert updated.last_error == "timeout"
+    assert updated.step_timings == {"extract": 1.2}

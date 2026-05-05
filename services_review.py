@@ -25,9 +25,9 @@ def apply_manual_topic_override(
     chosen_topic = chosen_topic or result.main_topic
     manual = bool(chosen_topic and chosen_topic != suggested)
     reason = (
-        f"手動覆寫：選擇「{chosen_topic}」（規則建議「{suggested}」）"
+        f"Manual override from '{suggested}' to '{chosen_topic}'."
         if manual
-        else "系統預設決策"
+        else "User confirmed the suggested topic without changes."
     )
 
     synced = processor.sync_manual_topic(chosen_topic, result.tag_scores, result.file_type)
@@ -47,6 +47,9 @@ def apply_manual_topic_override(
         is_scanned=result.is_scanned,
         summary=summary if summary is not None else result.summary,
         manual_override=manual,
+        analysis_status=result.analysis_status,
+        last_error=result.last_error,
+        step_timings=dict(result.step_timings or {}) or None,
     )
     logger.info(
         "apply_manual_topic_override%s",

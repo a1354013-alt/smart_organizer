@@ -44,9 +44,10 @@ class AnalysisResult:
 @dataclass(frozen=True, slots=True)
 class ExecutionResult:
     original_name: str
-    status: str  # "SUCCESS" | "FAILED"
+    status: str  # "SUCCESS" | "FAILED" | "SKIPPED"
     new_path: str | None = None
     file_id: int | None = None
+    error_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,4 +61,3 @@ class BatchAnalysisOutcome:
     results: list[AnalysisResult]
     duplicates: list[DuplicateInfo]
     errors: list[str]
-

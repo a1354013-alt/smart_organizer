@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import core_processor
 from core import FileProcessor, FileUtils, VIDEO_TAGS, VIDEO_TOOL_TIMEOUT_SECONDS
+from services import UploadedFileData, analyze_one_upload
 from storage import StorageManager
 
 
@@ -112,3 +113,26 @@ def test_video_duplicate_detection_still_works(tmp_path: Path):
     created = storage.create_temp_file("test_video.mp4", content, file_hash, "video")
 
     assert created["success"] is True
+
+
+def test_analyze_one_upload_infers_video_from_extension_without_video_mime(tmp_path: Path):
+    db_path = str(tmp_path / "test.db")
+    repo_root = str(tmp_path / "repo")
+    upload_dir = str(tmp_path / "uploads")
+    storage = StorageManager(db_path, repo_root, upload_dir)
+    processor = FileProcessor()
+    uploaded = UploadedFileData(name="clip.webm", content=b"video-bytes", mime_type="application/octet-stream")
+
+    analyzed, dup, err = analyze_one_upload(
+        uploaded,
+        processor=processor,
+        storage=storage,
+        processing_options={"enable_ocr": False, "enable_pdf_preview": False},
+    )
+
+    assert dup is None
+    assert err is None
+    assert analyzed is not None
+    stored = storage.get_file_by_id(analyzed.file_id)
+    assert stored is not None
+    assert stored["file_type"] == "video"

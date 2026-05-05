@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Iterable, Mapping, Any
+from typing import Any, Callable, Iterable, Mapping
 
 from contracts import validate_extracted_metadata
 from core import FileProcessor
@@ -68,14 +68,31 @@ def finalize_one_file(result: AnalysisResult, *, storage: StorageManager) -> Exe
             "finalize_one_file success%s",
             _log_context(file_id=result.file_id, original_name=result.original_name, status="SUCCESS", path=new_path),
         )
-        return ExecutionResult(original_name=result.original_name, status="SUCCESS", new_path=new_path)
-    except Exception:
+        return ExecutionResult(
+            original_name=result.original_name,
+            status="SUCCESS",
+            new_path=new_path,
+            file_id=result.file_id,
+        )
+    except Exception as exc:
+        error_message = str(exc) or type(exc).__name__
         logger.error(
             "finalize_one_file failed%s",
-            _log_context(file_id=result.file_id, original_name=result.original_name, status="FAILED"),
+            _log_context(
+                file_id=result.file_id,
+                original_name=result.original_name,
+                status="FAILED",
+                error_message=error_message,
+            ),
             exc_info=True,
         )
-        return ExecutionResult(original_name=result.original_name, status="FAILED", file_id=result.file_id, new_path=None)
+        return ExecutionResult(
+            original_name=result.original_name,
+            status="FAILED",
+            file_id=result.file_id,
+            new_path=None,
+            error_message=error_message,
+        )
 
 
 def finalize_batch(
@@ -97,7 +114,7 @@ def finalize_batch(
         _log_context(
             files=total,
             success=sum(1 for item in execution_results if item.status == "SUCCESS"),
-            failed=sum(1 for item in execution_results if item.status != "SUCCESS"),
+            failed=sum(1 for item in execution_results if item.status == "FAILED"),
         ),
     )
     return execution_results
@@ -131,7 +148,7 @@ def reclassify_record(
             "is_scanned": metadata.get("is_scanned") or False,
             "preview_path": metadata.get("preview_path"),
             "classification_reason": reason,
-            "final_decision_reason": "重新分類（規則引擎）",
+            "final_decision_reason": "Reclassified from current file contents and metadata.",
             "manual_override": False,
             "decision_source": "RULE_RECLASSIFY",
             "tag_scores": tag_scores,

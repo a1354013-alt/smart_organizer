@@ -16,6 +16,7 @@ UI_MODULES = {
 def test_app_main_importable():
     module = importlib.import_module("app_main")
     assert module is not None
+    assert hasattr(module, "main")
 
 
 def test_ui_modules_importable_and_render_functions_exist():

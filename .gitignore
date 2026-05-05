@@ -24,6 +24,7 @@ tmp_test_write/
 .venv/
 venv/
 node_modules/
+logs/
 
 # Build artifacts
 dist/
@@ -37,6 +38,13 @@ target/
 uploads/
 repo/
 .compileall_cache/
+previews/
+tmp/
+tmp_*/
+*.onnx
+*.pt
+*.pth
+*.bin
 
 # Editors
 .vscode/

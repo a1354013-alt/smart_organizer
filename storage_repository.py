@@ -35,20 +35,20 @@ class StorageRepositoryMixin:
         payload = self._normalize_uploaded_bytes(file_content)
 
         if not safe_name.strip():
-            raise ValueError("檔名不可為空")
+            raise ValueError("Filename is required")
         if ext not in FileUtils.ALLOWED_UPLOAD_EXTENSIONS:
-            raise ValueError(f"不支援的檔案格式: {ext or 'unknown'}")
+            raise ValueError(f"Unsupported upload extension: {ext or 'unknown'}")
         if not payload:
-            raise ValueError("檔案不可為空")
+            raise ValueError("Uploaded file is empty")
         if len(payload) > MAX_UPLOAD_BYTES:
-            raise ValueError(f"檔案大小超過上傳硬限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+            raise ValueError(f"File exceeds upload limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
 
         if ext == ".pdf" and not payload.startswith(b"%PDF-"):
-            raise ValueError("PDF 檔案簽章不正確")
+            raise ValueError("Invalid PDF signature")
         if ext == ".png" and not payload.startswith(b"\x89PNG\r\n\x1a\n"):
-            raise ValueError("PNG 檔案簽章不正確")
+            raise ValueError("Invalid PNG signature")
         if ext in {".jpg", ".jpeg"} and not payload.startswith(b"\xff\xd8\xff"):
-            raise ValueError("JPEG 檔案簽章不正確")
+            raise ValueError("Invalid JPEG signature")
 
         return original_name, safe_name, payload
 
@@ -89,7 +89,7 @@ class StorageRepositoryMixin:
             return "photo"
         if ext == ".pdf":
             return "document"
-        if ext in {".mp4", ".mov", ".mkv"}:
+        if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
             return "video"
         if provided in {"photo", "document", "video"}:
             return str(provided)
@@ -127,13 +127,13 @@ class StorageRepositoryMixin:
             elif isinstance(temp_path, Path) and not temp_path.exists():
                 try:
                     assert part_path is not None
-                    with open(part_path, "wb") as f:
-                        f.write(payload)
+                    with open(part_path, "wb") as file_obj:
+                        file_obj.write(payload)
                     os.replace(part_path, temp_path)
-                except PermissionError as e:
-                    logger.warning("os.replace 失敗，改用直接寫入 temp_path: %s", e)
-                    with open(temp_path, "wb") as f:
-                        f.write(payload)
+                except PermissionError as exc:
+                    logger.warning("os.replace failed, falling back to direct write: %s", exc)
+                    with open(temp_path, "wb") as file_obj:
+                        file_obj.write(payload)
                     if part_path and part_path.exists():
                         try:
                             os.remove(part_path)
@@ -147,9 +147,9 @@ class StorageRepositoryMixin:
                         cursor.execute("BEGIN IMMEDIATE")
                         begin_err = None
                         break
-                    except sqlite3.OperationalError as oe:
-                        begin_err = oe
-                        if "locked" in str(oe).lower():
+                    except sqlite3.OperationalError as exc:
+                        begin_err = exc
+                        if "locked" in str(exc).lower():
                             time.sleep(0.01 * (attempt + 1))
                             continue
                         raise
@@ -200,18 +200,18 @@ class StorageRepositoryMixin:
                         except Exception:
                             pass
                 return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
-        except Exception as e:
+        except Exception as exc:
             logger.error(
-                "建立暫存檔案失敗%s: %s",
+                "create_temp_file failed%s: %s",
                 _log_context(original_name=uploaded_file_name, file_hash=str(file_hash)[:8]),
-                e,
+                exc,
             )
             if part_path and part_path.exists():
                 try:
                     os.remove(part_path)
                 except Exception:
                     pass
-            return {"success": False, "reason": "ERROR", "message": str(e)}
+            return {"success": False, "reason": "ERROR", "message": str(exc)}
         finally:
             if conn:
                 conn.close()
@@ -226,8 +226,8 @@ class StorageRepositoryMixin:
             if row:
                 return row[0] if row[0] else row[1]
             return None
-        except Exception as e:
-            logger.error("獲取檔案路徑失敗: %s", e)
+        except Exception as exc:
+            logger.error("get_file_path failed: %s", exc)
             return None
         finally:
             if conn:
@@ -242,8 +242,8 @@ class StorageRepositoryMixin:
             cursor.execute("SELECT * FROM files WHERE file_id = ?", (file_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
-        except Exception as e:
-            logger.error("獲取檔案資訊失敗: %s", e)
+        except Exception as exc:
+            logger.error("get_file_by_id failed: %s", exc)
             return None
         finally:
             if conn:
@@ -344,11 +344,11 @@ class StorageRepositoryMixin:
                     preview_path=preview_path,
                 ),
             )
-        except Exception as e:
+        except Exception as exc:
             logger.error(
-                "更新中繼資料失敗%s: %s",
+                "update_file_metadata failed%s: %s",
                 _log_context(file_id=file_id, main_topic=main_topic, decision_source=decision_source),
-                e,
+                exc,
             )
             raise
         finally:
@@ -363,34 +363,113 @@ class StorageRepositoryMixin:
             merged_tags = self._merge_main_topic_into_tags(main_topic or "", tags_with_confidence)
             self._replace_file_tags(cursor, file_id, merged_tags)
             conn.commit()
-        except Exception as e:
-            logger.error("添加標籤失敗: %s", e)
+        except Exception as exc:
+            logger.error("add_tags_to_file failed: %s", exc)
             raise
         finally:
             if conn:
                 conn.close()
 
     def get_all_records(self: Any):
+        return self.get_records_page(limit=500, offset=0)["items"]
+
+    def get_record_filter_values(self: Any) -> dict[str, list[str]]:
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            values: dict[str, list[str]] = {}
+            for field in ("status", "main_topic", "file_type"):
+                cursor.execute(
+                    f"SELECT DISTINCT COALESCE({field}, '') FROM files WHERE COALESCE({field}, '') <> '' ORDER BY {field}"
+                )
+                values[field] = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+            return values
+        except Exception as exc:
+            logger.error("get_record_filter_values failed: %s", exc)
+            return {"status": [], "main_topic": [], "file_type": []}
+        finally:
+            if conn:
+                conn.close()
+
+    def get_records_page(
+        self: Any,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        status: str | None = None,
+        main_topic: str | None = None,
+        file_type: str | None = None,
+        search: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, object]:
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
+
+            where_parts: list[str] = []
+            params: list[object] = []
+
+            if status:
+                where_parts.append("f.status = ?")
+                params.append(status)
+            if main_topic:
+                where_parts.append("f.main_topic = ?")
+                params.append(main_topic)
+            if file_type:
+                where_parts.append("f.file_type = ?")
+                params.append(file_type)
+            if search:
+                like = f"%{search.strip()}%"
+                where_parts.append(
+                    "(f.original_name LIKE ? OR COALESCE(f.main_topic, '') LIKE ? OR COALESCE(f.summary, '') LIKE ?)"
+                )
+                params.extend([like, like, like])
+            if date_from:
+                where_parts.append("date(f.created_at) >= date(?)")
+                params.append(date_from)
+            if date_to:
+                where_parts.append("date(f.created_at) <= date(?)")
+                params.append(date_to)
+
+            where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
             cursor.execute(
-                """
-                SELECT f.*, GROUP_CONCAT(t.tag_name) as all_tags
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT f.file_id
+                    FROM files f
+                    LEFT JOIN file_tags ft ON f.file_id = ft.file_id
+                    LEFT JOIN tags t ON ft.tag_id = t.tag_id
+                    {where_sql}
+                    GROUP BY f.file_id
+                )
+                """,
+                tuple(params),
+            )
+            total = int(cursor.fetchone()[0])
+
+            query_params = [*params, int(limit), int(offset)]
+            cursor.execute(
+                f"""
+                SELECT f.*, GROUP_CONCAT(t.tag_name) AS all_tags
                 FROM files f
                 LEFT JOIN file_tags ft ON f.file_id = ft.file_id
                 LEFT JOIN tags t ON ft.tag_id = t.tag_id
+                {where_sql}
                 GROUP BY f.file_id
-                ORDER BY f.created_at DESC
-                """
+                ORDER BY f.created_at DESC, f.file_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(query_params),
             )
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error("獲取紀錄失敗: %s", e)
-            return []
+            return {"items": [dict(row) for row in cursor.fetchall()], "total": total}
+        except Exception as exc:
+            logger.error("get_records_page failed: %s", exc)
+            return {"items": [], "total": 0}
         finally:
             if conn:
                 conn.close()

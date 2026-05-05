@@ -1,121 +1,139 @@
 # Smart Organizer (v2.8.4)
 
-Smart Organizer 是一個以 Streamlit 為介面的檔案整理工具，支援上傳分析、預覽確認、執行整理、搜尋與整理紀錄查詢。專案保留規則分類、PDF/OCR、影片 metadata/縮圖與 crash-safe finalize 流程。
+Smart Organizer is a Streamlit app for safe file organization demos. It supports upload-based review for PDFs, images, and videos, and it now centers the homepage around a safer folder-cleanup workflow: scan a folder, identify stale or large-file candidates, preview actions with dry-run, move selected files into quarantine, and restore them later if needed.
 
-## UI 架構
+## App structure
 
-- `app_main.py`：Streamlit 入口，負責 page config、初始化服務、session state、sidebar 與 tabs 掛載。
-- `ui_home.py`：首頁與 sidebar。
-- `ui_upload.py`：上傳分析。
-- `ui_review.py`：預覽確認。
-- `ui_execute.py`：執行整理。
-- `ui_search.py`：搜尋。
-- `ui_records.py`：整理紀錄。
-- `ui_common.py`：共用 UI helper、CSS、folder scan helper、`UIContext`。
-- `ui_state.py`：`session_state` 初始化與 review state reset。
+- `app.py`: stable `streamlit run app.py` entrypoint.
+- `app_main.py`: defines `main()` and wires Streamlit tabs without import side effects.
+- `core.py`, `core_utils.py`, `core_classification.py`, `core_processor.py`: metadata extraction, classification, OCR/PDF/video helpers.
+- `services.py`, `services_models.py`, `services_analysis.py`, `services_review.py`, `services_finalize.py`: upload analysis, review confirmation, and finalize flows.
+- `storage.py`, `storage_base.py`, `storage_schema.py`, `storage_repository.py`, `storage_recovery.py`, `storage_search.py`, `storage_cleanup.py`, `storage_manager.py`: persistence, search, recovery, and storage safety helpers.
+- `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`: UI helpers and Streamlit screens.
 
-## 主要模組
+Supporting runtime modules also included in the official release zip:
 
-- `core.py` / `core_processor.py`：metadata 擷取、OCR、影片工具整合、分類規則。
-- `services.py` 與 `services_*`：上傳分析、確認流程、整理執行。
-- `storage.py` 與 `storage_*`：暫存檔、資料庫、搜尋索引、finalize/recovery。
-- `create_release_zip.ps1`：runtime/demo release zip allowlist 打包腳本。
+- `async_processor.py`
+- `contracts.py`
+- `frontend_safety.py`
+- `logging_config.py`
+- `version.py`
 
-## 安裝
+## Main portfolio workflow
+
+1. Scan a target folder from the homepage.
+2. Review stale-file and large-file candidates.
+3. Select files to handle.
+4. Preview results with dry-run.
+5. Move selected files to `.smart_organizer_quarantine/`.
+6. Restore quarantined files later if needed.
+7. Export a Markdown cleanup report.
+
+Each cleanup action records:
+
+- original path
+- new quarantine path
+- processed time
+- file size
+- last modified time
+- success / failed / skipped status
+- failure reason when available
+
+## Run locally
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
-```
-
-## 執行
-
-```bash
 streamlit run app.py
 ```
 
-## 測試指令
-
-```bash
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
-```
-
-常用驗收：
+## Validate
 
 ```bash
 python -m compileall -q .
 python -m pytest -q
-python -m ruff check .
-python -m mypy .
+ruff check .
+mypy .
 ```
 
-## 確認流程
+## Official release package
 
-`ui_review.py` 會在按下「確認無誤，進行整理」時呼叫：
+Create the runtime/demo zip with:
 
-```python
-build_confirmed_results(
-    analysis_results,
-    processor=processor,
-    selected_topics=selected_topics,
-    summaries=st.session_state.review_summaries,
-)
+```bash
+python scripts/create_release_zip.py
 ```
 
-`services_review.build_confirmed_results(...)` 會套用：
-
-- 使用者選定的主題
-- review 階段產生或輸入的摘要
-- `manual_override` 與同步後的 `tag_scores`
-
-產出的 `AnalysisResult` 結構可直接交給 `finalize_batch(...)` 進入 execute flow。
-
-## 影片處理
-
-- `VIDEO_TOOL_TIMEOUT_SECONDS` 集中管理 ffmpeg/ffprobe timeout，預設 10 秒。
-- 若 ffmpeg/ffprobe 不存在，影片 metadata 與縮圖流程會優雅 fallback，不會卡住整個分析流程。
-- 影片測試以 mock `subprocess.run(...)` 為主，避免依賴長時間真實影片處理。
-
-## 交付前檢查
-
-交付內容不可包含：
-
-- `tmp_test_write/`
-- `__pycache__/`
-- `*.pyc`
-- `*.pyc.*`
-- `.pytest_cache/`
-- `.ruff_cache/`
-- `.mypy_cache/`
-
-另外也應排除：
-
-- `uploads/`
-- `repo/`
-- `dist/`
-- `build/`
-- `*.db`
-- `*.sqlite`
-- `*.sqlite3`
-- `*.log`
-- `.env`
-- `.env.*`
-
-對應規則已寫入：
-
-- `.gitignore`
-- `.gitattributes`
-- `tests/test_delivery_cleanliness.py`
-- `create_release_zip.ps1`
-
-## Release
-
-建立 runtime/demo zip：
+or on Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1
 ```
 
-腳本採 allowlist 打包，只包含執行 UI 與核心流程所需檔案，並支援相對或絕對 `OutputDir`。
+The official release zip is built from a strict allowlist. Runtime files included:
+
+- `app.py`
+- `app_main.py`
+- `core.py`
+- `core_utils.py`
+- `core_classification.py`
+- `core_processor.py`
+- `services.py`
+- `services_models.py`
+- `services_analysis.py`
+- `services_review.py`
+- `services_finalize.py`
+- `storage.py`
+- `storage_base.py`
+- `storage_schema.py`
+- `storage_repository.py`
+- `storage_recovery.py`
+- `storage_search.py`
+- `storage_cleanup.py`
+- `storage_manager.py`
+- `ui_common.py`
+- `ui_state.py`
+- `ui_home.py`
+- `ui_upload.py`
+- `ui_review.py`
+- `ui_execute.py`
+- `ui_search.py`
+- `ui_records.py`
+- `ui_renderers.py`
+- `requirements.txt`
+- `README.md`
+- `RELEASE_PACKAGING.md`
+- `RUN_RELEASE.md`
+- `async_processor.py`
+- `contracts.py`
+- `frontend_safety.py`
+- `logging_config.py`
+- `version.py`
+
+The release zip must not include workspace-only content such as:
+
+- `.git/`
+- `__pycache__/`
+- `.pytest_cache/`
+- `.mypy_cache/`
+- `.ruff_cache/`
+- `.venv/`
+- `venv/`
+- `uploads/`
+- `repo/`
+- `previews/`
+- `tmp/` and `tmp_*`
+- `logs/`
+- `dist/`
+- `build/`
+- `node_modules/`
+- `*.pyc`
+- `*.db`
+- `*.sqlite`
+- `*.sqlite3`
+- large model files such as `*.onnx`, `*.pt`, `*.pth`, `*.bin`
+- test temp artifacts such as `tests/_tmp*/`
+
+## Known limitations
+
+Detailed limitations are documented in [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).

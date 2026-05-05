@@ -4,6 +4,7 @@ from pathlib import Path
 def test_official_release_zip_does_not_include_tests_allowlist():
     """The official runtime/demo zip must stay on a strict allowlist."""
     ps1 = Path("create_release_zip.ps1").read_text(encoding="utf-8-sig")
+    py_script = Path("scripts/create_release_zip.py").read_text(encoding="utf-8")
 
     assert '"tests"' not in ps1
     assert '"pytest.ini"' not in ps1
@@ -40,6 +41,7 @@ def test_official_release_zip_does_not_include_tests_allowlist():
         '"ui_search.py"',
         '"ui_records.py"',
         '"ui_renderers.py"',
+        '"RELEASE_PACKAGING.md"',
         '"version.py"',
         '"contracts.py"',
         '"README.md"',
@@ -47,6 +49,7 @@ def test_official_release_zip_does_not_include_tests_allowlist():
         '"requirements.txt"',
     ]:
         assert required in ps1
+        assert required.replace('"', "'") in py_script or required in py_script
 
     assert '"docs"' not in ps1
     assert "smart_file_organizer_plan.md" not in ps1
