@@ -24,6 +24,7 @@ tmp_test_write/
 .venv/
 venv/
 node_modules/
+logs/
 
 # Build artifacts
 dist/
@@ -34,9 +35,20 @@ target/
 .ruff_cache/
 
 # Runtime artifacts (local runs)
+release/
+release_ci*/
+*.zip
 uploads/
 repo/
+smart_organizer.db
 .compileall_cache/
+previews/
+tmp/
+tmp_*/
+*.onnx
+*.pt
+*.pth
+*.bin
 
 # Editors
 .vscode/
@@ -54,3 +66,4 @@ htmlcov/
 
 # PyTest
 .pytest_cache/
+.pytest_runtime_tmp*/

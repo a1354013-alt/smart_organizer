@@ -4,11 +4,12 @@ import datetime
 import hashlib
 import logging
 import os
-import time
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from functools import lru_cache
 from types import ModuleType
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from contracts import ExtractedMetadata, FileType, VideoMetadata, validate_extracted_metadata
 from core_classification import classify_multi_tag as _classify_multi_tag
@@ -22,7 +23,8 @@ try:
     Image = _Image
 except Exception:  # pragma: no cover
     Image = None
-exifread_module: Optional[ModuleType] = None
+
+exifread_module: ModuleType | None = None
 try:
     import exifread as _exifread
 
@@ -38,7 +40,7 @@ try:
 except Exception:  # pragma: no cover
     PdfReader = None
 
-convert_from_path_fn: Optional[Callable[..., Any]] = None
+convert_from_path_fn: Callable[..., Any] | None = None
 try:
     from pdf2image import convert_from_path as _convert_from_path
 
@@ -63,6 +65,8 @@ except Exception:  # pragma: no cover
     OpenAI = None
 
 VIDEO_TOOL_TIMEOUT_SECONDS = max(1, int(os.getenv("VIDEO_TOOL_TIMEOUT_SECONDS", "10")))
+
+logger = logging.getLogger(__name__)
 
 
 def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None):
@@ -93,15 +97,15 @@ def get_ffmpeg_available(*, refresh: bool = False) -> bool:
         FFMPEG_AVAILABLE = _detect_ffmpeg_available()
     return bool(FFMPEG_AVAILABLE)
 
-logger = logging.getLogger(__name__)
+@lru_cache(maxsize=1)
+def is_ffmpeg_available() -> bool:
+    return _detect_ffmpeg_available()
 
 
 class FileProcessor:
     def __init__(self):
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        self.openai_timeout_seconds = self._read_int_env(
-            "OPENAI_TIMEOUT_SECONDS", 30, min_value=5, max_value=120
-        )
+        self.openai_timeout_seconds = self._read_int_env("OPENAI_TIMEOUT_SECONDS", 30, min_value=5, max_value=120)
         self.poppler_path = (os.getenv("POPPLER_PATH") or "").strip() or None
         self.pdf_preview_max_pages = self._read_int_env("PDF_PREVIEW_MAX_PAGES", 1, min_value=1, max_value=10)
         self.pdf_ocr_max_pages = self._read_int_env("PDF_OCR_MAX_PAGES", 3, min_value=1, max_value=10)
@@ -115,14 +119,14 @@ class FileProcessor:
     def _read_int_env(self, key, default, min_value=None, max_value=None):
         raw = os.getenv(key, "")
         try:
-            v = int(str(raw).strip())
+            value = int(str(raw).strip())
         except Exception:
-            v = int(default)
+            value = int(default)
         if min_value is not None:
-            v = max(int(min_value), v)
+            value = max(int(min_value), value)
         if max_value is not None:
-            v = min(int(max_value), v)
-        return v
+            value = min(int(max_value), value)
+        return value
 
     def get_dependency_status(self):
         python_deps = {
@@ -145,10 +149,9 @@ class FileProcessor:
         if hasattr(file_path, "read"):
             data = file_path.read()
         else:
-            with open(str(file_path), "rb") as f:
-                data = f.read()
+            with open(str(file_path), "rb") as handle:
+                data = handle.read()
         return hashlib.sha256(data).hexdigest()
-
 
     def extract_metadata(self, file_path, options=None) -> ExtractedMetadata:
         options = options or {}
@@ -180,14 +183,13 @@ class FileProcessor:
 
         extracted_text = ""
         is_scanned = False
-        preview_path = None
-        ocr_error = None
+        preview_path: str | None = None
+        ocr_error: str | None = None
         notes: list[str] = []
         video: VideoMetadata | None = None
 
         standard_date = self._get_file_mtime(file_path)
-
-        file_size_bytes: int | None = None
+        file_size_bytes: int | None
         try:
             file_size_bytes = int(os.path.getsize(file_path))
         except Exception:
@@ -209,8 +211,8 @@ class FileProcessor:
 
         if file_type == "video":
             if not heavy_allowed:
-                notes.append("檔案過大，已跳過影片 metadata 提取與縮圖產生")
-                video = {"media_type": "video"}  
+                notes.append("Video metadata and thumbnail were skipped because the file exceeds the heavy-file limit.")
+                video = {"media_type": "video"}
             else:
                 meta_timeout = int(options.get("video_metadata_timeout_seconds") or self.video_tool_timeout_seconds)
                 thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or self.video_tool_timeout_seconds)
@@ -221,16 +223,11 @@ class FileProcessor:
                 video = video_meta
 
                 started = time.perf_counter()
-                thumb, thumb_error = self._generate_video_thumbnail(
-                    file_path,
-                    thumb_percent=0.5,
-                    timeout_seconds=thumb_timeout,
-                )
+                thumb, thumb_error = self._generate_video_thumbnail(file_path, thumb_percent=0.5, timeout_seconds=thumb_timeout)
                 _record("video_thumbnail", started)
-
                 if thumb:
                     preview_path = thumb
-                elif thumb_error and isinstance(video_meta, dict):
+                elif thumb_error:
                     video_meta["thumbnail_error"] = thumb_error
 
         if file_type == "document" and ext == ".pdf":
@@ -238,7 +235,7 @@ class FileProcessor:
             enable_ocr = bool(options.get("enable_ocr", False))
 
             if not heavy_allowed:
-                notes.append("檔案過大，已跳過 PDF 文字抽取 / 預覽 / OCR（可於側邊欄調整耗時處理上限）")
+                notes.append("PDF text extraction, preview generation, and OCR were skipped because the file exceeds the heavy-file limit.")
             else:
                 text_timeout = int(options.get("pdf_text_timeout_seconds") or 10)
                 text_pages = max(1, int(options.get("pdf_text_max_pages") or 3))
@@ -246,17 +243,16 @@ class FileProcessor:
                 started = time.perf_counter()
                 ok, text_value, err = self._extract_pdf_text_with_timeout(
                     file_path,
-                    max_pages=int(text_pages),
+                    max_pages=text_pages,
                     timeout_seconds=text_timeout,
                 )
                 _record("pdf_text", started)
-
                 if ok and isinstance(text_value, str):
                     extracted_text = text_value
                 elif err == "timeout":
-                    notes.append("PDF 文字抽取逾時，已跳過")
+                    notes.append("PDF text extraction timed out.")
                 else:
-                    notes.append(f"PDF 文字抽取失敗，已跳過（{err or 'unknown'}）")
+                    notes.append(f"PDF text extraction failed: {err or 'unknown'}")
 
                 if enable_pdf_preview:
                     preview_timeout = int(options.get("pdf_preview_timeout_seconds") or 10)
@@ -269,40 +265,35 @@ class FileProcessor:
                     )
                     _record("pdf_preview", started)
                     if not preview_path:
-                        notes.append("PDF 預覽產生失敗或逾時，已跳過")
+                        notes.append("PDF preview generation failed or timed out.")
                 else:
-                    notes.append("PDF 預覽已停用（預設）")
+                    notes.append("PDF preview generation is disabled.")
 
                 if enable_ocr:
                     ocr_timeout = int(options.get("ocr_timeout_seconds") or 15)
                     ocr_pages = max(1, int(options.get("pdf_ocr_max_pages") or self.pdf_ocr_max_pages))
                     started = time.perf_counter()
-                    ocr_text, ocr_err = self._ocr_pdf_sample(
-                        file_path,
-                        max_pages=ocr_pages,
-                        timeout_seconds=ocr_timeout,
-                    )
+                    ocr_text, ocr_err = self._ocr_pdf_sample(file_path, max_pages=ocr_pages, timeout_seconds=ocr_timeout)
                     _record("ocr_pdf", started)
-
                     if ocr_text and len(ocr_text.strip()) > 10:
                         is_scanned = True
                         extracted_text = (extracted_text + "\n" + ocr_text).strip()
                     elif ocr_err:
                         ocr_error = ocr_err
-                        notes.append(f"OCR 失敗或逾時，已跳過（{ocr_err}）")
+                        notes.append(f"PDF OCR failed: {ocr_err}")
                 else:
-                    notes.append("OCR 已停用")
-                    ocr_error = "OCR 已停用（設定）。"
-                    if not (extracted_text or "").strip():
+                    notes.append("OCR is disabled.")
+                    ocr_error = "OCR is disabled."
+                    if not extracted_text.strip():
                         is_scanned = True
 
-        if file_type == "photo" and options.get("enable_ocr", False):
+        if file_type == "photo" and bool(options.get("enable_ocr", False)):
             try:
                 extracted_text = self._ocr_image(file_path) or extracted_text
-            except Exception as e:
-                ocr_error = str(e)
-        elif file_type == "photo" and not options.get("enable_ocr", False):
-            notes.append("OCR 已停用")
+            except Exception as exc:
+                ocr_error = str(exc)
+        elif file_type == "photo":
+            notes.append("OCR is disabled.")
 
         metadata: ExtractedMetadata = {
             "file_type": file_type,
@@ -317,17 +308,15 @@ class FileProcessor:
             metadata["video"] = video
         return validate_extracted_metadata(metadata)
 
-
     def _ocr_image(self, file_path):
         if pytesseract is None or Image is None:
             return ""
         try:
-            img = Image.open(file_path)
-            return pytesseract.image_to_string(img, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")) or ""
-        except Exception as e:
-            logger.error(f"OCR 圖片失敗: {e}")
+            image = Image.open(file_path)
+            return pytesseract.image_to_string(image, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")) or ""
+        except Exception as exc:
+            logger.error("Image OCR failed: %s", exc)
             return ""
-
 
     def _generate_pdf_preview(self, file_path, max_pages=1, timeout_seconds: int = 10):
         if convert_from_path_fn is None:
@@ -335,7 +324,6 @@ class FileProcessor:
         try:
             preview_path = FileUtils.build_preview_path(file_path)
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
-
             if not os.path.exists(preview_path):
                 images = convert_from_path_fn(
                     file_path,
@@ -347,30 +335,29 @@ class FileProcessor:
                 if images:
                     images[0].save(preview_path, "PNG")
             return preview_path
-        except Exception as e:
-            logger.error("PDF preview failed: %s", e)
+        except Exception as exc:
+            logger.error("PDF preview failed: %s", exc)
             return None
-
 
     def _get_photo_date(self, file_path):
         try:
             if exifread_module is None:
                 return None
-            with open(file_path, "rb") as f:
-                tags = exifread_module.process_file(f, stop_tag="DateTimeOriginal")
+            with open(file_path, "rb") as handle:
+                tags = exifread_module.process_file(handle, stop_tag="DateTimeOriginal")
                 if "EXIF DateTimeOriginal" in tags:
                     date_str = str(tags["EXIF DateTimeOriginal"])
                     return FileUtils.normalize_standard_date(date_str.split(" ")[0].replace(":", "-"))
-        except Exception as e:
-            logger.debug(f"EXIF 讀取失敗: {e}")
+        except Exception as exc:
+            logger.debug("EXIF date read failed: %s", exc)
         return None
 
     def _get_file_mtime(self, file_path):
         try:
             mtime = os.path.getmtime(file_path)
             return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        except Exception as e:
-            logger.error(f"獲取修改時間失敗: {e}")
+        except Exception as exc:
+            logger.error("File mtime read failed: %s", exc)
             return datetime.datetime.now().strftime("%Y-%m-%d")
 
     def _extract_video_metadata(self, file_path: str, timeout_seconds: int = 10) -> VideoMetadata:
@@ -387,8 +374,8 @@ class FileProcessor:
             "ffprobe_error": None,
         }
 
-        if not get_ffmpeg_available():
-            result["ffprobe_error"] = "ffprobe 不可用，無法解析影片 metadata"
+        if not is_ffmpeg_available():
+            result["ffprobe_error"] = "ffprobe is unavailable; video metadata could not be collected."
             return result
 
         try:
@@ -399,23 +386,13 @@ class FileProcessor:
                 result["file_size"] = os.path.getsize(file_path)
             except Exception:
                 pass
-
             try:
                 mtime = os.path.getmtime(file_path)
                 result["modified_at"] = datetime.datetime.fromtimestamp(mtime).isoformat()
             except Exception:
                 pass
 
-            cmd = [
-                "ffprobe",
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_streams",
-                "-show_format",
-                file_path,
-            ]
+            cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", file_path]
             try:
                 proc = _run_video_subprocess(cmd, timeout_seconds=timeout_seconds)
                 if proc.returncode != 0:
@@ -426,49 +403,43 @@ class FileProcessor:
                 fmt = data.get("format") or {}
                 streams = data.get("streams") or []
 
-                try:
-                    dur = fmt.get("duration")
-                    if dur is not None:
-                        result["duration_seconds"] = float(dur)
-                except Exception:
-                    pass
-
-                vstream = None
-                for s in streams:
-                    if (s.get("codec_type") or "") == "video":
-                        vstream = s
-                        break
-                if vstream:
-                    result["width"] = vstream.get("width")
-                    result["height"] = vstream.get("height")
-                    result["video_codec"] = vstream.get("codec_name")
+                duration = fmt.get("duration")
+                if duration is not None:
                     try:
-                        fr = vstream.get("r_frame_rate") or ""
-                        if isinstance(fr, str) and "/" in fr:
-                            a, b = fr.split("/", 1)
-                            result["fps"] = float(a) / float(b) if float(b) else None
+                        result["duration_seconds"] = float(duration)
                     except Exception:
                         pass
+
+                video_stream = next((stream for stream in streams if (stream.get("codec_type") or "") == "video"), None)
+                if isinstance(video_stream, dict):
+                    result["width"] = video_stream.get("width")
+                    result["height"] = video_stream.get("height")
+                    result["video_codec"] = video_stream.get("codec_name")
+                    frame_rate = video_stream.get("r_frame_rate") or ""
+                    if isinstance(frame_rate, str) and "/" in frame_rate:
+                        try:
+                            numerator, denominator = frame_rate.split("/", 1)
+                            result["fps"] = float(numerator) / float(denominator) if float(denominator) else None
+                        except Exception:
+                            pass
             except subprocess.TimeoutExpired:
-                result["ffprobe_error"] = f"ffprobe 執行逾時 ({timeout_seconds}s)"
-            except Exception as e:
-                result["ffprobe_error"] = f"ffprobe 執行錯誤: {str(e)}"
-            
-            return result
-        except Exception as e:
-            result["ffprobe_error"] = str(e)
-            return result
+                result["ffprobe_error"] = f"ffprobe timed out after {timeout_seconds}s"
+            except Exception as exc:
+                result["ffprobe_error"] = f"ffprobe failed: {exc}"
+        except Exception as exc:
+            result["ffprobe_error"] = str(exc)
+        return result
 
     def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5, timeout_seconds: int = 10) -> tuple[str | None, str | None]:
-        if not get_ffmpeg_available():
-            return None, "ffmpeg 不可用，無法產生影片縮圖"
+        del thumb_percent  # Phase 1 keeps a fixed thumbnail extraction strategy.
+        if not is_ffmpeg_available():
+            return None, "ffmpeg is unavailable; thumbnail generation was skipped."
         try:
             import subprocess
 
             base_preview_path = FileUtils.build_preview_path(file_path)
             preview_path = os.path.splitext(base_preview_path)[0] + ".jpg"
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
-
             cmd = [
                 "ffmpeg",
                 "-y",
@@ -486,28 +457,20 @@ class FileProcessor:
                 proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)), text=True)
                 if os.path.exists(preview_path):
                     return preview_path, None
-
                 stderr = (proc.stderr or "").strip()
                 if stderr:
                     return None, stderr[:200]
-                return None, "縮圖產生失敗（ffmpeg 未輸出錯誤訊息）"
+                return None, "ffmpeg finished without creating a thumbnail."
             except subprocess.TimeoutExpired:
-                return None, f"ffmpeg 縮圖產生逾時 ({timeout_seconds}s)"
-            except Exception as e:
-                return None, f"ffmpeg 執行錯誤: {str(e)[:200]}"
-        except Exception as e:
-            return None, str(e)[:200]
+                return None, f"ffmpeg thumbnail generation timeout after {timeout_seconds}s"
+            except Exception as exc:
+                return None, f"ffmpeg failed: {str(exc)[:200]}"
+        except Exception as exc:
+            return None, str(exc)[:200]
 
-    def _extract_pdf_text_with_timeout(
-        self,
-        file_path: str,
-        *,
-        max_pages: int,
-        timeout_seconds: int,
-    ) -> tuple[bool, str | None, str | None]:
+    def _extract_pdf_text_with_timeout(self, file_path: str, *, max_pages: int, timeout_seconds: int) -> tuple[bool, str | None, str | None]:
         if PdfReader is None:
             return True, "", None
-
         executor = ThreadPoolExecutor(max_workers=1)
         future = executor.submit(self._extract_pdf_text, file_path, max_pages=max_pages)
         try:
@@ -515,8 +478,8 @@ class FileProcessor:
             return True, str(value or ""), None
         except FutureTimeoutError:
             return False, None, "timeout"
-        except Exception as e:
-            return False, None, f"{type(e).__name__}: {e}"
+        except Exception as exc:
+            return False, None, f"{type(exc).__name__}: {exc}"
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -525,22 +488,19 @@ class FileProcessor:
             return ""
         try:
             reader = PdfReader(file_path)
-            texts = []
-            pages = reader.pages
-            if max_pages:
-                pages = pages[: int(max_pages)]
-            for p in pages:
+            pages = reader.pages[: int(max_pages)] if max_pages else reader.pages
+            texts: list[str] = []
+            for page in pages:
                 try:
-                    t = p.extract_text()
+                    text = page.extract_text()
                 except Exception:
-                    t = None
-                if t:
-                    texts.append(t)
+                    text = None
+                if text:
+                    texts.append(text)
             return "\n".join(texts)
-        except Exception as e:
-            logger.error(f"PDF 文字擷取失敗: {e}")
+        except Exception as exc:
+            logger.error("PDF text extraction failed: %s", exc)
             return ""
-
 
     def _ocr_pdf_sample(self, file_path, max_pages=3, timeout_seconds: int = 15) -> tuple[str, str | None]:
         if convert_from_path_fn is None or pytesseract is None:
@@ -555,39 +515,38 @@ class FileProcessor:
                 timeout=max(1, int(timeout_seconds or 15)),
             )
             parts: list[str] = []
-            for img in images:
+            for image in images:
                 try:
                     remaining = max(1, int(deadline - time.perf_counter()))
                     parts.append(
                         pytesseract.image_to_string(
-                            img,
+                            image,
                             lang=os.getenv("TESSERACT_LANG", "chi_tra+eng"),
                             timeout=remaining,
                         )
                     )
                 except Exception:
                     continue
-            return "\n".join([p for p in parts if p]), None
-        except Exception as e:
-            logger.error("PDF OCR failed: %s", e)
-            return "", str(e)[:200]
-
+            return "\n".join([part for part in parts if part]), None
+        except Exception as exc:
+            logger.error("PDF OCR failed: %s", exc)
+            return "", str(exc)[:200]
 
     def get_llm_summary(self, text, file_type, enabled=False):
         note = None
         if not enabled:
             return None, []
         if OpenAI is None:
-            return "OpenAI SDK 不可用，請確認 requirements 與環境。", []
+            return "OpenAI SDK is unavailable. Install the optional dependency to enable AI summaries.", []
 
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key:
-            return "未設定 OPENAI_API_KEY，AI 功能未啟用。", []
+            return "OPENAI_API_KEY is not configured, so AI summaries are disabled.", []
 
         max_chars = int(os.getenv("LLM_TRUNCATE_CHARS") or FileUtils.DEFAULT_LLM_TRUNCATE_CHARS)
         truncated, was_truncated = FileUtils.truncate_text(text, max_chars)
         if was_truncated:
-            note = f"（已截斷內容至 {max_chars} 字元）"
+            note = f"Input was truncated to {max_chars} characters before sending it to the AI service."
 
         try:
             import json
@@ -609,28 +568,21 @@ class FileProcessor:
                 timeout=self.openai_timeout_seconds,
             )
             content = (response.choices[0].message.content or "").strip()
-        except Exception:
-            logger.error("LLM 摘要呼叫失敗", exc_info=True)
-            return "AI 摘要暫時不可用，請稍後再試。", []
-
-        try:
-            import json
-
             result = json.loads(content)
-            summary = str(result.get("summary", "")).strip() or "（AI 未提供摘要）"
+            summary = str(result.get("summary", "")).strip() or "AI returned an empty summary."
             tags = result.get("tags", []) or []
             if not isinstance(tags, list):
                 tags = []
-            tags = [str(t).strip() for t in tags if str(t).strip()][:10]
-            if note and summary and note not in summary:
+            normalized_tags = [str(tag).strip() for tag in tags if str(tag).strip()][:10]
+            if note and note not in summary:
                 summary = f"{summary} {note}"
-            return summary, tags
+            return summary, normalized_tags
         except Exception:
-            logger.warning("AI 回應 JSON 解析失敗（已改用保守提示）", exc_info=True)
-            msg = "AI 回應格式異常（JSON 解析失敗），請稍後再試。"
+            logger.error("LLM summary generation failed", exc_info=True)
+            message = "AI summary generation failed. Please review the logs for details."
             if note:
-                msg = f"{msg} {note}"
-            return msg, []
+                message = f"{message} {note}"
+            return message, []
 
     def classify_multi_tag(self, metadata, original_name, return_reason=False):
         return _classify_multi_tag(metadata, original_name, return_reason=return_reason)

@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 def render_execute(context: UIContext) -> None:
-    st.header("執行整理")
+    st.header("Execute Organization")
     confirmed_results = st.session_state.get("confirmed_results")
     if not confirmed_results:
-        st.info("請先在「預覽確認」完成確認。")
+        st.info("Confirm reviewed items first, then run the organization step here.")
         return
-    if not st.button("開始整理", key="execute_button"):
+    if not st.button("Organize confirmed files", key="execute_button"):
         return
 
     progress_bar = st.progress(0)
@@ -25,7 +25,7 @@ def render_execute(context: UIContext) -> None:
 
     def on_execute_progress(index: int, total: int, result: AnalysisResult) -> None:
         progress_bar.progress(index / total)
-        status_text.text(f"整理中 {index}/{total} - {result.original_name}")
+        status_text.text(f"Organizing {index}/{total}: {result.original_name}")
 
     try:
         execution_results = finalize_batch(
@@ -34,7 +34,7 @@ def render_execute(context: UIContext) -> None:
             progress_callback=on_execute_progress,
         )
         progress_bar.progress(1.0)
-        status_text.text("整理完成")
+        status_text.text("Organization completed.")
         st.session_state.execution_results = execution_results
         st.session_state.analysis_results = []
         st.session_state.confirmed_results = []
@@ -44,7 +44,8 @@ def render_execute(context: UIContext) -> None:
             if result.status == "SUCCESS":
                 st.success(f"{result.original_name} -> {result.new_path}")
             else:
-                st.error(f"{result.original_name} 整理失敗")
+                detail = f": {result.error_message}" if result.error_message else ""
+                st.error(f"{result.original_name} failed{detail}")
     except Exception as exc:
         logger.exception("render_execute failed")
-        handle_ui_exception("執行整理失敗。", exc)
+        handle_ui_exception("Execution failed.", exc)

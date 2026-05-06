@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import time
 from typing import Any, Callable, Iterable, Mapping
 
@@ -13,10 +14,22 @@ from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo,
 
 logger = logging.getLogger(__name__)
 
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
 
 def _log_context(**fields: object) -> str:
     parts = [f"{key}={value}" for key, value in fields.items() if value not in (None, "", [])]
     return f" [{', '.join(parts)}]" if parts else ""
+
+
+def _infer_file_type_hint(uploaded: UploadedFileData) -> str:
+    mime_type = (uploaded.mime_type or "").lower()
+    suffix = os.path.splitext(uploaded.name or "")[1].lower()
+    if mime_type.startswith("image"):
+        return "photo"
+    if mime_type.startswith("video") or suffix in VIDEO_EXTENSIONS:
+        return "video"
+    return "document"
 
 
 def analyze_one_upload(
@@ -26,19 +39,14 @@ def analyze_one_upload(
     storage: StorageManager,
     processing_options: Mapping[str, Any] | None = None,
 ) -> tuple[AnalysisResult | None, DuplicateInfo | None, str | None]:
-    """Analyze one uploaded file.
-
-    Design goals:
-    - Never block the whole batch for a single slow/broken file.
-    - Always return an AnalysisResult once a temp file is created, even if some steps fail.
-    """
+    """Analyze one uploaded file without breaking the whole batch."""
     step_timings: dict[str, float] = {}
     analysis_status = "OK"
     last_error: str | None = None
 
     try:
         file_hash = processor.get_file_hash(io.BytesIO(uploaded.content))
-        file_type_hint = "photo" if (uploaded.mime_type or "").startswith("image") else "document"
+        file_type_hint = _infer_file_type_hint(uploaded)
 
         created = storage.create_temp_file(uploaded.name, uploaded.content, file_hash, file_type_hint)
         if not created.get("success"):
@@ -51,7 +59,7 @@ def analyze_one_upload(
                             filename=uploaded.name,
                             status="COMPLETED",
                             final_path=str(created.get("final_path") or ""),
-                            display=f"{uploaded.name} (已整理)",
+                            display=f"{uploaded.name} (already organized)",
                         ),
                         None,
                     )
@@ -60,16 +68,16 @@ def analyze_one_upload(
                     DuplicateInfo(
                         filename=uploaded.name,
                         status="PENDING",
-                        display=f"{uploaded.name} (待分析)",
+                        display=f"{uploaded.name} (already queued)",
                     ),
                     None,
                 )
-            return None, None, f"建立暫存檔失敗: {uploaded.name}"
+            return None, None, f"Failed to create temp file for {uploaded.name}"
 
         file_id = int(created["file_id"])
         temp_path = storage.get_file_path(file_id)
         if not temp_path:
-            return None, None, f"無法取得暫存路徑: {uploaded.name}"
+            return None, None, f"Temporary path missing for {uploaded.name}"
 
         options = dict(processing_options or {})
         options.setdefault("enable_pdf_preview", False)
@@ -85,9 +93,9 @@ def analyze_one_upload(
         started = time.perf_counter()
         try:
             metadata = validate_extracted_metadata(processor.extract_metadata(temp_path, options))
-        except Exception as e:
+        except Exception as exc:
             analysis_status = "PARTIAL"
-            last_error = f"extract_metadata failed: {type(e).__name__}: {e}"
+            last_error = f"extract_metadata failed: {type(exc).__name__}: {exc}"
             metadata = validate_extracted_metadata(
                 {
                     "file_type": file_type_hint,
@@ -108,23 +116,21 @@ def analyze_one_upload(
                 uploaded.name,
                 return_reason=True,
             )
-        except Exception as e:
+        except Exception as exc:
             analysis_status = "PARTIAL"
-            err = f"classify failed: {type(e).__name__}: {e}"
+            err = f"classify failed: {type(exc).__name__}: {exc}"
             last_error = err if not last_error else f"{last_error} | {err}"
             if metadata.get("file_type") == "photo":
-                main_topic = "其他照片"
+                main_topic = "Photos"
             elif metadata.get("file_type") == "video":
-                main_topic = "Unclassified"
+                main_topic = "Videos"
             else:
-                main_topic = "未分類"
+                main_topic = "Documents"
             tag_scores = {}
             classification_reason = err
 
         notes = metadata.get("notes")
-        if isinstance(notes, list) and any(
-            (isinstance(n, str) and ("失敗" in n or "逾時" in n)) for n in notes
-        ):
+        if isinstance(notes, list) and any(isinstance(n, str) and ("timeout" in n.lower() or "fallback" in n.lower()) for n in notes):
             if analysis_status == "OK":
                 analysis_status = "WARNING"
 
@@ -138,7 +144,7 @@ def analyze_one_upload(
                 suggested_main_topic=main_topic,
                 tag_scores=dict(tag_scores or {}),
                 classification_reason=classification_reason or "",
-                final_decision_reason="系統已根據目前資訊自動判定分類。",
+                final_decision_reason="Auto-classified from metadata and filename signals.",
                 metadata=metadata,
                 preview_path=metadata.get("preview_path"),
                 is_scanned=bool(metadata.get("is_scanned", False)),
@@ -151,7 +157,7 @@ def analyze_one_upload(
         )
     except Exception:
         logger.error("analyze_one_upload failed%s", _log_context(original_name=uploaded.name), exc_info=True)
-        return None, None, f"分析失敗: {uploaded.name}"
+        return None, None, f"Analysis failed for {uploaded.name}"
 
 
 def analyze_upload_batch(
@@ -220,23 +226,23 @@ def analyze_upload_batch_async(
                 storage=storage,
                 processing_options=processing_options,
             )
-        except Exception as e:  # pragma: no cover
-            return None, None, f"{uploaded.name}: {e}"
+        except Exception as exc:  # pragma: no cover
+            return None, None, f"{uploaded.name}: {exc}"
 
-    def on_progress(progress: ProgressState):
+    def on_progress(progress: ProgressState) -> None:
         if progress_callback:
             progress_callback(progress.current, progress.total)
         for error_info in progress.errors[-1:]:
             logger.warning("Async processing error: %s - %s", error_info["file"], error_info["error"])
 
-    outcomes = async_proc.process_batch(
+    batch_result = async_proc.process_batch(
         items=upload_list,
         process_fn=process_single,
         progress_callback=on_progress,
-        item_name="檔案",
+        item_name="upload",
     )
 
-    for outcome in outcomes:
+    for outcome in batch_result.results:
         if outcome is None:
             errors.append("Async processing failed: empty outcome")
             continue
@@ -247,9 +253,21 @@ def analyze_upload_batch_async(
             duplicates.append(dup)
         if err is not None:
             errors.append(err)
+    if batch_result.cancelled:
+        errors.append(
+            "Async processing cancelled "
+            f"(completed={batch_result.completed_count}, skipped={batch_result.skipped_count}, failed={batch_result.failed_count})."
+        )
 
     logger.info(
         "analyze_upload_batch_async done%s",
-        _log_context(files=total, analyzed=len(results), duplicates=len(duplicates), errors=len(errors)),
+        _log_context(
+            files=total,
+            analyzed=len(results),
+            duplicates=len(duplicates),
+            errors=len(errors),
+            cancelled=batch_result.cancelled,
+            skipped=batch_result.skipped_count,
+        ),
     )
     return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)

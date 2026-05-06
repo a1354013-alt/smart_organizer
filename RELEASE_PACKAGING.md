@@ -1,68 +1,79 @@
 # Release Packaging
 
-Do not create the final delivery zip by compressing the whole working folder directly.
+Do not zip the whole workspace directly.
 
-Use the PowerShell packaging script instead:
+Use one of these official packaging commands instead:
+
+```bash
+python scripts/create_release_zip.py
+```
 
 ```powershell
 .\create_release_zip.ps1
 ```
 
-The release zip is created from an **allowlist** (not a blocklist). Only these paths are included:
+## Runtime/demo allowlist
 
-- `app.py`
-- `app_main.py`
-- `core.py`
-- `core_utils.py`
-- `core_classification.py`
-- `core_processor.py`
-- `services.py`
-- `services_models.py`
-- `services_analysis.py`
-- `services_review.py`
-- `services_finalize.py`
-- `async_processor.py`
-- `storage.py`
-- `storage_base.py`
-- `storage_schema.py`
-- `storage_repository.py`
-- `storage_recovery.py`
-- `storage_search.py`
-- `storage_cleanup.py`
-- `storage_manager.py`
-- `logging_config.py`
-- `ui_renderers.py`
-- `version.py`
-- `contracts.py`
-- `README.md`
-- `RUN_RELEASE.md`
-- `requirements.txt`
+The official release zip is built from the allowlist in `scripts/create_release_zip.py`.
 
-This is an **official runtime/demo package** and intentionally **does not include tests**.
-It also intentionally excludes workspace artifacts such as `.git/`, `.venv/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `*.pyc`, `*.db`, `release/`, `.pytest_cache/`, temp folders, etc.
+It includes these runtime categories:
 
-This zip is a **runtime/demo package**, not a source-development package.
+- app entry: `app.py`, `app_main.py`
+- core/storage/config: `core*.py`, `storage*.py`, `config.py`
+- UI modules: `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`
+- folder organizer modules: `folder_models.py`, `folder_organizer.py`, `folder_service.py`, `folder_report.py`
+- report export modules: `report_exports.py`
+- docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`
+- requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
-By default, the zip file name includes `runtime-demo` to reduce the chance that a workspace snapshot is mistaken for the official release.
-It also includes the project version from `version.py` (single source of truth) to keep delivery artifacts traceable.
+This is an official runtime/demo package. It intentionally does not include tests, CI files, development configs, or workspace snapshots.
 
-The script also refuses to package folders (directories) to avoid accidentally including `tests/` or other workspace trees.
+## Forbidden paths
 
-After unpacking, install and run:
+These must stay out of the release zip:
+
+- `.git/`
+- `release/`
+- `release_ci*/`
+- `*.zip`
+- `__pycache__/`
+- `.pytest_cache/`
+- `.mypy_cache/`
+- `.ruff_cache/`
+- `.venv/`
+- `venv/`
+- `uploads/`
+- `repo/`
+- `previews/`
+- `tmp/`
+- `tmp_*`
+- `logs/`
+- `dist/`
+- `build/`
+- `node_modules/`
+- `*.pyc`
+- `*.db`
+- `*.sqlite`
+- `*.sqlite3`
+- `.coverage`
+- `htmlcov/`
+- large model files such as `*.onnx`, `*.pt`, `*.pth`, `*.bin`
+- test temporary directories such as `tests/_tmp*/`
+
+## Verification
+
+The packaging policy is enforced by:
+
+- `scripts/create_release_zip.py`
+- `create_release_zip.ps1` (delegates to the Python script only)
+- `tests/test_delivery_cleanliness.py`
+- `tests/test_release_packaging_policy.py`
+- `tests/test_release_hygiene.py`
+
+After unpacking the release zip:
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-To run tests, use the source repo (not the release zip):
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-ruff check .
-mypy version.py contracts.py services.py services_models.py services_analysis.py services_review.py services_finalize.py core.py core_utils.py core_classification.py core_processor.py storage.py storage_base.py storage_schema.py storage_repository.py storage_recovery.py storage_search.py storage_cleanup.py storage_manager.py async_processor.py
-```
-
-After unpacking the official zip, follow `RUN_RELEASE.md` for runtime/demo startup steps.
-Do not treat the release zip as a replacement for the full source repository.

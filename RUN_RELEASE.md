@@ -1,7 +1,6 @@
 # Run Release Package
 
-This document is only for the official runtime/demo release package.
-It is not a source-repo development guide.
+This document applies to the official Smart Organizer runtime/demo release zip. It is for running the packaged app, not for source-repo development work.
 
 ## 1. Build the release zip from the source repository
 
@@ -19,20 +18,45 @@ python scripts/create_release_zip.py
 
 What this does:
 
-- Creates an official runtime/demo zip from the source repo allowlist.
+- Creates the official runtime/demo zip from the source repo allowlist.
 - Excludes tests, CI files, development tooling, and packaging-only assets.
+- Verifies that the generated zip does not contain forbidden entries.
 
 What this does not do:
 
 - It does not prepare the extracted runtime zip to be repackaged again.
-- It does not copy `scripts/` or other source-only tooling into the runtime package.
+- It does not copy `scripts/`, tests, or other source-only tooling into the runtime package.
 
-## 2. Run the extracted release zip
+## 2. Files included
+
+The release zip is built from the allowlist in `scripts/create_release_zip.py`.
+
+Key runtime groups:
+
+- app entry: `app.py`, `app_main.py`
+- core/storage/config: `core*.py`, `storage*.py`, `config.py`
+- UI modules: `ui_*.py`
+- folder organizer/report modules: `folder_*.py`, `report_exports.py`
+- docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
+
+Not included:
+
+- `tests/`
+- `.github/workflows/`
+- `.git/`
+- `.venv/`
+- `uploads/`
+- `repo/`
+- `previews/`
+- cache, build, temp, database, and generated zip artifacts
+
+## 3. Run the extracted release zip
 
 After extracting the official release zip, use it only as a runtime/demo package:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
@@ -42,7 +66,7 @@ The release zip is intended for:
 - starting the Streamlit app
 - running a quick smoke test of the packaged app
 
-## 3. Commands that must not be run inside the extracted release zip
+## 4. Commands that must not be run inside the extracted release zip
 
 These commands belong to the source repository, not the runtime package:
 
@@ -58,25 +82,26 @@ Why:
 - the official release zip does not include tests or dev dependencies
 - the official release zip is a runtime/demo package, not a packaging toolchain
 
-## 4. Verify that the release zip is usable
+## 5. Required system dependencies
+
+- `streamlit` is required to start the app.
+- `poppler` is needed for PDF preview generation.
+- `tesseract` is needed for OCR.
+- `ffmpeg` and `ffprobe` are needed for video metadata and thumbnails.
+
+If these tools are missing, the app still starts and falls back where possible.
+
+## 6. Safety expectations
+
+- Folder cleanup uses quarantine by default.
+- The homepage never permanently deletes files automatically.
+- Restore writes a safe non-overwriting filename if the original path is already occupied.
+
+## 7. Verify that the release zip is usable
 
 Recommended smoke test after extraction:
 
 1. Install runtime dependencies.
 2. Start the app with `streamlit run app.py`.
 3. Confirm the app opens successfully.
-4. Confirm a basic upload or UI navigation flow works.
-
-## Included runtime files
-
-The official release zip contains only runtime files required to launch the app.
-It does not include tests, CI config, `requirements-dev.txt`, `pyproject.toml`, or source-only packaging tooling.
-
-## Required system dependencies
-
-- `streamlit` is required to start the app.
-- `poppler` is required for PDF preview.
-- `tesseract` is required for OCR.
-- `ffmpeg` and `ffprobe` are required for video metadata and video thumbnails.
-
-If `poppler`, `tesseract`, `ffmpeg`, or `ffprobe` is missing, the app still starts and the affected feature degrades gracefully.
+4. Confirm a basic upload flow or folder-cleanup UI flow works.

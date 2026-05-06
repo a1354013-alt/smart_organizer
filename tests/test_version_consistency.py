@@ -19,5 +19,5 @@ def test_version_is_single_source_and_consistent():
     assert "APP_TITLE" in app_py, "App should render version from version.py"
 
     ps1 = Path("create_release_zip.ps1").read_text(encoding="utf-8-sig")
-    assert "version.py" in ps1, "Release script must include version.py"
-    assert "Get-ProjectVersion" in ps1, "Release zip naming must read version from version.py"
+    assert "scripts\\create_release_zip.py" in ps1, "Release script should delegate to the Python packager"
+    assert "$includePaths" not in ps1, "Release policy should not be duplicated in PowerShell"

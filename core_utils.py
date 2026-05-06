@@ -12,8 +12,8 @@ class FileUtils:
     DEFAULT_UNKNOWN_DATE = "UnknownDate"
     DEFAULT_UNKNOWN_YEAR = "UnknownYear"
     DEFAULT_UNKNOWN_MONTH = "UnknownMonth"
-    ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv"}
-    VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
+    ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+    VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
     DEFAULT_LLM_TRUNCATE_CHARS = 6000
 
     @staticmethod

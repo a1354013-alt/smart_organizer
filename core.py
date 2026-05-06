@@ -7,13 +7,13 @@ services, storage, and tests.
 """
 
 from core_classification import DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_KEYWORD_RULES, VIDEO_TAGS
-from core_processor import FFMPEG_AVAILABLE, VIDEO_TOOL_TIMEOUT_SECONDS, FileProcessor
+from core_processor import VIDEO_TOOL_TIMEOUT_SECONDS, FileProcessor, is_ffmpeg_available
 from core_utils import FileUtils
 
 __all__ = [
     "FileUtils",
     "FileProcessor",
-    "FFMPEG_AVAILABLE",
+    "is_ffmpeg_available",
     "VIDEO_TOOL_TIMEOUT_SECONDS",
     "DOCUMENT_TAGS",
     "PHOTO_TAGS",
