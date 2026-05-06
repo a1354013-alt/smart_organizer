@@ -83,7 +83,15 @@ def _detect_ffmpeg_available() -> bool:
         return False
 
 
-FFMPEG_AVAILABLE = _detect_ffmpeg_available()
+FFMPEG_AVAILABLE: bool | None = None
+
+
+def get_ffmpeg_available(*, refresh: bool = False) -> bool:
+    global FFMPEG_AVAILABLE
+
+    if refresh or FFMPEG_AVAILABLE is None:
+        FFMPEG_AVAILABLE = _detect_ffmpeg_available()
+    return bool(FFMPEG_AVAILABLE)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +134,7 @@ class FileProcessor:
             "openai": OpenAI is not None,
         }
         system_deps = {
-            "ffmpeg": FFMPEG_AVAILABLE,
+            "ffmpeg": get_ffmpeg_available(),
         }
         config = {
             "poppler_path": bool(self.poppler_path),
@@ -379,7 +387,7 @@ class FileProcessor:
             "ffprobe_error": None,
         }
 
-        if not FFMPEG_AVAILABLE:
+        if not get_ffmpeg_available():
             result["ffprobe_error"] = "ffprobe 不可用，無法解析影片 metadata"
             return result
 
@@ -452,7 +460,7 @@ class FileProcessor:
             return result
 
     def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5, timeout_seconds: int = 10) -> tuple[str | None, str | None]:
-        if not FFMPEG_AVAILABLE:
+        if not get_ffmpeg_available():
             return None, "ffmpeg 不可用，無法產生影片縮圖"
         try:
             import subprocess

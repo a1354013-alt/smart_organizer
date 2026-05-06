@@ -8,6 +8,7 @@ SESSION_DEFAULTS: dict[str, object] = {
     "confirmed_results": [],
     "execution_results": [],
     "cleanup_actions": [],
+    "dependency_status": None,
     "review_summaries": {},
     "folder_scan": None,
     "folder_scan_actions": [],

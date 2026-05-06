@@ -1,12 +1,57 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
 from version import APP_NAME, APP_TITLE, __version__
 from ui_renderers import render_dependency_status
 from ui_common import UIContext, card_close, card_open, handle_ui_exception, human_bytes, is_debug, scan_local_folder
+
+DEPENDENCY_STATUS_SESSION_KEY = "dependency_status"
+
+
+def _coerce_message_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _coerce_record_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def get_cached_dependency_status(session_state: Any) -> dict[str, Any] | None:
+    status = session_state.get(DEPENDENCY_STATUS_SESSION_KEY)
+    return dict(status) if isinstance(status, dict) else None
+
+
+def cache_dependency_status(session_state: Any, status: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(status)
+    session_state[DEPENDENCY_STATUS_SESSION_KEY] = normalized
+    return normalized
+
+
+def refresh_dependency_status(context: UIContext) -> dict[str, Any]:
+    return cache_dependency_status(st.session_state, context.processor.get_dependency_status())
 
 
 def render_sidebar(context: UIContext) -> None:
@@ -89,7 +134,21 @@ def render_sidebar(context: UIContext) -> None:
                 st.write(f"- {action.get('type')}: {action.get('path')}")
 
     with st.sidebar.expander("環境與依賴檢查", expanded=False):
-        render_dependency_status(context.processor.get_dependency_status())
+        dependency_status = get_cached_dependency_status(st.session_state)
+        check_clicked = st.button("Check dependencies", key="check_dependencies_button")
+        refresh_clicked = dependency_status is not None and st.button(
+            "Refresh dependency check",
+            key="refresh_dependencies_button",
+        )
+
+        if check_clicked or refresh_clicked:
+            dependency_status = refresh_dependency_status(context)
+            st.success("Dependency check completed.")
+
+        if dependency_status is None:
+            st.caption("尚未檢查")
+        else:
+            render_dependency_status(dependency_status)
         if is_debug():
             st.caption("processing_options")
             st.json(st.session_state.get("processing_options") or {})
@@ -176,8 +235,10 @@ def render_home(context: UIContext) -> None:
                     handle_ui_exception("資料夾掃描失敗。", exc)
 
         scan = st.session_state.get("folder_scan")
-        if scan:
+        if isinstance(scan, dict):
             stats = dict(scan.get("stats") or {})
+            errors = _coerce_message_list(scan.get("errors"))
+            records = _coerce_record_list(scan.get("records"))
             st.divider()
             st.write(
                 f"- 路徑：`{scan.get('path')}`\n"
@@ -186,29 +247,28 @@ def render_home(context: UIContext) -> None:
                 f"- 總大小：{human_bytes(int(stats.get('total_bytes') or 0))}\n"
                 f"- 久未使用：{stats.get('stale_candidates', 0)}（{scan.get('stale_days', 0)} 天）"
             )
-            if scan.get("errors"):
+            if errors:
                 with st.expander("掃描錯誤", expanded=False):
-                    for message in list(scan.get("errors") or [])[:50]:
+                    for message in errors[:50]:
                         st.write(f"- {message}")
 
             with st.expander("候選清單", expanded=True):
-                records = list(scan.get("records") or [])
                 if not records:
                     st.info("沒有可顯示的檔案。")
                 else:
                     stale = [item for item in records if item.get("is_stale")]
-                    largest = sorted(records, key=lambda item: int(item.get("size_bytes") or 0), reverse=True)[:20]
+                    largest = sorted(records, key=lambda item: _coerce_int(item.get("size_bytes")), reverse=True)[:20]
                     col_a, col_b = st.columns(2)
                     with col_a:
                         st.markdown("**久未使用前 20 筆**")
                         for item in stale[:20]:
                             st.write(
-                                f"- `{item.get('name')}` | {human_bytes(int(item.get('size_bytes') or 0))} | {str(item.get('mtime') or '')[:10]}"
+                                f"- `{item.get('name')}` | {human_bytes(_coerce_int(item.get('size_bytes')))} | {str(item.get('mtime') or '')[:10]}"
                             )
                     with col_b:
                         st.markdown("**最大檔案前 20 筆**")
                         for item in largest:
-                            st.write(f"- `{item.get('name')}` | {human_bytes(int(item.get('size_bytes') or 0))}")
+                            st.write(f"- `{item.get('name')}` | {human_bytes(_coerce_int(item.get('size_bytes')))}")
         else:
             st.info("輸入本機資料夾後即可先做盤點。")
         card_close()

@@ -112,10 +112,25 @@ build_confirmed_results(
 
 ## Release
 
-建立 runtime/demo zip：
+建立 runtime/demo zip（僅限 source repo）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1
 ```
 
+或：
+
+```bash
+python scripts/create_release_zip.py
+```
+
 腳本採 allowlist 打包，只包含執行 UI 與核心流程所需檔案，並支援相對或絕對 `OutputDir`。
+
+重要說明：
+
+- 官方 release zip 是 runtime/demo 執行包，不是打包工具包。
+- `create_release_zip.ps1` 只能在 source repo 執行。
+- 解壓後的 release zip 只負責安裝 runtime 依賴與啟動 App，不負責再次打包。
+- release zip 內不包含 `scripts/`、tests、CI 設定或 dev tooling。
+
+release zip 的啟動與 smoke test 請依 [RUN_RELEASE.md](./RUN_RELEASE.md)。
