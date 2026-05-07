@@ -32,6 +32,28 @@ from folder_models import (
 )
 
 
+def _resolve_path(path_value: Path | str) -> Path:
+    return Path(path_value).expanduser().resolve()
+
+
+def _scan_root_path(scan_result: dict[str, object]) -> Path:
+    return _resolve_path(str(scan_result.get("path") or ""))
+
+
+def _validate_path_within_root(path_value: Path | str, root: Path, *, label: str) -> Path:
+    resolved = _resolve_path(path_value)
+    if not is_relative_to_path(resolved, root):
+        raise ValueError(f"{label} escapes scan root: {resolved}")
+    return resolved
+
+
+def _validate_quarantine_path(path_value: Path | str, quarantine_root: Path, *, label: str) -> Path:
+    resolved = _resolve_path(path_value)
+    if not is_relative_to_path(resolved, quarantine_root):
+        raise ValueError(f"{label} escapes quarantine root: {resolved}")
+    return resolved
+
+
 class FolderOrganizer:
     def __init__(self, scan_root: Path | str, quarantine_root: Path | str):
         self.scan_root = Path(scan_root).expanduser().resolve()
@@ -222,7 +244,8 @@ def run_folder_organizer(
     *,
     dry_run: bool,
 ) -> dict[str, object]:
-    root = Path(str(scan_result.get("path") or "")).expanduser()
+    root = _scan_root_path(scan_result)
+    quarantine_root = quarantine_dir(root).resolve()
     records = {
         str(dict_object(item).get("path")): dict_object(item)
         for item in object_list(scan_result.get("records"))
@@ -271,19 +294,17 @@ def run_folder_organizer(
             continue
 
         try:
-            if not original_path.exists():
+            resolved_original = _validate_path_within_root(original_path, root, label="selected file")
+            if not resolved_original.exists():
                 raise FileNotFoundError("Source file no longer exists.")
-            try:
-                relative_path = original_path.relative_to(root)
-            except ValueError:
-                relative_path = Path(original_path.name)
-            destination = quarantine_dir(root) / operation_id / relative_path
+            relative_path = resolved_original.relative_to(root)
+            destination = quarantine_root / operation_id / relative_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination = safe_destination(destination)
-            shutil.move(str(original_path), str(destination))
+            shutil.move(str(resolved_original), str(destination))
             manifest_items.append(
                 {
-                    "original_path": str(original_path),
+                    "original_path": str(resolved_original),
                     "quarantine_path": str(destination),
                     "moved_at": iso_now(),
                     "file_size": file_size,
@@ -295,7 +316,7 @@ def run_folder_organizer(
             )
             results.append(
                 FolderOperationRow(
-                    original_path=str(original_path),
+                    original_path=str(resolved_original),
                     new_path=str(destination),
                     status="SUCCESS",
                     reason=reasons,
@@ -376,11 +397,14 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
         source = Path(str(item.get("quarantine_path") or ""))
         original = Path(str(item.get("original_path") or ""))
         try:
-            if not source.exists():
+            quarantine_root = quarantine_dir(root).resolve()
+            validated_source = _validate_quarantine_path(source, quarantine_root, label="manifest quarantine_path")
+            validated_original = _validate_path_within_root(original, root, label="manifest original_path")
+            if not validated_source.exists():
                 raise FileNotFoundError("Quarantined file is missing.")
-            destination = safe_destination(original)
+            destination = safe_destination(validated_original)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(destination))
+            shutil.move(str(validated_source), str(destination))
             item["status"] = "RESTORED"
             item["restored_at"] = iso_now()
             item["restored_path"] = str(destination)

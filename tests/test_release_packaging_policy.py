@@ -23,6 +23,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "core.py",
         "storage.py",
         "config.py",
+        "supported_formats.py",
         "ui_common.py",
         "ui_home.py",
         "folder_models.py",
@@ -31,6 +32,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "folder_report.py",
         "report_exports.py",
         "docs/KNOWN_LIMITATIONS.md",
+        "docs/PORTFOLIO_CASE_STUDY.md",
     }
     assert required.issubset(set(allowlist))
     assert "compileall.py" not in allowlist

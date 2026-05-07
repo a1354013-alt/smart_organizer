@@ -18,6 +18,7 @@ class ProgressState:
     skipped_count: int = 0
     completed_count: int = 0
     failed_count: int = 0
+    cancelled_count: int = 0
 
     def update(self, completed: int = 1) -> None:
         self.current += completed
@@ -39,6 +40,8 @@ class BatchProcessResult(Generic[TResult]):
     skipped_count: int
     completed_count: int
     failed_count: int
+    cancelled_count: int
+    item_statuses: list[str]
 
 
 class AsyncProcessor:
@@ -65,6 +68,7 @@ class AsyncProcessor:
         self.reset_cancel()
         progress = ProgressState(total=len(items))
         results: list[TResult | None] = [None] * len(items)
+        item_statuses: list[str] = ["PENDING"] * len(items)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_index: dict[concurrent.futures.Future[TResult], int] = {}
@@ -75,6 +79,7 @@ class AsyncProcessor:
                 while next_index < len(items) and len(future_to_index) < max(1, self.max_workers) and not self.is_cancelled():
                     future = executor.submit(process_fn, items[next_index])
                     future_to_index[future] = next_index
+                    item_statuses[next_index] = "RUNNING"
                     next_index += 1
 
             submit_until_full()
@@ -92,8 +97,13 @@ class AsyncProcessor:
                     try:
                         results[idx] = future.result()
                         progress.completed_count += 1
+                        item_statuses[idx] = "COMPLETED"
+                    except concurrent.futures.CancelledError:
+                        progress.cancelled_count += 1
+                        item_statuses[idx] = "CANCELLED"
                     except Exception as exc:
                         progress.failed_count += 1
+                        item_statuses[idx] = "FAILED"
                         progress.add_error(getattr(item, "name", None) or f"{item_name}:{item}", str(exc))
                     finally:
                         if self.is_cancelled():
@@ -104,10 +114,20 @@ class AsyncProcessor:
 
                 if self.is_cancelled():
                     progress.cancelled = True
+                    for future, idx in list(future_to_index.items()):
+                        if future.cancel():
+                            progress.cancelled_count += 1
+                            item_statuses[idx] = "CANCELLED"
+                            progress.update()
+                            future_to_index.pop(future, None)
+                            if progress_callback:
+                                progress_callback(progress)
                     remaining = len(items) - next_index
                     if remaining > 0:
                         progress.skipped_count += remaining
                         progress.current += remaining
+                        for idx in range(next_index, len(items)):
+                            item_statuses[idx] = "SKIPPED"
                     break
 
                 submit_until_full()
@@ -118,6 +138,8 @@ class AsyncProcessor:
             skipped_count=progress.skipped_count,
             completed_count=progress.completed_count,
             failed_count=progress.failed_count,
+            cancelled_count=progress.cancelled_count,
+            item_statuses=item_statuses,
         )
 
 

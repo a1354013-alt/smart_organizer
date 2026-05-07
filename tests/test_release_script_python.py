@@ -26,6 +26,7 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "core.py" in names
     assert "storage.py" in names
     assert "config.py" in names
+    assert "supported_formats.py" in names
     assert "ui_common.py" in names
     assert "ui_home.py" in names
     assert "folder_models.py" in names
@@ -34,3 +35,4 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "folder_report.py" in names
     assert "report_exports.py" in names
     assert "docs/KNOWN_LIMITATIONS.md" in names
+    assert "docs/PORTFOLIO_CASE_STUDY.md" in names

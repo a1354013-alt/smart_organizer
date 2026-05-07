@@ -5,20 +5,29 @@ import logging
 import streamlit as st
 
 from services import UploadedFileData, analyze_upload_batch
+from supported_formats import SUPPORTED_UPLOAD_EXTENSIONS, supported_upload_extensions_label
 from ui_common import UIContext, build_uploaded_file_batch, handle_ui_exception
 from ui_state import reset_review_state
 
 logger = logging.getLogger(__name__)
 
 
+def get_supported_upload_types() -> list[str]:
+    return list(SUPPORTED_UPLOAD_EXTENSIONS)
+
+
+def get_supported_upload_caption() -> str:
+    return supported_upload_extensions_label()
+
+
 def render_upload(context: UIContext) -> None:
     st.header("上傳分析")
     st.markdown("可一次上傳多個 PDF、圖片與影片檔，先完成分析再進入確認流程。")
-    st.caption("支援：PDF / JPG / JPEG / PNG / MP4 / MOV / MKV")
+    st.caption(f"支援格式：{get_supported_upload_caption()}")
 
     uploaded_files = st.file_uploader(
         "選擇檔案",
-        type=["pdf", "jpg", "jpeg", "png", "mp4", "mov", "mkv"],
+        type=get_supported_upload_types(),
         accept_multiple_files=True,
     )
     if not uploaded_files:

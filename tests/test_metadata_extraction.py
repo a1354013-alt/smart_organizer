@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import core_processor
 from core import FileProcessor, FileUtils
 
 
@@ -38,3 +39,16 @@ def test_extract_metadata_image_ocr_disabled_note(tmp_path: Path):
     assert metadata["file_type"] == "photo"
     assert metadata["preview_path"] == str(image_path)
     assert any("OCR is disabled." in note for note in metadata.get("notes", []))
+
+
+def test_extract_metadata_video_reports_degraded_dependency_warning(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"video")
+
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: False)
+    processor = FileProcessor()
+    metadata = processor.extract_metadata(str(video_path))
+
+    assert metadata["file_type"] == "video"
+    assert any("degraded:" in note.lower() for note in metadata.get("notes", []))
+    assert metadata["video"]["ffprobe_error"] is not None

@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
+from supported_formats import SUPPORTED_VIDEO_SUFFIXES
+
 QUARANTINE_DIRNAME = ".smart_organizer_quarantine"
 QUARANTINE_MANIFEST = "manifest.json"
 
@@ -191,7 +193,7 @@ def infer_local_file_kind(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     if ext in {".jpg", ".jpeg", ".png"}:
         return "photo"
-    if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+    if ext in SUPPORTED_VIDEO_SUFFIXES:
         return "video"
     if ext == ".pdf":
         return "document"

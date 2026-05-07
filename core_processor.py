@@ -69,6 +69,10 @@ VIDEO_TOOL_TIMEOUT_SECONDS = max(1, int(os.getenv("VIDEO_TOOL_TIMEOUT_SECONDS", 
 logger = logging.getLogger(__name__)
 
 
+def _warning_note(kind: str, message: str) -> str:
+    return f"{kind}: {message}"
+
+
 def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None):
     import subprocess
 
@@ -211,7 +215,7 @@ class FileProcessor:
 
         if file_type == "video":
             if not heavy_allowed:
-                notes.append("Video metadata and thumbnail were skipped because the file exceeds the heavy-file limit.")
+                notes.append(_warning_note("partial", "Video metadata and thumbnail were skipped because the file exceeds the heavy-file limit."))
                 video = {"media_type": "video"}
             else:
                 meta_timeout = int(options.get("video_metadata_timeout_seconds") or self.video_tool_timeout_seconds)
@@ -229,13 +233,23 @@ class FileProcessor:
                     preview_path = thumb
                 elif thumb_error:
                     video_meta["thumbnail_error"] = thumb_error
+                    notes.append(_warning_note("degraded", thumb_error))
+
+                ffprobe_error = video_meta.get("ffprobe_error")
+                if ffprobe_error:
+                    notes.append(_warning_note("degraded", str(ffprobe_error)))
 
         if file_type == "document" and ext == ".pdf":
             enable_pdf_preview = bool(options.get("enable_pdf_preview", False))
             enable_ocr = bool(options.get("enable_ocr", False))
 
             if not heavy_allowed:
-                notes.append("PDF text extraction, preview generation, and OCR were skipped because the file exceeds the heavy-file limit.")
+                notes.append(
+                    _warning_note(
+                        "partial",
+                        "PDF text extraction, preview generation, and OCR were skipped because the file exceeds the heavy-file limit.",
+                    )
+                )
             else:
                 text_timeout = int(options.get("pdf_text_timeout_seconds") or 10)
                 text_pages = max(1, int(options.get("pdf_text_max_pages") or 3))
@@ -250,9 +264,9 @@ class FileProcessor:
                 if ok and isinstance(text_value, str):
                     extracted_text = text_value
                 elif err == "timeout":
-                    notes.append("PDF text extraction timed out.")
+                    notes.append(_warning_note("timeout", "PDF text extraction timed out."))
                 else:
-                    notes.append(f"PDF text extraction failed: {err or 'unknown'}")
+                    notes.append(_warning_note("degraded", f"PDF text extraction failed: {err or 'unknown'}"))
 
                 if enable_pdf_preview:
                     preview_timeout = int(options.get("pdf_preview_timeout_seconds") or 10)
@@ -265,7 +279,7 @@ class FileProcessor:
                     )
                     _record("pdf_preview", started)
                     if not preview_path:
-                        notes.append("PDF preview generation failed or timed out.")
+                        notes.append(_warning_note("degraded", "PDF preview generation failed or timed out."))
                 else:
                     notes.append("PDF preview generation is disabled.")
 
@@ -280,7 +294,7 @@ class FileProcessor:
                         extracted_text = (extracted_text + "\n" + ocr_text).strip()
                     elif ocr_err:
                         ocr_error = ocr_err
-                        notes.append(f"PDF OCR failed: {ocr_err}")
+                        notes.append(_warning_note("degraded", f"PDF OCR failed: {ocr_err}"))
                 else:
                     notes.append("OCR is disabled.")
                     ocr_error = "OCR is disabled."
@@ -504,7 +518,7 @@ class FileProcessor:
 
     def _ocr_pdf_sample(self, file_path, max_pages=3, timeout_seconds: int = 15) -> tuple[str, str | None]:
         if convert_from_path_fn is None or pytesseract is None:
-            return "", "dependencies_missing"
+            return "", "dependencies_missing: pdf2image/poppler or tesseract is unavailable"
         try:
             deadline = time.perf_counter() + max(1.0, float(timeout_seconds or 15))
             images = convert_from_path_fn(

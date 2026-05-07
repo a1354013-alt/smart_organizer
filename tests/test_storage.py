@@ -113,3 +113,36 @@ def test_close_is_idempotent():
 
     storage.close()
     storage.close()
+
+
+def test_get_records_page_escapes_like_wildcards():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    payload = _minimal_pdf_bytes()
+
+    names = ["100%complete.pdf", "under_score.pdf", "ordinary.pdf"]
+    summaries = ["literal percent", "literal underscore", "plain text"]
+
+    for name, summary in zip(names, summaries):
+        result = storage.create_temp_file(name, payload, _sha256(name.encode("utf-8")), "document")
+        file_id = result["file_id"]
+        storage.update_file_metadata(
+            file_id,
+            {
+                "standard_date": "2026-05-07",
+                "main_topic": "Docs",
+                "summary": summary,
+                "content": summary,
+                "is_scanned": False,
+                "preview_path": None,
+                "classification_reason": "test",
+                "tag_scores": {"Docs": 1.0},
+            },
+        )
+
+    percent_hits = storage.get_records_page(search="%")
+    underscore_hits = storage.get_records_page(search="_")
+    keyword_hits = storage.get_records_page(search="ordinary")
+
+    assert [item["original_name"] for item in percent_hits["items"]] == ["100%complete.pdf"]
+    assert [item["original_name"] for item in underscore_hits["items"]] == ["under_score.pdf"]
+    assert [item["original_name"] for item in keyword_hits["items"]] == ["ordinary.pdf"]

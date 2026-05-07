@@ -5,6 +5,8 @@ import os
 import re
 from pathlib import Path
 
+from supported_formats import SUPPORTED_UPLOAD_SUFFIXES, SUPPORTED_VIDEO_SUFFIXES
+
 
 class FileUtils:
     """純工具函式類別，不涉及業務邏輯與昂貴初始化"""
@@ -12,8 +14,8 @@ class FileUtils:
     DEFAULT_UNKNOWN_DATE = "UnknownDate"
     DEFAULT_UNKNOWN_YEAR = "UnknownYear"
     DEFAULT_UNKNOWN_MONTH = "UnknownMonth"
-    ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
-    VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+    ALLOWED_UPLOAD_EXTENSIONS = frozenset(SUPPORTED_UPLOAD_SUFFIXES)
+    VIDEO_EXTENSIONS = frozenset(SUPPORTED_VIDEO_SUFFIXES)
     DEFAULT_LLM_TRUNCATE_CHARS = 6000
 
     @staticmethod

@@ -11,11 +11,9 @@ from core import FileProcessor
 from storage import StorageManager
 
 from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo, UploadedFileData
+from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
-
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
-
 
 def _log_context(**fields: object) -> str:
     parts = [f"{key}={value}" for key, value in fields.items() if value not in (None, "", [])]
@@ -27,7 +25,7 @@ def _infer_file_type_hint(uploaded: UploadedFileData) -> str:
     suffix = os.path.splitext(uploaded.name or "")[1].lower()
     if mime_type.startswith("image"):
         return "photo"
-    if mime_type.startswith("video") or suffix in VIDEO_EXTENSIONS:
+    if mime_type.startswith("video") or suffix in SUPPORTED_VIDEO_SUFFIXES:
         return "video"
     return "document"
 
@@ -130,7 +128,10 @@ def analyze_one_upload(
             classification_reason = err
 
         notes = metadata.get("notes")
-        if isinstance(notes, list) and any(isinstance(n, str) and ("timeout" in n.lower() or "fallback" in n.lower()) for n in notes):
+        if isinstance(notes, list) and any(
+            isinstance(n, str) and any(flag in n.lower() for flag in ("timeout", "fallback", "degraded", "partial"))
+            for n in notes
+        ):
             if analysis_status == "OK":
                 analysis_status = "WARNING"
 

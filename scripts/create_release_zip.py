@@ -20,6 +20,7 @@ RELEASE_ALLOWLIST_GROUPS: dict[str, list[str]] = {
         "core_utils.py",
         "core_classification.py",
         "core_processor.py",
+        "supported_formats.py",
     ],
     "service_modules": [
         "services.py",
@@ -68,6 +69,7 @@ RELEASE_ALLOWLIST_GROUPS: dict[str, list[str]] = {
         "RELEASE_PACKAGING.md",
         "RUN_RELEASE.md",
         "docs/KNOWN_LIMITATIONS.md",
+        "docs/PORTFOLIO_CASE_STUDY.md",
     ],
 }
 

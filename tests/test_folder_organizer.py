@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from typing import cast
 
 from folder_models import QUARANTINE_DIRNAME
 from folder_organizer import list_quarantine_items, restore_quarantined_items, run_folder_organizer, scan_local_folder
@@ -111,3 +112,89 @@ def test_list_quarantine_items_raises_on_invalid_manifest_json(tmp_path: Path):
         assert "Manifest is not valid JSON" in str(exc)
     else:
         raise AssertionError("Expected manifest parsing to fail")
+
+
+def test_run_folder_organizer_rejects_forged_record_outside_scan_root(tmp_path: Path):
+    scan_root = tmp_path / "scan"
+    outside_root = tmp_path / "outside"
+    scan_root.mkdir()
+    outside_root.mkdir()
+    outside_file = outside_root / "escape.pdf"
+    outside_file.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    forged_scan: dict[str, object] = {
+        "path": str(scan_root),
+        "records": [
+            {
+                "path": str(outside_file),
+                "candidate_reasons": ["forged"],
+                "size_bytes": outside_file.stat().st_size,
+                "mtime": "2026-05-07T00:00:00+00:00",
+            }
+        ],
+    }
+
+    result = run_folder_organizer(forged_scan, [str(outside_file)], dry_run=False)
+    summary = result["summary"]
+    rows = result["results"]
+    assert isinstance(summary, dict)
+    assert isinstance(rows, list)
+    operation_id = cast(str, result["operation_id"])
+    assert summary["failed"] == 1
+    assert rows[0]["status"] == "FAILED"
+    assert "escapes scan root" in str(rows[0]["error_message"])
+    assert outside_file.exists()
+    assert not (scan_root / QUARANTINE_DIRNAME / operation_id / outside_file.name).exists()
+
+
+def test_restore_quarantined_items_rejects_tampered_manifest_paths(tmp_path: Path):
+    scan_root = tmp_path / "scan"
+    outside_root = tmp_path / "outside"
+    scan_root.mkdir()
+    outside_root.mkdir()
+    quarantine_root = scan_root / QUARANTINE_DIRNAME
+    quarantine_root.mkdir()
+
+    valid_quarantined = quarantine_root / "safe.pdf"
+    valid_quarantined.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    outside_quarantined = outside_root / "escape.pdf"
+    outside_quarantined.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    manifest_path = quarantine_root / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "original_path": str(outside_root / "restored-outside.pdf"),
+                        "quarantine_path": str(valid_quarantined),
+                        "status": "ACTIVE",
+                        "reason": "tampered original",
+                    },
+                    {
+                        "original_path": str(scan_root / "restored-safe.pdf"),
+                        "quarantine_path": str(outside_quarantined),
+                        "status": "ACTIVE",
+                        "reason": "tampered quarantine",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = restore_quarantined_items(
+        str(scan_root),
+        [str(valid_quarantined), str(outside_quarantined)],
+    )
+
+    summary = result["summary"]
+    rows = result["results"]
+    assert isinstance(summary, dict)
+    assert isinstance(rows, list)
+    assert summary["failed"] == 2
+    assert all(row["status"] == "FAILED" for row in rows)
+    assert "manifest original_path escapes scan root" in str(rows[0]["error_message"])
+    assert "manifest quarantine_path escapes quarantine root" in str(rows[1]["error_message"])
+    assert valid_quarantined.exists()
+    assert outside_quarantined.exists()

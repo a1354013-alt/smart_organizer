@@ -20,6 +20,7 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 no_implicit_optional = true
 check_untyped_defs = false
+exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci2|release_ci3|uploads|repo|tests[\\/]_tmp_pytest)([\\/]|$)'
 files = [
   "app_main.py",
   "ui_state.py",

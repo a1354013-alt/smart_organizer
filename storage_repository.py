@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from core import FileUtils
+from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 from storage_base import MAX_UPLOAD_BYTES, _log_context
 
@@ -16,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class StorageRepositoryMixin:
+    def _escape_like(self, value: str) -> str:
+        return (value or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     def _normalize_uploaded_bytes(self, file_content: bytes | bytearray | memoryview) -> bytes:
         if isinstance(file_content, memoryview):
             return file_content.tobytes()
@@ -89,7 +93,7 @@ class StorageRepositoryMixin:
             return "photo"
         if ext == ".pdf":
             return "document"
-        if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+        if ext in SUPPORTED_VIDEO_SUFFIXES:
             return "video"
         if provided in {"photo", "document", "video"}:
             return str(provided)
@@ -423,9 +427,13 @@ class StorageRepositoryMixin:
                 where_parts.append("f.file_type = ?")
                 params.append(file_type)
             if search:
-                like = f"%{search.strip()}%"
+                like = f"%{self._escape_like(search.strip())}%"
                 where_parts.append(
-                    "(f.original_name LIKE ? OR COALESCE(f.main_topic, '') LIKE ? OR COALESCE(f.summary, '') LIKE ?)"
+                    "("
+                    "f.original_name LIKE ? ESCAPE '\\' "
+                    "OR COALESCE(f.main_topic, '') LIKE ? ESCAPE '\\' "
+                    "OR COALESCE(f.summary, '') LIKE ? ESCAPE '\\'"
+                    ")"
                 )
                 params.extend([like, like, like])
             if date_from:

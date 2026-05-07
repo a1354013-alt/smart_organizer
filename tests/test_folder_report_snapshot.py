@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import cast
 
 from folder_report import export_folder_report_csv, export_folder_report_markdown
 from folder_service import quarantine_selected_files, resolve_report_inputs
@@ -28,7 +29,8 @@ def test_quarantine_report_uses_pre_operation_snapshot(tmp_path: Path):
         large_file_bytes=1,
     )
 
-    assert refreshed_scan["stats"]["scanned_files"] == 0
+    refreshed_stats = cast(dict[str, object], refreshed_scan["stats"])
+    assert refreshed_stats["scanned_files"] == 0
 
     export_scan, export_operation = resolve_report_inputs(refreshed_scan, snapshot, operation_result)
     markdown_report = export_folder_report_markdown(export_scan, export_operation)
