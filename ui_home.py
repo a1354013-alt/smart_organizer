@@ -27,6 +27,7 @@ from ui_state import (
     SESSION_FOLDER_SCAN_CURRENT,
     SESSION_FOLDER_SCAN_OPTIONS,
     SESSION_FOLDER_SCAN_PATH,
+    SESSION_FOLDER_SELECTED_PATHS,
     SESSION_PROCESSING_OPTIONS,
 )
 from version import APP_NAME, APP_TITLE, __version__
@@ -138,7 +139,18 @@ def render_sidebar(context: UIContext) -> None:
 def _render_candidate_editor(context: UIContext, candidates: list[dict[str, object]]) -> list[str]:
     if not candidates:
         st.info("No stale or large-file candidates were found in this scan.")
+        st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
         return []
+
+    st.caption("Risk labels: Safe to review | Needs manual check | Do not touch")
+    if st.button("Select all candidates for preview", key="select_all_candidates_for_preview"):
+        st.session_state[SESSION_FOLDER_SELECTED_PATHS] = [str(item.get("path")) for item in candidates]
+    if st.button("Select all safe-to-review candidates", key="select_safe_review_candidates"):
+        st.session_state[SESSION_FOLDER_SELECTED_PATHS] = [
+            str(item.get("path")) for item in candidates if item.get("risk_level") == "safe_to_review"
+        ]
+    if st.button("Clear candidate selection", key="clear_candidate_selection"):
+        st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
 
     rows = []
     for item in candidates:
@@ -149,14 +161,19 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
                 "size": human_bytes(int(cast(int, item.get("size_bytes") or 0))),
                 "last_modified": str(item.get("mtime") or "")[:19],
                 "days_since_access": item.get("days_since_access"),
+                "confidence": item.get("confidence"),
+                "risk_level": item.get("risk_level"),
                 "reasons": ", ".join(str(reason) for reason in cast(list[object], item.get("candidate_reasons") or [])),
                 "recommendation": item.get("recommendation"),
                 "path": item.get("path"),
             }
         )
 
+    selected_paths = [str(path) for path in cast(list[object], st.session_state.get(SESSION_FOLDER_SELECTED_PATHS, []))]
     if context.pandas is not None:
         df = context.pandas.DataFrame(rows)
+        if selected_paths:
+            df["select"] = df["path"].isin(selected_paths)
         edited = st.data_editor(
             df,
             hide_index=True,
@@ -167,10 +184,17 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
             },
             key="folder_candidate_editor",
         )
-        return [str(row["path"]) for _, row in edited.iterrows() if bool(row.get("select"))]
+        selected_paths = [str(row["path"]) for _, row in edited.iterrows() if bool(row.get("select"))]
+        st.session_state[SESSION_FOLDER_SELECTED_PATHS] = selected_paths
+        return selected_paths
 
-    selected = st.multiselect("Select files to move to quarantine", [str(row["path"]) for row in rows])
+    selected = st.multiselect(
+        "Select files to move to quarantine",
+        [str(row["path"]) for row in rows],
+        default=[path for path in selected_paths if path in {str(row["path"]) for row in rows}],
+    )
     st.dataframe(rows, use_container_width=True)
+    st.session_state[SESSION_FOLDER_SELECTED_PATHS] = selected
     return selected
 
 
@@ -209,6 +233,12 @@ def render_home(context: UIContext) -> None:
         unsafe_allow_html=True,
     )
     card_close()
+
+    st.markdown("**Workflow:** Scan -> Preview -> Quarantine -> Restore -> Export report")
+    st.info(
+        "Safety guardrails: this tool never directly deletes files, every cleanup move goes to quarantine first, "
+        "restore is available, and atime/mtime are only supporting signals. Please review before moving anything."
+    )
 
     scan_options_obj = st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS)
     scan_options = cast(dict[str, object], scan_options_obj) if isinstance(scan_options_obj, dict) else {}
@@ -256,6 +286,7 @@ def render_home(context: UIContext) -> None:
                 )
                 st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = None
                 st.session_state[SESSION_FOLDER_RESTORE_RESULT] = None
+                st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
             except ScanPathError as exc:
                 st.error(str(exc))
             except PermissionError:
@@ -271,15 +302,16 @@ def render_home(context: UIContext) -> None:
             stats = cast(dict[str, object], stats_obj) if isinstance(stats_obj, dict) else {}
             quarantine_items = get_quarantine_items(str(scan.get("path") or ""))
 
-            metric_cols = st.columns(5)
+            metric_cols = st.columns(6)
             metrics = [
                 (stats.get("scanned_files", 0), "Scanned files"),
+                (len(cast(list[object], scan.get("records") or [])), "Candidate view"),
                 (human_bytes(safe_int(stats.get("total_bytes"))), "Total size"),
                 (stats.get("stale_candidates", 0), "Stale candidates"),
                 (stats.get("large_candidates", 0), "Large file candidates"),
-                (len(quarantine_items), "Quarantine items"),
+                (len(quarantine_items), "Quarantined"),
             ]
-            for column, (value, label) in zip(metric_cols, metrics):
+            for column, (value, label) in zip(metric_cols, metrics, strict=False):
                 with column:
                     card_open("status-card")
                     st.markdown(f'<div class="status-metric">{value}</div>', unsafe_allow_html=True)
@@ -294,6 +326,16 @@ def render_home(context: UIContext) -> None:
 
             records = [item for item in cast(list[object], scan.get("records") or []) if isinstance(item, dict)]
             candidates = [item for item in records if item.get("candidate_reasons")]
+            st.markdown("**Before / after summary**")
+            restored_summary_obj = cast(dict[str, object], (st.session_state.get(SESSION_FOLDER_RESTORE_RESULT) or {}).get("summary", {}) if isinstance(st.session_state.get(SESSION_FOLDER_RESTORE_RESULT), dict) else {})
+            operation_summary_obj = cast(dict[str, object], (st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT) or {}).get("summary", {}) if isinstance(st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT), dict) else {})
+            st.write(
+                f"- Scanned files: {stats.get('scanned_files', 0)}\n"
+                f"- Candidate files: {len(candidates)}\n"
+                f"- Estimated reviewable space: {human_bytes(sum(safe_int(item.get('size_bytes')) for item in candidates))}\n"
+                f"- Quarantined this session: {operation_summary_obj.get('success', 0)}\n"
+                f"- Restored this session: {restored_summary_obj.get('success', 0)}"
+            )
 
             st.subheader("Candidate files")
             selected_paths = _render_candidate_editor(context, candidates)
@@ -334,6 +376,8 @@ def render_home(context: UIContext) -> None:
             )
 
             report_payload = export_folder_report_markdown(export_scan, export_operation)
+            with st.expander("Report preview", expanded=True):
+                st.markdown(report_payload[:4000])
             st.download_button(
                 "Export Markdown report",
                 report_payload,

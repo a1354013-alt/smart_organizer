@@ -5,7 +5,6 @@ import sqlite3
 from typing import Any
 
 from core import FileUtils
-
 from storage_base import SearchContentError
 
 logger = logging.getLogger(__name__)

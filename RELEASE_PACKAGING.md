@@ -25,6 +25,7 @@ It includes these runtime categories:
 - report export modules: `report_exports.py`
 - docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`
 - requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- demo helper scripts: `scripts/create_demo_folder.py`
 - supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 This is an official runtime/demo package. It intentionally does not include tests, CI files, development configs, or workspace snapshots.
@@ -60,12 +61,14 @@ These must stay out of the release zip:
 - `htmlcov/`
 - large model files such as `*.onnx`, `*.pt`, `*.pth`, `*.bin`
 - test temporary directories such as `tests/_tmp*/`
+- generated demo data folders such as `demo_files/`
 
 ## Verification
 
 The packaging policy is enforced by:
 
 - `scripts/create_release_zip.py`
+- `scripts/verify_release_zip.py`
 - `create_release_zip.ps1` (delegates to the Python script only)
 - `tests/test_delivery_cleanliness.py`
 - `tests/test_release_packaging_policy.py`

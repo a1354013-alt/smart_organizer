@@ -4,9 +4,9 @@ import csv
 from pathlib import Path
 from typing import cast
 
+from folder_organizer import scan_local_folder
 from folder_report import export_folder_report_csv, export_folder_report_markdown
 from folder_service import quarantine_selected_files, resolve_report_inputs
-from folder_organizer import scan_local_folder
 
 
 def test_quarantine_report_uses_pre_operation_snapshot(tmp_path: Path):

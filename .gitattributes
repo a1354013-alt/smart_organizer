@@ -38,6 +38,7 @@ frontend/node_modules/ export-ignore
 node_modules/ export-ignore
 logs/ export-ignore
 smart_organizer.db export-ignore
+demo_files/ export-ignore
 *.onnx export-ignore
 *.pt export-ignore
 *.pth export-ignore

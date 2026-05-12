@@ -5,6 +5,7 @@ import os
 import shutil
 import sqlite3
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -77,10 +78,8 @@ class StorageBase:
                 conn.execute("PRAGMA journal_mode=WAL;")
             except sqlite3.OperationalError as e:
                 logger.warning("WAL not available; falling back to DELETE journal_mode: %s", e)
-                try:
+                with suppress(Exception):
                     conn.execute("PRAGMA journal_mode=DELETE;")
-                except Exception:
-                    pass
 
             conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("PRAGMA foreign_keys=ON;")

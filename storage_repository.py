@@ -5,13 +5,14 @@ import os
 import sqlite3
 import time
 import uuid
+from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from core import FileUtils
-from supported_formats import SUPPORTED_VIDEO_SUFFIXES
-
 from storage_base import MAX_UPLOAD_BYTES, _log_context
+from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -139,10 +140,8 @@ class StorageRepositoryMixin:
                     with open(temp_path, "wb") as file_obj:
                         file_obj.write(payload)
                     if part_path and part_path.exists():
-                        try:
+                        with suppress(Exception):
                             os.remove(part_path)
-                        except Exception:
-                            pass
 
             try:
                 begin_err: sqlite3.OperationalError | None = None
@@ -169,10 +168,8 @@ class StorageRepositoryMixin:
                     conn.rollback()
                     db_temp_path = row[3]
                     if temp_path and str(temp_path) != db_temp_path and self._path_exists(temp_path):
-                        try:
+                        with suppress(Exception):
                             self._remove_path(str(temp_path))
-                        except Exception:
-                            pass
                     return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
 
                 cursor.execute(
@@ -199,10 +196,8 @@ class StorageRepositoryMixin:
                 if row:
                     db_temp_path = row[3]
                     if temp_path and str(temp_path) != db_temp_path and self._path_exists(temp_path):
-                        try:
+                        with suppress(Exception):
                             self._remove_path(str(temp_path))
-                        except Exception:
-                            pass
                 return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
         except Exception as exc:
             logger.error(
@@ -211,10 +206,8 @@ class StorageRepositoryMixin:
                 exc,
             )
             if part_path and part_path.exists():
-                try:
+                with suppress(Exception):
                     os.remove(part_path)
-                except Exception:
-                    pass
             return {"success": False, "reason": "ERROR", "message": str(exc)}
         finally:
             if conn:

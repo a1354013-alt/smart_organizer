@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Callable, Generic, Optional, Sequence, TypeVar
+from typing import Generic, TypeVar
 
 TItem = TypeVar("TItem")
 TResult = TypeVar("TResult")
@@ -62,7 +63,7 @@ class AsyncProcessor:
         self,
         items: Sequence[TItem],
         process_fn: Callable[[TItem], TResult],
-        progress_callback: Optional[Callable[[ProgressState], None]] = None,
+        progress_callback: Callable[[ProgressState], None] | None = None,
         item_name: str = "item",
     ) -> BatchProcessResult[TResult]:
         self.reset_cancel()

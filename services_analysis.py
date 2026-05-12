@@ -4,13 +4,13 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from contracts import validate_extracted_metadata
 from core import FileProcessor
-from storage import StorageManager
-
 from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo, UploadedFileData
+from storage import StorageManager
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
@@ -128,12 +128,15 @@ def analyze_one_upload(
             classification_reason = err
 
         notes = metadata.get("notes")
-        if isinstance(notes, list) and any(
+        if (
+            analysis_status == "OK"
+            and isinstance(notes, list)
+            and any(
             isinstance(n, str) and any(flag in n.lower() for flag in ("timeout", "fallback", "degraded", "partial"))
             for n in notes
+            )
         ):
-            if analysis_status == "OK":
-                analysis_status = "WARNING"
+            analysis_status = "WARNING"
 
         return (
             AnalysisResult(

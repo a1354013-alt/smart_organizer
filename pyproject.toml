@@ -11,8 +11,7 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# Minimal, stable checks (avoid style bikeshedding; focus on real bugs).
-select = ["F", "E9"]
+select = ["F", "E9", "I", "UP", "B", "SIM", "C4"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -23,6 +22,8 @@ check_untyped_defs = false
 exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci2|release_ci3|uploads|repo|tests[\\/]_tmp_pytest)([\\/]|$)'
 files = [
   "app_main.py",
+  "core_metadata.py",
+  "core_processor.py",
   "ui_state.py",
   "ui_common.py",
   "ui_home.py",
@@ -39,6 +40,11 @@ files = [
   "folder_organizer.py",
   "folder_service.py",
   "folder_report.py",
+  "services_analysis.py",
+  "services_finalize.py",
+  "storage_repository.py",
+  "storage_recovery.py",
+  "storage_search.py",
   "scripts/create_release_zip.py",
 ]
 

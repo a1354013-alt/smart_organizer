@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from core import FileUtils
-
 from storage_base import _log_context
 
 logger = logging.getLogger(__name__)
@@ -97,9 +97,12 @@ class StorageRecoveryMixin:
             if not file_info:
                 raise ValueError(f"找不到檔案 ID: {file_id}")
 
-            if file_info.get("status") == "COMPLETED" and file_info.get("final_path"):
-                if self._path_exists(file_info["final_path"]):
-                    return file_info["final_path"]
+            if (
+                file_info.get("status") == "COMPLETED"
+                and file_info.get("final_path")
+                and self._path_exists(file_info["final_path"])
+            ):
+                return file_info["final_path"]
 
             recovered_path = self._recover_moving_file(file_id, file_info)
             if recovered_path:
@@ -173,10 +176,8 @@ class StorageRecoveryMixin:
                         )
                         conn.commit()
                         raise copy_err
-                    try:
+                    with suppress(Exception):
                         self._remove_path(temp_path)
-                    except Exception:
-                        pass
                 except Exception as move_err:
                     if not self._path_exists(target_path):
                         msg = str(move_err)

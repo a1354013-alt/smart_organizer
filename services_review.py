@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 
 from core import FileProcessor
-
 from services_models import AnalysisResult, SummarySuggestion
 
 logger = logging.getLogger(__name__)

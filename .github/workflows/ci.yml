@@ -27,20 +27,22 @@ jobs:
 
       - name: Syntax check
         run: |
+          python -m compileall -q .
           python scripts/safe_compileall.py -q .
 
-      - name: Ruff (minimal)
+      - name: Ruff
         run: |
           ruff check .
 
-      - name: Mypy (minimal)
+      - name: Mypy core and UI
         run: |
-          python -m mypy app_main.py ui_state.py ui_common.py ui_home.py ui_upload.py ui_review.py ui_execute.py ui_search.py ui_renderers.py ui_records.py frontend_safety.py logging_config.py report_exports.py folder_models.py folder_organizer.py folder_service.py folder_report.py scripts/create_release_zip.py
+          python -m mypy core_processor.py core_metadata.py services_analysis.py services_finalize.py storage_repository.py storage_recovery.py storage_search.py folder_organizer.py folder_models.py ui_common.py ui_home.py ui_upload.py ui_review.py ui_execute.py ui_search.py ui_renderers.py ui_records.py
 
       - name: Tests
         run: |
-          python -m pytest -q
+          python -m pytest
 
       - name: Release zip smoke test
         run: |
           python scripts/create_release_zip.py --output-dir release_ci
+          python scripts/verify_release_zip.py release_ci/*.zip

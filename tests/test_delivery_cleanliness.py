@@ -5,7 +5,12 @@ import sys
 import zipfile
 from pathlib import Path
 
-from scripts.create_release_zip import FORBIDDEN_PATTERNS, RELEASE_ALLOWLIST, build_zip, zip_contains_forbidden_entries
+from scripts.create_release_zip import (
+    FORBIDDEN_PATTERNS,
+    RELEASE_ALLOWLIST,
+    build_zip,
+    zip_contains_forbidden_entries,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN_DIR_NAMES = {"tmp_test_write", ".compileall_cache"}

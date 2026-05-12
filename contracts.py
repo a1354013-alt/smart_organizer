@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict, TypeAlias, cast
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 
 FileType: TypeAlias = Literal["document", "photo", "video", "unknown"]
 RecordStatus: TypeAlias = Literal["PENDING", "PROCESSED", "MOVING", "COMPLETED", "MISSING", "BROKEN"]

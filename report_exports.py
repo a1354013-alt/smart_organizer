@@ -3,8 +3,8 @@ from __future__ import annotations
 import csv
 import html
 import json
+from collections.abc import Iterable
 from io import StringIO
-from typing import Iterable
 
 
 def escape_markdown_table_cell(value: object) -> str:

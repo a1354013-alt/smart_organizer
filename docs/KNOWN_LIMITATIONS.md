@@ -1,7 +1,10 @@
 # Known Limitations
 
 - Folder scan decisions rely on file metadata and filesystem timestamps, primarily metadata, `mtime`, `atime`, and file size. The homepage scan does not inspect full file contents.
+- Candidate scoring is deterministic and rule-based. It explains confidence, risk level, and reasons, but it is still a review aid rather than a guarantee that a file should be moved.
+- `atime` can be disabled or coarse on some systems, including some Windows configurations, so users should treat long-unused detection as a supporting signal.
 - Quarantine and restore depend on `.smart_organizer_quarantine/manifest.json`. Tampered entries that point outside the scan root or quarantine root are rejected instead of restored.
+- The manifest is written atomically, but if storage hardware or OS-level writes fail repeatedly, the app reports the failure instead of guessing.
 - There is no background queue for homepage folder cleanup. Scans, previews, moves, restores, and report exports run in the active Streamlit request.
 - Directories or files without read or move permission will be skipped or reported as permission-related errors.
 - Video handling uses filename, container metadata, and optional thumbnails. It is not full video-content understanding.

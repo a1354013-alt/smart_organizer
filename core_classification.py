@@ -5,7 +5,6 @@ from typing import Any
 
 from core_utils import FileUtils
 
-
 DOCUMENT_TAGS = ["發票", "合約", "報價", "請款", "證明文件", "會議紀錄", "掃描", "其他文件"]
 PHOTO_TAGS = ["人物", "美食", "旅行", "文件/收據", "工作", "截圖", "風景", "其他照片"]
 VIDEO_TAGS = ["Unclassified", "Screen Recording", "Tutorial", "Meeting", "Promo", "Raw Footage", "Animation"]
@@ -42,7 +41,7 @@ def classify_multi_tag(metadata: dict[str, Any], original_name: str, return_reas
     is_video = metadata.get("file_type") == "video" or ext in FileUtils.VIDEO_EXTENSIONS
 
     if is_video:
-        scores = {tag: 0.0 for tag in VIDEO_TAGS}
+        scores = dict.fromkeys(VIDEO_TAGS, 0.0)
         matched = False
         video_tag_weights = {
             "Screen Recording": 0.85,
@@ -69,7 +68,7 @@ def classify_multi_tag(metadata: dict[str, Any], original_name: str, return_reas
             reasons.append("影片：未命中任何規則，預設為 Unclassified。")
         default_tag = "Unclassified"
     elif is_document:
-        scores = {tag: 0.0 for tag in DOCUMENT_TAGS}
+        scores = dict.fromkeys(DOCUMENT_TAGS, 0.0)
         rules = [
             (["統一編號", "發票", "收據", "invoice", "receipt"], "發票", 0.9),
             (["合約", "契約", "協議", "contract", "agreement"], "合約", 0.9),
@@ -94,7 +93,7 @@ def classify_multi_tag(metadata: dict[str, Any], original_name: str, return_reas
 
         default_tag = "其他文件"
     else:
-        scores = {tag: 0.0 for tag in PHOTO_TAGS}
+        scores = dict.fromkeys(PHOTO_TAGS, 0.0)
         rules = [
             (["screenshot", "截圖", "螢幕截圖"], "截圖", 0.9),
             (["food", "美食", "餐"], "美食", 0.8),

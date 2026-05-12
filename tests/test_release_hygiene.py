@@ -15,7 +15,6 @@ These tests verify that release/build directories don't contain:
 import os
 from pathlib import Path
 
-
 FORBIDDEN_PATTERNS = [
     ".coverage",
     "__pycache__",
@@ -55,19 +54,14 @@ def scan_for_forbidden_items(directory: Path):
                     # Directory pattern
                     if d == pattern.rstrip("/") or dir_path.match(f"*{pattern.rstrip('/')}"):
                         violations.append(str(dir_path))
-                elif pattern == "__pycache__":
-                    if d == "__pycache__":
-                        violations.append(str(dir_path))
+                elif pattern == "__pycache__" and d == "__pycache__":
+                    violations.append(str(dir_path))
         
         # Check files
         for f in files:
             file_path = Path(root) / f
             for pattern in FORBIDDEN_PATTERNS:
-                if pattern == ".coverage" and f == ".coverage":
-                    violations.append(str(file_path))
-                elif pattern.endswith(".pyc") and f.endswith(".pyc"):
-                    violations.append(str(file_path))
-                elif pattern == ".git/" and f.startswith(".git"):
+                if pattern == ".coverage" and f == ".coverage" or pattern.endswith(".pyc") and f.endswith(".pyc") or pattern == ".git/" and f.startswith(".git"):
                     violations.append(str(file_path))
     
     return violations

@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 import atexit
 import os
 import shutil
@@ -5,6 +6,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,13 +14,14 @@ import pytest
 from _pytest import pathlib as pytest_pathlib
 from _pytest import tmpdir as pytest_tmpdir
 
-from storage import StorageManager
 
 # 讓 `pytest -q` 在專案根目錄可直接執行，不需手動設定 PYTHONPATH。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.dont_write_bytecode = True
+
+from storage import StorageManager  # noqa: E402
 
 # Keep pytest temp writes outside the repo so delivery cleanliness tests stay meaningful.
 TEST_TMP = Path(tempfile.gettempdir()) / f"smart_organizer_tests_{uuid.uuid4().hex}"
@@ -53,16 +56,12 @@ def _cleanup_test_tmp() -> None:
 
 def _cleanup_repo_caches() -> None:
     for path in PROJECT_ROOT.rglob("__pycache__"):
-        try:
+        with suppress(PermissionError):
             shutil.rmtree(path, ignore_errors=True)
-        except PermissionError:
-            pass
     for pattern in ("*.pyc", "*.pyc.*"):
         for path in PROJECT_ROOT.rglob(pattern):
-            try:
+            with suppress(FileNotFoundError, PermissionError):
                 path.unlink()
-            except (FileNotFoundError, PermissionError):
-                pass
 
 
 _cleanup_repo_caches()

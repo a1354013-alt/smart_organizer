@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import cast
 
 from folder_models import QUARANTINE_DIRNAME
-from folder_organizer import list_quarantine_items, restore_quarantined_items, run_folder_organizer, scan_local_folder
+from folder_organizer import (
+    list_quarantine_items,
+    restore_quarantined_items,
+    run_folder_organizer,
+    scan_local_folder,
+)
 from folder_report import export_folder_report_csv, export_folder_report_markdown
 
 
@@ -97,7 +102,7 @@ def test_list_quarantine_items_accepts_legacy_manifest_shape(tmp_path: Path):
     items = list_quarantine_items(str(tmp_path))
     assert len(items) == 1
     assert items[0]["quarantine_path"] == str(quarantine_dir / "legacy.txt")
-    assert items[0]["status"] == "ACTIVE"
+    assert items[0]["status"] == "QUARANTINED"
 
 
 def test_list_quarantine_items_raises_on_invalid_manifest_json(tmp_path: Path):

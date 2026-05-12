@@ -14,6 +14,7 @@ SESSION_FOLDER_SCAN_ACTIONS = "folder_scan_actions"
 SESSION_FOLDER_SCAN_OPTIONS = "folder_scan_options"
 SESSION_FOLDER_RESTORE_RESULT = "folder_restore_result"
 SESSION_FOLDER_SCAN_PATH = "folder_scan_path"
+SESSION_FOLDER_SELECTED_PATHS = "folder_selected_paths"
 SESSION_PROCESSING_OPTIONS = "processing_options"
 SESSION_AI_ENABLED = "ai_enabled"
 SESSION_DEBUG_MODE = "debug_mode"
@@ -42,6 +43,7 @@ SESSION_DEFAULTS: dict[str, object] = {
     },
     SESSION_FOLDER_RESTORE_RESULT: None,
     SESSION_FOLDER_SCAN_PATH: "",
+    SESSION_FOLDER_SELECTED_PATHS: [],
     SESSION_PROCESSING_OPTIONS: {
         "enable_pdf_preview": False,
         "enable_ocr": False,

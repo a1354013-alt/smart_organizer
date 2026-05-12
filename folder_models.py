@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -13,6 +14,24 @@ QUARANTINE_DIRNAME = ".smart_organizer_quarantine"
 QUARANTINE_MANIFEST = "manifest.json"
 
 FolderActionStatus = Literal["SUCCESS", "FAILED", "SKIPPED"]
+
+
+class QuarantineStatus(StrEnum):
+    CANDIDATE = "CANDIDATE"
+    PREVIEWED = "PREVIEWED"
+    MOVING = "MOVING"
+    QUARANTINED = "QUARANTINED"
+    RESTORED = "RESTORED"
+    FAILED = "FAILED"
+
+
+ACTIVE_QUARANTINE_STATUSES = {QuarantineStatus.MOVING.value, QuarantineStatus.QUARANTINED.value}
+
+
+class RiskLevel(StrEnum):
+    SAFE_TO_REVIEW = "safe_to_review"
+    NEEDS_MANUAL_CHECK = "needs_manual_check"
+    DO_NOT_TOUCH = "do_not_touch"
 
 
 def is_relative_to_path(child: Path, parent: Path) -> bool:
@@ -57,9 +76,20 @@ class FolderScanRecord:
     is_large: bool
     candidate_reasons: list[str]
     recommendation: str
+    category: str = "general"
+    confidence: float = 0.0
+    risk_level: str = RiskLevel.DO_NOT_TOUCH.value
+    reason_codes: list[str] | None = None
+    file_age_score: float = 0.0
+    size_score: float = 0.0
+    duplicate_score: float = 0.0
+    extension_risk_score: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        payload = asdict(self)
+        if payload["reason_codes"] is None:
+            payload["reason_codes"] = []
+        return payload
 
 
 @dataclass(slots=True)
@@ -157,6 +187,7 @@ class ManifestItem(TypedDict, total=False):
     status: str
     restored_at: str
     restored_path: str
+    last_error: str
 
 
 def human_bytes(num_bytes: int | None) -> str:
@@ -186,7 +217,7 @@ def safe_int(value: object) -> int:
 
 
 def iso_now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
 def infer_local_file_kind(path: str) -> str:
@@ -236,6 +267,11 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
         original_path = str(item.get("original_path") or "").strip()
         if not quarantine_path:
             continue
+        status = str(item.get("status") or "QUARANTINED").strip().upper()
+        if status == "ACTIVE":
+            status = QuarantineStatus.QUARANTINED.value
+        if status not in {member.value for member in QuarantineStatus}:
+            status = QuarantineStatus.FAILED.value
         normalized.append(
             {
                 "original_path": original_path,
@@ -245,9 +281,10 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
                 "reason": str(item.get("reason") or ""),
                 "operation_id": str(item.get("operation_id") or ""),
                 "last_modified": str(item.get("last_modified") or "") or None,
-                "status": str(item.get("status") or "ACTIVE"),
+                "status": status,
                 "restored_at": str(item.get("restored_at") or ""),
                 "restored_path": str(item.get("restored_path") or ""),
+                "last_error": str(item.get("last_error") or ""),
             }
         )
     return normalized
@@ -274,10 +311,25 @@ def save_manifest(root: Path, manifest: dict[str, object]) -> None:
     target_dir = quarantine_dir(root)
     target_dir.mkdir(parents=True, exist_ok=True)
     normalized = {"items": _normalize_manifest_items(manifest.get("items"))}
-    quarantine_manifest_path(root).write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    manifest_path = quarantine_manifest_path(root)
+    tmp_path = manifest_path.with_name(f"{manifest_path.name}.tmp")
+    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+
+    try:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        with tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, manifest_path)
+    except OSError as exc:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise ManifestCompatibilityError(f"Failed to atomically save manifest: {exc}") from exc
 
 
 def safe_destination(path: Path) -> Path:

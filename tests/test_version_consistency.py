@@ -5,7 +5,7 @@ from pathlib import Path
 
 def test_version_is_single_source_and_consistent():
     # Single source of truth
-    from version import __version__, APP_TITLE
+    from version import APP_TITLE, __version__
 
     assert __version__
     assert f"v{__version__}" in APP_TITLE

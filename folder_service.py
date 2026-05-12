@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Callable, Iterable
 
 from folder_models import FolderActionResult, FolderOrganizerError, ScanPathError
 from folder_organizer import (
@@ -71,7 +71,7 @@ def preview_selected_actions(scan_result: dict[str, object], selected_paths: lis
 def build_report_snapshot(scan_result: dict[str, object] | None) -> dict[str, object] | None:
     if not isinstance(scan_result, dict):
         return None
-    return {key: value for key, value in scan_result.items()}
+    return dict(scan_result)
 
 
 def quarantine_selected_files(

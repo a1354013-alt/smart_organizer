@@ -1,76 +1,103 @@
 # Smart Organizer (v2.8.4)
 
-Smart Organizer is a local-first safety file cleanup assistant built with Streamlit. It combines an upload-review workflow for portfolio demos with a safer folder organizer that always follows `scan -> preview -> quarantine -> restore -> export report`.
+Smart Organizer is a local-first safe file organization assistant. It is not an automatic delete tool, knowledge base, RAG system, chatbot, or document QA app.
+
+The core product promise is simple: scan a folder, explain why files may need review, move selected files into quarantine, restore them if needed, and export a report.
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
-The backend validation and Streamlit uploader both use the single source of truth in `supported_formats.py`.
 
-## Project positioning
+## Core Workflow
 
-- Local-first: scanning, quarantine, restore, and release packaging all run on the local machine.
-- Safety-first: the app quarantines files instead of deleting them, records a manifest, and now validates path containment before move or restore.
-- Portfolio-ready: the homepage demonstrates the end-to-end cleanup workflow, and the docs explain design tradeoffs without claiming unsupported features.
+```mermaid
+flowchart LR
+    Scan["Scan"] --> Analyze["Analyze"]
+    Analyze --> Review["Review"]
+    Review --> Quarantine["Quarantine"]
+    Quarantine --> Restore["Restore"]
+    Restore --> Report["Report"]
+```
 
-## Main workflow
+Folder organizer flow:
 
-1. Scan a folder and collect metadata-only candidates.
-2. Preview stale or large-file actions with dry-run.
-3. Move selected files into `.smart_organizer_quarantine/`.
-4. Restore quarantined items when needed.
-5. Export Markdown or CSV reports for review.
+1. Scan a local folder with metadata-only inspection.
+2. Analyze candidates using explainable rule-based scoring.
+3. Review reasons, confidence, risk level, and recommended action.
+4. Move selected files into `.smart_organizer_quarantine/`.
+5. Restore quarantined files without overwriting existing files.
+6. Export Markdown or CSV reports.
 
-Upload/review flow remains available for supported PDFs, images, and videos.
+## Safety Design
 
-## Run locally
+- No direct delete: cleanup actions move files to quarantine first.
+- Path containment: scan, quarantine, and restore paths are validated against the selected root.
+- Restore protection: restore uses a safe destination and does not overwrite a new user file.
+- Atomic manifest: `manifest.json` is saved through `manifest.json.tmp`, flush, `fsync`, and `os.replace`.
+- Interrupted move recovery: `MOVING` manifest entries are repaired on the next quarantine/restore/list operation.
+- Release allowlist: the runtime zip is built from explicit files and rejects caches, DBs, uploads, temp folders, and `.git`.
+
+## Quick Demo
 
 ```bash
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python scripts/create_demo_folder.py
 streamlit run app.py
 ```
 
-## Validation and tests
+Then scan the generated `demo_files` folder. It contains old, duplicate, recent, and keep-focused sample files so reviewers can experience the full flow in about one minute.
 
-Run the full acceptance suite:
+## Validation
 
-```bash
-python -m compileall .
-python -m ruff check .
-python -m mypy .
-python -m pytest -q
-python scripts/create_release_zip.py
-```
-
-## System dependencies
-
-Optional processing features degrade safely when dependencies are missing or time out.
-
-- `poppler` + `pdf2image`: used for PDF preview rendering and PDF OCR image conversion.
-- `tesseract`: used for OCR on PDFs and images.
-- `ffmpeg` + `ffprobe`: used for video metadata extraction and thumbnail generation.
-
-If these tools are unavailable, the app should keep running and mark the result with `timeout`, `degraded`, or `partial` notes instead of crashing the whole batch.
-
-## Release packaging
-
-Create the official runtime/demo zip with:
+Run the main quality gates:
 
 ```bash
+python -m compileall -q .
+python scripts/safe_compileall.py -q .
+pytest
+ruff check .
+mypy core_processor.py core_metadata.py services_analysis.py services_finalize.py storage_repository.py storage_recovery.py storage_search.py folder_organizer.py folder_models.py
+python scripts/create_demo_folder.py
 python scripts/create_release_zip.py
+python scripts/verify_release_zip.py release/*.zip
 ```
 
-The release bundle is allowlist-based and intentionally excludes workspace-only content such as `.git/`, caches, temp folders, local databases, uploads, and generated artifacts.
+CI runs compile checks, full pytest, ruff, mypy on core/UI modules, release zip creation, and release zip policy verification.
 
-## Portfolio docs
+## Explainable Scoring
+
+The organizer is intentionally rule-based and reproducible. Each scan record includes:
+
+- `confidence`
+- `risk_level`
+- `candidate_reasons`
+- `reason_codes`
+- `file_age_score`
+- `size_score`
+- `duplicate_score`
+- `extension_risk_score`
+
+Low-confidence items are marked for manual review or do-not-touch handling. The app does not use opaque AI decisions for quarantine recommendations.
+
+## Known Limitations
+
+- Access time (`atime`) can be unreliable on some filesystems and OS settings.
+- Modified time (`mtime`) and file size are supporting signals, not proof that a file is safe to archive.
+- Users must manually confirm before moving files.
+- OCR, PDF preview, and video metadata depend on optional system tools.
+- The app never automatically deletes files.
+
+## Portfolio Highlights
+
+- Safe folder organization workflow
+- Quarantine and restore manifest
+- Atomic manifest write and recovery tests
+- Streamlit UI flow tests with `tmp_path` demo files
+- Explainable rule scoring
+- Release packaging with allowlist verification
+- One-command demo dataset generator
+
+## Additional Docs
 
 - Architecture and tradeoffs: `docs/PORTFOLIO_CASE_STUDY.md`
 - Known limitations: `docs/KNOWN_LIMITATIONS.md`
 - Release packaging notes: `RELEASE_PACKAGING.md`
 - Release runbook: `RUN_RELEASE.md`
-
-## Known limitations
-
-- Folder scan targets metadata only; it does not understand file semantics deeply.
-- OCR and preview quality depend on optional external tools.
-- Timeout cancellation is best-effort for already-running worker threads and subprocesses.
-- AI summary generation is optional and requires OpenAI credentials and SDK support.

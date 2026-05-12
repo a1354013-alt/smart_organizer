@@ -77,10 +77,7 @@ class StorageCleanupMixin:
             return True
 
         hash_prefix = source_basename.split("_", 1)[0].lower()
-        if len(hash_prefix) == 8 and hash_prefix in valid_hash_prefixes:
-            return True
-
-        return False
+        return len(hash_prefix) == 8 and hash_prefix in valid_hash_prefixes
 
     def cleanup_orphaned_uploads(self: Any, preview_ttl_days: int = 7, dry_run: bool = True):
         if self._mem_files is not None:
@@ -103,7 +100,7 @@ class StorageCleanupMixin:
             valid_temp_names: set[str] = set()
             valid_preview_paths: set[str] = set()
             valid_hash_prefixes: set[str] = set()
-            for temp_path, final_path, preview_path, file_hash in cursor.fetchall():
+            for temp_path, _final_path, preview_path, file_hash in cursor.fetchall():
                 if temp_path:
                     valid_temp_paths.add(temp_path)
                     valid_temp_names.add(Path(temp_path).name)

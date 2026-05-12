@@ -6,7 +6,12 @@ It is now split into focused modules while keeping the import surface stable.
 """
 
 from services_analysis import analyze_one_upload, analyze_upload_batch, analyze_upload_batch_async
-from services_finalize import finalize_batch, finalize_one_file, persist_confirmed_metadata, reclassify_record
+from services_finalize import (
+    finalize_batch,
+    finalize_one_file,
+    persist_confirmed_metadata,
+    reclassify_record,
+)
 from services_models import (
     AnalysisResult,
     BatchAnalysisOutcome,
@@ -15,7 +20,11 @@ from services_models import (
     SummarySuggestion,
     UploadedFileData,
 )
-from services_review import apply_manual_topic_override, build_confirmed_results, generate_summary_suggestion
+from services_review import (
+    apply_manual_topic_override,
+    build_confirmed_results,
+    generate_summary_suggestion,
+)
 
 __all__ = [
     "UploadedFileData",

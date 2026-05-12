@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from io import StringIO
-from typing import Iterable
 
 from folder_models import FolderActionResult, dict_object, human_bytes, object_list, safe_int
 from report_exports import escape_markdown_table_cell

@@ -6,10 +6,13 @@ import logging
 import os
 import shutil
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import suppress
 from functools import lru_cache
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any
 
 from contracts import ExtractedMetadata, FileType, VideoMetadata, validate_extracted_metadata
 from core_classification import classify_multi_tag as _classify_multi_tag
@@ -396,15 +399,11 @@ class FileProcessor:
             import json
             import subprocess
 
-            try:
+            with suppress(Exception):
                 result["file_size"] = os.path.getsize(file_path)
-            except Exception:
-                pass
-            try:
+            with suppress(Exception):
                 mtime = os.path.getmtime(file_path)
                 result["modified_at"] = datetime.datetime.fromtimestamp(mtime).isoformat()
-            except Exception:
-                pass
 
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", file_path]
             try:
@@ -419,10 +418,8 @@ class FileProcessor:
 
                 duration = fmt.get("duration")
                 if duration is not None:
-                    try:
+                    with suppress(Exception):
                         result["duration_seconds"] = float(duration)
-                    except Exception:
-                        pass
 
                 video_stream = next((stream for stream in streams if (stream.get("codec_type") or "") == "video"), None)
                 if isinstance(video_stream, dict):

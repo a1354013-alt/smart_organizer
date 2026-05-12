@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 
-
 UI_MODULES = {
     "ui_home": ["render_home", "render_sidebar"],
     "ui_upload": ["render_upload"],

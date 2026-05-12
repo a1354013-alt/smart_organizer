@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from contracts import validate_extracted_metadata
 from core import FileProcessor
-from storage import StorageManager
-
 from services_models import AnalysisResult, ExecutionResult
+from storage import StorageManager
 
 logger = logging.getLogger(__name__)
 

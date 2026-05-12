@@ -25,7 +25,7 @@ What this does:
 What this does not do:
 
 - It does not prepare the extracted runtime zip to be repackaged again.
-- It does not copy `scripts/`, tests, or other source-only tooling into the runtime package.
+- It only copies runtime/demo helper scripts from the allowlist, not tests or source-only tooling.
 
 ## 2. Files included
 
@@ -38,6 +38,7 @@ Key runtime groups:
 - UI modules: `ui_*.py`
 - folder organizer/report modules: `folder_*.py`, `report_exports.py`
 - docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- demo helper: `scripts/create_demo_folder.py`
 - runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 Not included:
@@ -57,6 +58,7 @@ After extracting the official release zip, use it only as a runtime/demo package
 
 ```bash
 python -m pip install -r requirements.txt
+python scripts/create_demo_folder.py
 streamlit run app.py
 ```
 
@@ -78,7 +80,7 @@ These commands belong to the source repository, not the runtime package:
 
 Why:
 
-- the official release zip does not include `scripts/`
+- the official release zip does not include tests or dev dependencies
 - the official release zip does not include tests or dev dependencies
 - the official release zip is a runtime/demo package, not a packaging toolchain
 

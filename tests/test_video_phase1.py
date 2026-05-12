@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import core_processor
-from core import FileProcessor, FileUtils, VIDEO_TAGS, VIDEO_TOOL_TIMEOUT_SECONDS
+from core import VIDEO_TAGS, VIDEO_TOOL_TIMEOUT_SECONDS, FileProcessor, FileUtils
 from services import UploadedFileData, analyze_one_upload
 from storage import StorageManager
 

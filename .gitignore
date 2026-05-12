@@ -41,6 +41,7 @@ release_ci*/
 uploads/
 repo/
 smart_organizer.db
+demo_files/
 .compileall_cache/
 previews/
 tmp/

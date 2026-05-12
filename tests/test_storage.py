@@ -122,7 +122,7 @@ def test_get_records_page_escapes_like_wildcards():
     names = ["100%complete.pdf", "under_score.pdf", "ordinary.pdf"]
     summaries = ["literal percent", "literal underscore", "plain text"]
 
-    for name, summary in zip(names, summaries):
+    for name, summary in zip(names, summaries, strict=True):
         result = storage.create_temp_file(name, payload, _sha256(name.encode("utf-8")), "document")
         file_id = result["file_id"]
         storage.update_file_metadata(

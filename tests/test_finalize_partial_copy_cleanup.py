@@ -51,5 +51,5 @@ def test_finalize_partial_copy_failure_cleans_target_and_rolls_back_state():
     temp_path = info.get("temp_path")
     assert temp_path and storage._path_exists(temp_path)
     # 無法直接從 DB 得知 target_path（已被清空），但可用 mem_files 確認 repo 內沒有任何目標檔
-    assert all(not k.startswith("mem://repo/") for k in storage._mem_files.keys())
+    assert all(not k.startswith("mem://repo/") for k in storage._mem_files)
 

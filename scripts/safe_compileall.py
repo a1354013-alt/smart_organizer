@@ -81,7 +81,7 @@ def _parse_flags(argv: list[str]) -> tuple[list[str], CompileFlags]:
             continue
         cleaned.append(token)
 
-    legacy = True if not legacy else legacy
+    legacy = legacy if legacy else True
     return cleaned, {"quiet": int(min(quiet, 2)), "force": force, "legacy": legacy, "recurse": recurse}
 
 
@@ -108,7 +108,7 @@ def _compile_one(source_path: str, *, quiet: int) -> bool:
         builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
         return True
     except UnicodeDecodeError:
-        with open(source_path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(source_path, encoding="utf-8", errors="replace") as handle:
             source_text = handle.read()
         try:
             builtins.compile(source_text, source_path, "exec", dont_inherit=True, optimize=0)
@@ -141,11 +141,11 @@ def _compile_targets(std: ModuleType, targets: list[str], *, quiet: int, force: 
         if not os.path.isdir(path):
             continue
 
-        def _onerror(err: OSError) -> None:
+        def _onerror(err: OSError, walk_root: str = path) -> None:
             nonlocal ok
             ok = False
             if quiet < 2:
-                print(f"Can't list '{getattr(err, 'filename', path)}'")
+                print(f"Can't list '{getattr(err, 'filename', walk_root)}'")
 
         for dirpath, dirnames, filenames in os.walk(path, topdown=True, onerror=_onerror):
             dirnames[:] = [dirname for dirname in dirnames if not _should_skip_dir(dirname)]

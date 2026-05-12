@@ -9,7 +9,7 @@ from ui_upload import get_supported_upload_caption, get_supported_upload_types
 
 def test_ui_upload_types_match_backend_extensions():
     assert tuple(get_supported_upload_types()) == SUPPORTED_UPLOAD_EXTENSIONS
-    assert set(f".{ext}" for ext in get_supported_upload_types()) == set(FileUtils.ALLOWED_UPLOAD_EXTENSIONS)
+    assert {f".{ext}" for ext in get_supported_upload_types()} == set(FileUtils.ALLOWED_UPLOAD_EXTENSIONS)
 
 
 def test_readme_supported_formats_match_single_source():
