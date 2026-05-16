@@ -11,7 +11,7 @@ from services import (
     build_confirmed_results,
     generate_summary_suggestion,
 )
-from ui_common import UIContext, handle_ui_exception, is_debug
+from ui_common import UIContext, handle_ui_exception, is_debug, safe_display_text
 from ui_renderers import render_video_details
 
 logger = logging.getLogger(__name__)
@@ -28,26 +28,27 @@ def _tag_options_for(file_type: str) -> list[str]:
 
 
 def render_review(context: UIContext) -> None:
-    st.header("預覽確認")
+    st.header("Review upload analysis")
     analysis_results_raw = st.session_state.get("analysis_results")
     if not analysis_results_raw:
-        st.info("請先到「上傳分析」完成分析。")
+        st.info("Run advanced upload analysis first, then review the results here.")
         return
     if not isinstance(analysis_results_raw, list):
-        st.error("分析結果格式不正確。")
+        st.error("Analysis results have an unexpected format.")
         if is_debug():
             st.json({"type": str(type(analysis_results_raw))})
         return
 
     analysis_results: list[AnalysisResult] = analysis_results_raw
-    st.markdown("逐筆確認主題、摘要與預覽內容，沒問題後再送往整理流程。")
+    st.markdown("Review topics, summaries, and previews before sending files to the organization step.")
     selected_topics: dict[int, str] = {}
 
     for idx, result in enumerate(analysis_results):
-        with st.expander(f"{idx + 1}. {result.original_name}", expanded=(idx == 0)):
+        safe_name = safe_display_text(result.original_name)
+        with st.expander(f"{idx + 1}. {safe_name}", expanded=(idx == 0)):
             col1, col2 = st.columns([1, 2])
             with col1:
-                st.subheader("預覽")
+                st.subheader("Preview")
                 if result.preview_path and context.storage.path_exists(result.preview_path):
                     try:
                         st.image(str(result.preview_path), use_container_width=True)
@@ -55,21 +56,21 @@ def render_review(context: UIContext) -> None:
                         if is_debug():
                             st.exception(exc)
                         else:
-                            st.info("預覽載入失敗。")
+                            st.info("Preview could not be loaded.")
                 elif result.file_type == "video":
-                    st.warning("目前沒有可用的影片縮圖。")
+                    st.warning("No video thumbnail is currently available.")
                 else:
-                    st.info("沒有可用預覽。")
+                    st.info("No preview is available.")
 
             with col2:
-                st.subheader("分析資訊")
-                st.write(f"**檔名**: {result.original_name}")
-                st.write(f"**類型**: {result.file_type}")
-                st.write(f"**日期**: {result.standard_date}")
+                st.subheader("Analysis")
+                st.write(f"**Filename**: {safe_name}")
+                st.write(f"**Type**: {safe_display_text(result.file_type)}")
+                st.write(f"**Date**: {safe_display_text(result.standard_date)}")
                 if str(getattr(result, "analysis_status", "OK") or "OK") in {"WARNING", "PARTIAL"}:
-                    st.warning("此檔案有部分分析步驟降級或失敗。")
+                    st.warning("Some analysis steps were degraded or failed.")
                     if getattr(result, "last_error", None):
-                        st.caption(f"last_error: {result.last_error}")
+                        st.caption(f"last_error: {safe_display_text(result.last_error)}")
                     if is_debug() and getattr(result, "step_timings", None):
                         st.caption("step_timings")
                         st.json(result.step_timings or {})
@@ -78,16 +79,16 @@ def render_review(context: UIContext) -> None:
                     render_video_details(result.metadata or {})
 
                 if result.is_scanned:
-                    st.warning("此文件可能是掃描檔，已依 OCR/抽取結果進行處理。")
+                    st.warning("This document may be scanned; OCR or fallback extraction was used.")
                 notes = (result.metadata or {}).get("notes")
                 if notes:
                     note_lines = notes if isinstance(notes, list) else [str(notes)]
-                    st.info("處理備註\n- " + "\n- ".join(map(str, note_lines)))
+                    st.info("Processing notes\n- " + "\n- ".join(safe_display_text(note) for note in note_lines))
 
                 tag_options = _tag_options_for(result.file_type) or ["Unclassified"]
                 current_index = tag_options.index(result.main_topic) if result.main_topic in tag_options else 0
                 new_topic = st.selectbox(
-                    "主題",
+                    "Topic",
                     tag_options,
                     index=current_index,
                     key=f"topic_{idx}_{result.file_id}",
@@ -102,33 +103,33 @@ def render_review(context: UIContext) -> None:
                         chosen_topic=new_topic,
                         summary=st.session_state.review_summaries.get(result.file_id),
                     )
-                    st.caption("分類理由")
+                    st.caption("Classification reason")
                     st.code(str(computed.classification_reason or ""))
-                    st.caption("最終決策")
+                    st.caption("Decision reason")
                     st.code(str(computed.final_decision_reason or ""))
                 except Exception as exc:
                     logger.exception("manual override preview failed")
-                    handle_ui_exception("主題預覽更新失敗。", exc)
+                    handle_ui_exception("Topic preview failed.", exc)
 
-                if st.button("產生 AI 摘要", key=f"summary_{idx}_{result.file_id}"):
+                if st.button("Generate AI summary", key=f"summary_{idx}_{result.file_id}"):
                     if not st.session_state.get("ai_enabled"):
-                        st.warning("請先在側邊欄啟用 AI 摘要。")
+                        st.warning("Enable AI summary in the sidebar first.")
                     else:
                         try:
                             suggestion = generate_summary_suggestion(computed, processor=context.processor)
                             st.session_state.review_summaries[result.file_id] = suggestion.summary
-                            st.info(f"摘要：{suggestion.summary}")
+                            st.info(f"Summary: {safe_display_text(suggestion.summary)}")
                             if suggestion.llm_tags:
-                                st.caption(f"AI tags: {', '.join(suggestion.llm_tags)}")
+                                st.caption(f"AI tags: {safe_display_text(', '.join(suggestion.llm_tags))}")
                         except Exception as exc:
                             logger.exception("summary generation failed")
-                            handle_ui_exception("AI 摘要產生失敗。", exc)
+                            handle_ui_exception("AI summary generation failed.", exc)
 
                 saved_summary = st.session_state.review_summaries.get(result.file_id) or result.summary
                 if saved_summary:
-                    st.write(f"**摘要**: {saved_summary}")
+                    st.write(f"**Summary**: {safe_display_text(saved_summary)}")
 
-    if st.button("確認無誤，進行整理", key="confirm_button"):
+    if st.button("Confirm reviewed files", key="confirm_button"):
         try:
             st.session_state.confirmed_results = build_confirmed_results(
                 analysis_results,
@@ -136,7 +137,7 @@ def render_review(context: UIContext) -> None:
                 selected_topics=selected_topics,
                 summaries=st.session_state.review_summaries,
             )
-            st.success("已建立確認結果，現在可前往「執行整理」。")
+            st.success("Reviewed files are ready for the Execute tab.")
         except Exception as exc:
             logger.exception("build_confirmed_results failed")
-            handle_ui_exception("確認流程失敗。", exc)
+            handle_ui_exception("Review confirmation failed.", exc)

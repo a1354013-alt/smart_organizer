@@ -23,7 +23,14 @@ from folder_service import (
     restore_quarantine_selection,
     scan_folder,
 )
-from ui_common import UIContext, card_close, card_open, handle_ui_exception, is_debug
+from ui_common import (
+    UIContext,
+    card_close,
+    card_open,
+    handle_ui_exception,
+    is_debug,
+    safe_display_text,
+)
 from ui_labels import recommendation_display_label
 from ui_renderers import render_dependency_status
 from ui_state import (
@@ -81,7 +88,19 @@ def refresh_dependency_status(context: UIContext) -> dict[str, Any]:
 
 
 def render_sidebar(context: UIContext) -> None:
-    st.sidebar.header("Folder organizer settings")
+    st.sidebar.header("Smart Organizer")
+    st.sidebar.markdown(
+        "**Main workflow**\n"
+        "- Local folder organization\n"
+        "- Long-unused file review\n"
+        "- Safe quarantine and restore\n\n"
+        "**Advanced workflow**\n"
+        "- Upload file analysis\n"
+        "- Classification, search, and records"
+    )
+    st.sidebar.caption(
+        "Async batch processing is currently an internal/future-use path; the UI uses the safer synchronous flow for clearer progress and errors."
+    )
 
     with st.sidebar.expander("Scan options", expanded=True):
         stale_days = st.slider("Consider unused after this many days", 7, 3650, 365, step=7)
@@ -346,7 +365,7 @@ def render_home(context: UIContext) -> None:
             if errors:
                 with st.expander("Scan warnings", expanded=False):
                     for message in errors[:50]:
-                        st.write(f"- {message}")
+                        st.write(f"- {safe_display_text(message)}")
 
             records = [item for item in cast(list[object], scan.get("records") or []) if isinstance(item, dict)]
             candidates = [item for item in records if item.get("candidate_reasons")]
@@ -401,7 +420,7 @@ def render_home(context: UIContext) -> None:
 
             report_payload = export_folder_report_markdown(export_scan, export_operation)
             with st.expander("Report preview", expanded=True):
-                st.markdown(report_payload[:4000])
+                st.code(report_payload[:4000], language="markdown")
             st.download_button(
                 "Export Markdown report",
                 report_payload,
@@ -426,11 +445,14 @@ def render_home(context: UIContext) -> None:
             with dash_col1:
                 st.markdown("**Top largest files**")
                 for item in top_largest:
-                    st.write(f"- `{item.get('name')}` | {human_bytes(int(item.get('size_bytes') or 0))}")
+                    st.write(f"- {safe_display_text(item.get('name'))} | {human_bytes(int(item.get('size_bytes') or 0))}")
             with dash_col2:
                 st.markdown("**Top stale files**")
                 for item in top_stale:
-                    st.write(f"- `{item.get('name')}` | {item.get('days_since_access')} days idle")
+                    st.write(
+                        f"- {safe_display_text(item.get('name'))} | "
+                        f"{safe_display_text(item.get('days_since_access'))} days idle"
+                    )
 
             recommendation_summary = summarize_recommendations(records, candidates)
             st.markdown("**Recommended actions**")
@@ -458,7 +480,7 @@ def render_home(context: UIContext) -> None:
                 str(current_scan.get("path") or folder_path or "")
             )
         for warning in restore_quarantine_warnings:
-            st.warning(warning)
+            st.warning(safe_display_text(warning))
         if quarantine_items:
             restore_choices = st.multiselect(
                 "Choose quarantine items to restore",

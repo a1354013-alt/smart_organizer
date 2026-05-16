@@ -16,6 +16,8 @@ import sysconfig
 from types import ModuleType
 from typing import TypedDict
 
+sys.dont_write_bytecode = True
+
 
 class CompileFlags(TypedDict):
     quiet: int

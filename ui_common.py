@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,24 @@ class UIContext:
     max_upload_bytes: int
     pandas: Any = None
     plt: Any = None
+
+
+def safe_display_text(value: object, *, max_chars: int = 2000) -> str:
+    """Escape user-controlled text before passing it through markdown-like UI paths."""
+    text = "" if value is None else str(value)
+    text = text.replace("\x00", "\uFFFD")
+    if len(text) > max_chars:
+        text = f"{text[:max_chars]}..."
+    return escape(text, quote=False)
+
+
+def format_bytes(num_bytes: int) -> str:
+    value = float(max(0, int(num_bytes)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024.0 or unit == "GB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024.0
+    return f"{value:.1f} GB"
 
 
 def inject_global_css() -> None:
@@ -172,7 +191,7 @@ def handle_ui_exception(user_message: str, exc: Exception) -> None:
     if is_debug():
         st.exception(exc)
     else:
-        st.error(user_message)
+        st.error(safe_display_text(user_message))
 
 
 def build_uploaded_file_batch(uploaded_files: list[Any]) -> list[UploadedFileData]:

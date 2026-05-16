@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import zipfile
+from pathlib import Path
 
 from scripts.create_release_zip import (
     RELEASE_ALLOWLIST,
@@ -8,7 +9,7 @@ from scripts.create_release_zip import (
     get_version,
     zip_contains_forbidden_entries,
 )
-from scripts.verify_release_zip import resolve_zip_paths
+from scripts.verify_release_zip import resolve_zip_paths, verify_release_zip
 
 
 def test_python_release_script_builds_clean_zip(tmp_path):
@@ -64,3 +65,17 @@ def test_verify_release_zip_expands_glob_patterns(tmp_path):
     matches = resolve_zip_paths(str(tmp_path / "*.zip"))
 
     assert matches == [zip_path]
+
+
+def test_verify_release_zip_rejects_forbidden_and_extra_entries(tmp_path: Path):
+    zip_path = tmp_path / "bad.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("app.py", "print('ok')\n")
+        archive.writestr("__pycache__/bad.pyc", b"cached")
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "forbidden paths" in str(exc)
+    else:
+        raise AssertionError("Expected forbidden zip entry to fail verification")

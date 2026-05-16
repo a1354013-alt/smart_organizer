@@ -5,7 +5,7 @@ import logging
 import streamlit as st
 
 from services import AnalysisResult, finalize_batch
-from ui_common import UIContext, handle_ui_exception
+from ui_common import UIContext, handle_ui_exception, safe_display_text
 from ui_state import reset_review_state
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def render_execute(context: UIContext) -> None:
 
     def on_execute_progress(index: int, total: int, result: AnalysisResult) -> None:
         progress_bar.progress(index / total)
-        status_text.text(f"Organizing {index}/{total}: {result.original_name}")
+        status_text.text(f"Organizing {index}/{total}: {safe_display_text(result.original_name)}")
 
     try:
         execution_results = finalize_batch(
@@ -42,10 +42,10 @@ def render_execute(context: UIContext) -> None:
 
         for result in execution_results:
             if result.status == "SUCCESS":
-                st.success(f"{result.original_name} -> {result.new_path}")
+                st.success(f"{safe_display_text(result.original_name)} -> {safe_display_text(result.new_path)}")
             else:
-                detail = f": {result.error_message}" if result.error_message else ""
-                st.error(f"{result.original_name} failed{detail}")
+                detail = f": {safe_display_text(result.error_message)}" if result.error_message else ""
+                st.error(f"{safe_display_text(result.original_name)} failed{detail}")
     except Exception as exc:
         logger.exception("render_execute failed")
         handle_ui_exception("Execution failed.", exc)

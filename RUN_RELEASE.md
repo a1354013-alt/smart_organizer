@@ -106,3 +106,19 @@ Recommended smoke test after extraction:
 2. Start the app with `streamlit run app.py`.
 3. Confirm the app opens successfully.
 4. Confirm a basic upload flow or folder-cleanup UI flow works.
+
+## 8. Source repository release validation
+
+Run these commands from the source repository root before publishing a release. Use
+`scripts/safe_compileall.py` instead of `python -m compileall` so validation does not
+create `__pycache__` directories that would fail the final workspace-cleanliness check.
+
+```bash
+python scripts/safe_compileall.py -q .
+python -m ruff check .
+python -m mypy
+python -m pytest
+python scripts/create_release_zip.py --output-dir release_ci
+python scripts/verify_release_zip.py release_ci/*.zip
+python scripts/check_workspace_clean.py --project-root .
+```

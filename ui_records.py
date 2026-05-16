@@ -7,7 +7,7 @@ import streamlit as st
 
 from report_exports import export_records_csv, export_records_markdown
 from services import reclassify_record
-from ui_common import UIContext, handle_ui_exception
+from ui_common import UIContext, handle_ui_exception, safe_display_text
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +103,9 @@ def render_records(context: UIContext) -> None:
                 with st.spinner("Refreshing file locations..."):
                     result = context.storage.refresh_file_locations(fix_moving=True)
                 if result.get("success"):
-                    st.success(str(result.get("summary") or "Done"))
+                    st.success(safe_display_text(result.get("summary") or "Done"))
                 else:
-                    st.error(str(result.get("error") or "Failed"))
+                    st.error(safe_display_text(result.get("error") or "Failed"))
             except Exception as exc:
                 handle_ui_exception("Failed to refresh file locations.", exc)
 
@@ -117,7 +117,7 @@ def render_records(context: UIContext) -> None:
                 if result.get("success"):
                     st.success("FTS rows rebuilt successfully.")
                 else:
-                    st.error(str(result.get("error") or "Failed"))
+                    st.error(safe_display_text(result.get("error") or "Failed"))
             except Exception as exc:
                 handle_ui_exception("Failed to rebuild FTS rows.", exc)
 
@@ -135,7 +135,7 @@ def render_records(context: UIContext) -> None:
                         file_id=int(selected_file_id),
                         processing_options=st.session_state.get("processing_options"),
                     )
-                st.success(f"Updated topic: {main_topic}")
+                st.success(f"Updated topic: {safe_display_text(main_topic)}")
             except FileNotFoundError:
                 st.error("The file is no longer available on disk. Refresh locations first.")
             except Exception as exc:

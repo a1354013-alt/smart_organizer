@@ -60,3 +60,25 @@ def test_release_packaging_docs_match_current_policy():
     assert "streamlit run app.py" in run_release
     assert "$includePaths" not in ps1
     assert "python scripts/create_release_zip.py" in ps1 or "scripts\\create_release_zip.py" in ps1
+
+
+def test_release_validation_commands_are_consistent_and_cache_safe():
+    docs = [
+        (PROJECT_ROOT / "README.md").read_text(encoding="utf-8"),
+        (PROJECT_ROOT / "RUN_RELEASE.md").read_text(encoding="utf-8"),
+        (PROJECT_ROOT / "RELEASE_PACKAGING.md").read_text(encoding="utf-8"),
+    ]
+    required_commands = [
+        "python scripts/safe_compileall.py -q .",
+        "python -m ruff check .",
+        "python -m mypy",
+        "python -m pytest",
+        "python scripts/create_release_zip.py --output-dir release_ci",
+        "python scripts/verify_release_zip.py release_ci/*.zip",
+        "python scripts/check_workspace_clean.py --project-root .",
+    ]
+
+    for content in docs:
+        for command in required_commands:
+            assert command in content
+        assert "python -m compileall -q ." not in content

@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import suppress
@@ -93,7 +93,7 @@ def _read_int_env(key: str, default: int, *, min_value: int | None = None, max_v
 VIDEO_TOOL_TIMEOUT_SECONDS = _read_int_env("VIDEO_TOOL_TIMEOUT_SECONDS", 10, min_value=1)
 
 
-def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None):
+def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None) -> Any:
     import subprocess
 
     timeout = max(1, int(timeout_seconds or VIDEO_TOOL_TIMEOUT_SECONDS))
@@ -127,7 +127,7 @@ def is_ffmpeg_available() -> bool:
 
 
 class FileProcessor:
-    def __init__(self):
+    def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self.openai_timeout_seconds = self._read_int_env("OPENAI_TIMEOUT_SECONDS", 30, min_value=5, max_value=120)
         self.poppler_path = (os.getenv("POPPLER_PATH") or "").strip() or None
@@ -140,10 +140,16 @@ class FileProcessor:
             max_value=10,
         )
 
-    def _read_int_env(self, key, default, min_value=None, max_value=None):
+    def _read_int_env(
+        self,
+        key: str,
+        default: int,
+        min_value: int | None = None,
+        max_value: int | None = None,
+    ) -> int:
         return _read_int_env(key, int(default), min_value=min_value, max_value=max_value)
 
-    def get_dependency_status(self):
+    def get_dependency_status(self) -> dict[str, dict[str, bool]]:
         python_deps = {
             "PIL": Image is not None,
             "exifread": exifread_module is not None,
@@ -160,7 +166,7 @@ class FileProcessor:
         }
         return {"python": python_deps, "system": system_deps, "config": config}
 
-    def get_file_hash(self, file_path):
+    def get_file_hash(self, file_path: str | os.PathLike[str] | Any) -> str:
         if hasattr(file_path, "read"):
             data = file_path.read()
         else:
@@ -168,7 +174,11 @@ class FileProcessor:
                 data = handle.read()
         return hashlib.sha256(data).hexdigest()
 
-    def extract_metadata(self, file_path, options=None) -> ExtractedMetadata:
+    def extract_metadata(
+        self,
+        file_path: str | os.PathLike[str],
+        options: Mapping[str, Any] | None = None,
+    ) -> ExtractedMetadata:
         options = options or {}
         file_path = str(file_path)
         filename = os.path.basename(file_path)
@@ -333,7 +343,7 @@ class FileProcessor:
             metadata["video"] = video
         return validate_extracted_metadata(metadata)
 
-    def _ocr_image(self, file_path):
+    def _ocr_image(self, file_path: str) -> str:
         if pytesseract is None or Image is None:
             return ""
         try:
@@ -343,7 +353,12 @@ class FileProcessor:
             logger.error("Image OCR failed: %s", exc)
             return ""
 
-    def _generate_pdf_preview(self, file_path, max_pages=1, timeout_seconds: int = 10):
+    def _generate_pdf_preview(
+        self,
+        file_path: str,
+        max_pages: int = 1,
+        timeout_seconds: int = 10,
+    ) -> str | None:
         if convert_from_path_fn is None:
             return None
         try:
@@ -364,7 +379,7 @@ class FileProcessor:
             logger.error("PDF preview failed: %s", exc)
             return None
 
-    def _get_photo_date(self, file_path):
+    def _get_photo_date(self, file_path: str) -> str | None:
         try:
             if exifread_module is None:
                 return None
@@ -377,7 +392,7 @@ class FileProcessor:
             logger.debug("EXIF date read failed: %s", exc)
         return None
 
-    def _get_file_mtime(self, file_path):
+    def _get_file_mtime(self, file_path: str) -> str:
         try:
             mtime = os.path.getmtime(file_path)
             return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
@@ -502,7 +517,7 @@ class FileProcessor:
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
-    def _extract_pdf_text(self, file_path, max_pages=None):
+    def _extract_pdf_text(self, file_path: str, max_pages: int | None = None) -> str:
         if PdfReader is None:
             return ""
         try:
@@ -521,7 +536,12 @@ class FileProcessor:
             logger.error("PDF text extraction failed: %s", exc)
             return ""
 
-    def _ocr_pdf_sample(self, file_path, max_pages=3, timeout_seconds: int = 15) -> tuple[str, str | None]:
+    def _ocr_pdf_sample(
+        self,
+        file_path: str,
+        max_pages: int = 3,
+        timeout_seconds: int = 15,
+    ) -> tuple[str, str | None]:
         if convert_from_path_fn is None or pytesseract is None:
             return "", "dependencies_missing: pdf2image/poppler or tesseract is unavailable"
         try:
@@ -551,7 +571,7 @@ class FileProcessor:
             logger.error("PDF OCR failed: %s", exc)
             return "", str(exc)[:200]
 
-    def get_llm_summary(self, text, file_type, enabled=False):
+    def get_llm_summary(self, text: str, file_type: str, enabled: bool = False) -> tuple[str | None, list[str]]:
         note = None
         if not enabled:
             return None, []
@@ -603,8 +623,18 @@ class FileProcessor:
                 message = f"{message} {note}"
             return message, []
 
-    def classify_multi_tag(self, metadata, original_name, return_reason=False):
-        return _classify_multi_tag(metadata, original_name, return_reason=return_reason)
+    def classify_multi_tag(
+        self,
+        metadata: Mapping[str, Any],
+        original_name: object,
+        return_reason: bool = False,
+    ) -> Any:
+        return _classify_multi_tag(dict(metadata), str(original_name), return_reason=return_reason)
 
-    def sync_manual_topic(self, main_topic, tag_scores, file_type):
+    def sync_manual_topic(
+        self,
+        main_topic: str,
+        tag_scores: dict[str, float] | None,
+        file_type: str,
+    ) -> Any:
         return _sync_manual_topic(main_topic, tag_scores, file_type)

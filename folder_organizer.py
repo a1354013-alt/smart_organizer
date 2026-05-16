@@ -148,6 +148,7 @@ class FolderOrganizer:
             )
 
         target.parent.mkdir(parents=True, exist_ok=True)
+        target = safe_destination(target)
         shutil.move(str(source), str(target))
         return FolderActionResult(success=True, source=str(source), target=str(target))
 
@@ -171,6 +172,7 @@ class FolderOrganizer:
             )
 
         target.parent.mkdir(parents=True, exist_ok=True)
+        target = safe_destination(target)
         shutil.move(str(source), str(target))
         return FolderActionResult(success=True, source=str(source), target=str(target))
 

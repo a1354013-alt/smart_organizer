@@ -78,7 +78,13 @@ def main() -> None:
     render_home(context)
 
     tab_upload, tab_review, tab_execute, tab_search, tab_records = st.tabs(
-        ["Upload", "Review", "Execute", "Search", "Records"]
+        [
+            "Advanced Upload",
+            "Review Uploads",
+            "Execute Upload Organizer",
+            "Search Records",
+            "Records",
+        ]
     )
     with tab_upload:
         render_upload(context)

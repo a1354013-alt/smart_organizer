@@ -8,13 +8,22 @@ import uuid
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from core import FileUtils
 from storage_base import MAX_UPLOAD_BYTES, _log_context
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
+
+
+class CreateTempFileResult(TypedDict, total=False):
+    success: bool
+    reason: str
+    message: str
+    file_id: int
+    status: str
+    final_path: str | None
 
 
 class StorageRepositoryMixin:
@@ -100,7 +109,13 @@ class StorageRepositoryMixin:
             return str(provided)
         return "document"
 
-    def create_temp_file(self: Any, uploaded_file_name: str, file_content: bytes | bytearray | memoryview, file_hash: str, file_type: str):
+    def create_temp_file(
+        self: Any,
+        uploaded_file_name: str,
+        file_content: bytes | bytearray | memoryview,
+        file_hash: str,
+        file_type: str,
+    ) -> CreateTempFileResult:
         temp_path: str | Path | None = None
         part_path: Path | None = None
         conn: sqlite3.Connection | None = None
@@ -116,7 +131,13 @@ class StorageRepositoryMixin:
             )
             row = cursor.fetchone()
             if row:
-                return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
+                return {
+                    "success": False,
+                    "reason": "DUPLICATE",
+                    "file_id": int(row[0]),
+                    "status": str(row[1] or ""),
+                    "final_path": str(row[2]) if row[2] else None,
+                }
 
             unique_temp_name = f"{file_hash[:8]}_{safe_name}"
             if self._mem_files is not None:
@@ -170,7 +191,13 @@ class StorageRepositoryMixin:
                     if temp_path and str(temp_path) != db_temp_path and self._path_exists(temp_path):
                         with suppress(Exception):
                             self._remove_path(str(temp_path))
-                    return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
+                    return {
+                        "success": False,
+                        "reason": "DUPLICATE",
+                        "file_id": int(row[0]),
+                        "status": str(row[1] or ""),
+                        "final_path": str(row[2]) if row[2] else None,
+                    }
 
                 cursor.execute(
                     """
@@ -179,7 +206,7 @@ class StorageRepositoryMixin:
                     """,
                     (original_name, safe_name, str(temp_path), file_hash, final_file_type),
                 )
-                file_id = cursor.lastrowid
+                file_id = int(cursor.lastrowid or 0)
                 conn.commit()
                 logger.info(
                     "create_temp_file success%s",
@@ -198,7 +225,13 @@ class StorageRepositoryMixin:
                     if temp_path and str(temp_path) != db_temp_path and self._path_exists(temp_path):
                         with suppress(Exception):
                             self._remove_path(str(temp_path))
-                return {"success": False, "reason": "DUPLICATE", "file_id": row[0], "status": row[1], "final_path": row[2]}
+                return {
+                    "success": False,
+                    "reason": "DUPLICATE",
+                    "file_id": int(row[0]),
+                    "status": str(row[1] or ""),
+                    "final_path": str(row[2]) if row[2] else None,
+                }
         except Exception as exc:
             logger.error(
                 "create_temp_file failed%s: %s",
@@ -367,7 +400,7 @@ class StorageRepositoryMixin:
             if conn:
                 conn.close()
 
-    def get_all_records(self: Any):
+    def get_all_records(self: Any) -> list[dict[str, object]]:
         return self.get_records_page(limit=500, offset=0)["items"]
 
     def get_record_filter_values(self: Any) -> dict[str, list[str]]:

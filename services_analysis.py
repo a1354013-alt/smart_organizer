@@ -15,6 +15,17 @@ from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
 
+
+def _create_temp_file_error(uploaded_name: str, created: Mapping[str, Any]) -> str:
+    message = str(created.get("message") or "").strip()
+    reason = str(created.get("reason") or "ERROR").strip()
+    if message:
+        return f"{uploaded_name}: {message}"
+    if reason and reason != "ERROR":
+        return f"{uploaded_name}: upload failed ({reason})"
+    return f"{uploaded_name}: failed to create temporary file"
+
+
 def _log_context(**fields: object) -> str:
     parts = [f"{key}={value}" for key, value in fields.items() if value not in (None, "", [])]
     return f" [{', '.join(parts)}]" if parts else ""
@@ -70,7 +81,7 @@ def analyze_one_upload(
                     ),
                     None,
                 )
-            return None, None, f"Failed to create temp file for {uploaded.name}"
+            return None, None, _create_temp_file_error(uploaded.name, created)
 
         file_id = int(created["file_id"])
         temp_path = storage.get_file_path(file_id)

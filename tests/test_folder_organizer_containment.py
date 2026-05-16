@@ -92,3 +92,41 @@ def test_quarantine_and_restore_round_trip(tmp_path: Path):
     assert quarantined_path.exists() is False
     assert source.exists()
     assert source.read_text(encoding="utf-8") == "payload"
+
+
+def test_low_level_quarantine_does_not_overwrite_existing_target(tmp_path: Path):
+    scan_root = tmp_path / "scan"
+    quarantine_root = tmp_path / "quarantine"
+    source = scan_root / "doc.txt"
+    existing = quarantine_root / "doc.txt"
+    scan_root.mkdir()
+    quarantine_root.mkdir()
+    source.write_text("new payload", encoding="utf-8")
+    existing.write_text("existing payload", encoding="utf-8")
+
+    organizer = FolderOrganizer(scan_root, quarantine_root)
+    result = organizer.quarantine_file(source, "doc.txt")
+
+    assert result.success is True
+    assert result.target == str(quarantine_root / "doc__1.txt")
+    assert existing.read_text(encoding="utf-8") == "existing payload"
+    assert (quarantine_root / "doc__1.txt").read_text(encoding="utf-8") == "new payload"
+
+
+def test_low_level_restore_does_not_overwrite_existing_target(tmp_path: Path):
+    scan_root = tmp_path / "scan"
+    quarantine_root = tmp_path / "quarantine"
+    existing = scan_root / "doc.txt"
+    quarantined = quarantine_root / "doc.txt"
+    scan_root.mkdir()
+    quarantine_root.mkdir()
+    existing.write_text("existing payload", encoding="utf-8")
+    quarantined.write_text("restored payload", encoding="utf-8")
+
+    organizer = FolderOrganizer(scan_root, quarantine_root)
+    result = organizer.restore_file(quarantined, "doc.txt")
+
+    assert result.success is True
+    assert result.target == str(scan_root / "doc__1.txt")
+    assert existing.read_text(encoding="utf-8") == "existing payload"
+    assert (scan_root / "doc__1.txt").read_text(encoding="utf-8") == "restored payload"

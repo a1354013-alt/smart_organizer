@@ -78,6 +78,32 @@ def test_quarantine_move_restore_and_report(tmp_path: Path):
     assert rows[0]["operation_id"] == moved["operation_id"]
 
 
+def test_restore_quarantined_items_does_not_overwrite_existing_file(tmp_path: Path):
+    target = tmp_path / "report.pdf"
+    target.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+    moved = run_folder_organizer(scan, [str(target)], dry_run=False)
+    assert moved["summary"]["success"] == 1
+    quarantine_item = list_quarantine_items(str(tmp_path))[0]
+
+    target.write_text("new user file", encoding="utf-8")
+    restored = restore_quarantined_items(str(tmp_path), [str(quarantine_item["quarantine_path"])])
+
+    rows = restored["results"]
+    assert isinstance(rows, list)
+    assert restored["summary"]["success"] == 1
+    assert target.read_text(encoding="utf-8") == "new user file"
+    restored_path = Path(str(rows[0]["new_path"]))
+    assert restored_path.name == "report__1.pdf"
+    assert restored_path.exists()
+
+
 def test_list_quarantine_items_accepts_legacy_manifest_shape(tmp_path: Path):
     quarantine_dir = tmp_path / QUARANTINE_DIRNAME
     quarantine_dir.mkdir(parents=True)

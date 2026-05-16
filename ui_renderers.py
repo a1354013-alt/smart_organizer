@@ -5,6 +5,7 @@ from typing import Any
 import streamlit as st
 
 from contracts import ExtractedMetadata
+from ui_common import safe_display_text
 
 
 def _to_float(value: object) -> float | None:
@@ -101,7 +102,7 @@ def render_video_details(metadata: ExtractedMetadata | dict[str, Any]) -> None:
     codec = video.get("video_codec")
     if codec:
         codec_display = codec.upper() if isinstance(codec, str) else str(codec)
-        st.write(f"**Codec**: {codec_display}")
+        st.write(f"**Codec**: {safe_display_text(codec_display)}")
     else:
         st.write("**Codec**: N/A")
 
@@ -109,8 +110,8 @@ def render_video_details(metadata: ExtractedMetadata | dict[str, Any]) -> None:
 
     ffprobe_error = video.get("ffprobe_error")
     if ffprobe_error:
-        st.warning(f"影片 metadata 取得失敗：{ffprobe_error}")
+        st.warning(f"Video metadata failed: {safe_display_text(ffprobe_error)}")
 
     thumb_error = video.get("thumbnail_error")
     if thumb_error:
-        st.warning(f"影片縮圖產生失敗：{thumb_error}")
+        st.warning(f"Video thumbnail failed: {safe_display_text(thumb_error)}")

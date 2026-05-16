@@ -135,8 +135,13 @@ def reclassify_record(
     if not path or not storage.path_exists(str(path)):
         raise FileNotFoundError("file not found")
 
-    metadata = validate_extracted_metadata(processor.extract_metadata(path, dict(processing_options or {})))
-    main_topic, tag_scores, reason = processor.classify_multi_tag(metadata, info.get("original_name") or str(path), return_reason=True)
+    path_str = str(path)
+    metadata = validate_extracted_metadata(processor.extract_metadata(path_str, dict(processing_options or {})))
+    main_topic, tag_scores, reason = processor.classify_multi_tag(
+        metadata,
+        str(info.get("original_name") or path_str),
+        return_reason=True,
+    )
 
     storage.update_file_metadata(
         int(file_id),
