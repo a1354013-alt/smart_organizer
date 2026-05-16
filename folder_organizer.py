@@ -19,7 +19,9 @@ from folder_models import (
     FolderScanRecord,
     FolderScanResult,
     FolderScanStats,
+    ManifestCompatibilityError,
     QuarantineStatus,
+    Recommendation,
     RiskLevel,
     dict_object,
     human_bytes,
@@ -29,6 +31,7 @@ from folder_models import (
     load_manifest,
     object_list,
     quarantine_dir,
+    quarantine_manifest_guard,
     safe_destination,
     safe_int,
     save_manifest,
@@ -66,6 +69,15 @@ def _is_active_manifest_item(item: dict[str, object]) -> bool:
     return str(item.get("status") or "").upper() in ACTIVE_QUARANTINE_STATUSES
 
 
+def load_quarantine_items_with_warnings(folder_path: str) -> tuple[list[dict[str, object]], list[str]]:
+    root = Path(folder_path).expanduser()
+    try:
+        items = list_quarantine_items(str(root))
+    except ManifestCompatibilityError as exc:
+        return [], [f"Quarantine manifest warning: {exc}"]
+    return items, []
+
+
 def _find_active_original(manifest_items: list[dict[str, object]], original_path: Path) -> dict[str, object] | None:
     resolved = str(original_path.resolve())
     for item in manifest_items:
@@ -76,38 +88,39 @@ def _find_active_original(manifest_items: list[dict[str, object]], original_path
 
 def recover_quarantine_manifest(folder_path: str) -> dict[str, object]:
     root = Path(folder_path).expanduser().resolve()
-    manifest = load_manifest(root)
-    items = [dict_object(item) for item in object_list(manifest.get("items"))]
-    changed = False
+    with quarantine_manifest_guard(root):
+        manifest = load_manifest(root)
+        items = [dict_object(item) for item in object_list(manifest.get("items"))]
+        changed = False
 
-    for item in items:
-        if str(item.get("status") or "").upper() != QuarantineStatus.MOVING.value:
-            continue
-        quarantine_path = Path(str(item.get("quarantine_path") or ""))
-        original_path = Path(str(item.get("original_path") or ""))
-        quarantine_exists = quarantine_path.exists()
-        original_exists = original_path.exists()
-        if quarantine_exists and not original_exists:
-            item["status"] = QuarantineStatus.QUARANTINED.value
-            item["last_error"] = ""
-            changed = True
-        elif original_exists and not quarantine_exists:
-            item["status"] = QuarantineStatus.FAILED.value
-            item["last_error"] = "Recovered interrupted move before source left original location."
-            changed = True
-        elif quarantine_exists and original_exists:
-            item["status"] = QuarantineStatus.FAILED.value
-            item["last_error"] = "Recovery found both original and quarantine copies; manual review required."
-            changed = True
-        else:
-            item["status"] = QuarantineStatus.FAILED.value
-            item["last_error"] = "Recovery found neither original nor quarantine file."
-            changed = True
+        for item in items:
+            if str(item.get("status") or "").upper() != QuarantineStatus.MOVING.value:
+                continue
+            quarantine_path = Path(str(item.get("quarantine_path") or ""))
+            original_path = Path(str(item.get("original_path") or ""))
+            quarantine_exists = quarantine_path.exists()
+            original_exists = original_path.exists()
+            if quarantine_exists and not original_exists:
+                item["status"] = QuarantineStatus.QUARANTINED.value
+                item["last_error"] = ""
+                changed = True
+            elif original_exists and not quarantine_exists:
+                item["status"] = QuarantineStatus.FAILED.value
+                item["last_error"] = "Recovered interrupted move before source left original location."
+                changed = True
+            elif quarantine_exists and original_exists:
+                item["status"] = QuarantineStatus.FAILED.value
+                item["last_error"] = "Recovery found both original and quarantine copies; manual review required."
+                changed = True
+            else:
+                item["status"] = QuarantineStatus.FAILED.value
+                item["last_error"] = "Recovery found neither original nor quarantine file."
+                changed = True
 
-    if changed:
-        manifest["items"] = items
-        save_manifest(root, manifest)
-    return {"items": items}
+        if changed:
+            manifest["items"] = items
+            save_manifest(root, manifest)
+        return {"items": items}
 
 
 class FolderOrganizer:
@@ -243,12 +256,12 @@ def _score_candidate(
 
 def _recommendation(reasons: list[str], risk_level: str) -> str:
     if not reasons:
-        return "Not recommended for automatic handling"
+        return Recommendation.DO_NOT_TOUCH.value
     if risk_level == RiskLevel.SAFE_TO_REVIEW.value:
-        return "Safe to review"
+        return Recommendation.SAFE_TO_REVIEW.value
     if risk_level == RiskLevel.NEEDS_MANUAL_CHECK.value:
-        return "Needs manual check"
-    return "Do not touch"
+        return Recommendation.NEEDS_MANUAL_CHECK.value
+    return Recommendation.DO_NOT_TOUCH.value
 
 
 def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: int, large_file_bytes: int) -> None:
@@ -331,7 +344,7 @@ def scan_local_folder(
                 is_stale=stale_age_days is not None,
                 is_large=int(stat_result.st_size) >= int(large_file_bytes),
                 candidate_reasons=reasons,
-                recommendation="Pending explainable scoring",
+                recommendation=Recommendation.DO_NOT_TOUCH.value,
             )
         )
         scanned += 1
@@ -380,7 +393,8 @@ def scan_local_folder(
             errors.append(f"Permission denied: {root}")
 
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
-    quarantine_items = list_quarantine_items(str(root))
+    quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
+    errors.extend(manifest_warnings)
     stats = FolderScanStats(
         scanned_files=scanned,
         visited_files=visited,
@@ -417,111 +431,112 @@ def run_folder_organizer(
     }
     operation_id = uuid.uuid4().hex
     results: list[FolderOperationRow] = []
-    manifest = recover_quarantine_manifest(str(root))
-    manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
+    with quarantine_manifest_guard(root):
+        manifest = recover_quarantine_manifest(str(root))
+        manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
 
-    for selected_path in selected_paths:
-        record = records.get(selected_path)
-        if not record:
-            results.append(
-                FolderOperationRow(
-                    original_path=selected_path,
-                    new_path=None,
-                    status="FAILED",
-                    reason="Not found in current scan result",
-                    file_size=0,
-                    last_modified=None,
-                    processed_at=iso_now(),
-                    error_message="Selected file is not available in the current scan result.",
-                    operation_id=operation_id,
+        for selected_path in selected_paths:
+            record = records.get(selected_path)
+            if not record:
+                results.append(
+                    FolderOperationRow(
+                        original_path=selected_path,
+                        new_path=None,
+                        status="FAILED",
+                        reason="Not found in current scan result",
+                        file_size=0,
+                        last_modified=None,
+                        processed_at=iso_now(),
+                        error_message="Selected file is not available in the current scan result.",
+                        operation_id=operation_id,
+                    )
                 )
-            )
-            continue
+                continue
 
-        original_path = Path(selected_path)
-        reasons = ", ".join(string_list(record.get("candidate_reasons"))) or "Selected manually"
-        file_size = safe_int(record.get("size_bytes"))
-        last_modified = record.get("mtime")
-        if dry_run:
-            results.append(
-                FolderOperationRow(
-                    original_path=str(original_path),
-                    new_path=str(quarantine_dir(root) / operation_id / original_path.name),
-                    status="SKIPPED",
-                    reason=reasons,
-                    file_size=file_size,
-                    last_modified=str(last_modified) if last_modified is not None else None,
-                    processed_at=iso_now(),
-                    error_message="Dry-run preview only.",
-                    operation_id=operation_id,
+            original_path = Path(selected_path)
+            reasons = ", ".join(string_list(record.get("candidate_reasons"))) or "Selected manually"
+            file_size = safe_int(record.get("size_bytes"))
+            last_modified = record.get("mtime")
+            if dry_run:
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original_path),
+                        new_path=str(quarantine_dir(root) / operation_id / original_path.name),
+                        status="SKIPPED",
+                        reason=reasons,
+                        file_size=file_size,
+                        last_modified=str(last_modified) if last_modified is not None else None,
+                        processed_at=iso_now(),
+                        error_message="Dry-run preview only.",
+                        operation_id=operation_id,
+                    )
                 )
-            )
-            continue
+                continue
 
-        try:
-            resolved_original = _validate_path_within_root(original_path, root, label="selected file")
-            existing = _find_active_original(manifest_items, resolved_original)
-            if existing is not None:
-                raise FileExistsError("File already has an active quarantine manifest entry.")
-            if not resolved_original.exists():
-                raise FileNotFoundError("Source file no longer exists.")
-            relative_path = resolved_original.relative_to(root)
-            destination = quarantine_root / operation_id / relative_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination = safe_destination(destination)
-            manifest_item = {
-                "original_path": str(resolved_original),
-                "quarantine_path": str(destination),
-                "moved_at": iso_now(),
-                "file_size": file_size,
-                "reason": reasons,
-                "operation_id": operation_id,
-                "last_modified": last_modified,
-                "status": QuarantineStatus.MOVING.value,
-                "last_error": "",
-            }
-            manifest_items.append(manifest_item)
-            manifest["items"] = manifest_items
-            save_manifest(root, manifest)
-            shutil.move(str(resolved_original), str(destination))
-            manifest_item["status"] = QuarantineStatus.QUARANTINED.value
-            manifest_item["last_error"] = ""
-            manifest["items"] = manifest_items
-            save_manifest(root, manifest)
-            results.append(
-                FolderOperationRow(
-                    original_path=str(resolved_original),
-                    new_path=str(destination),
-                    status="SUCCESS",
-                    reason=reasons,
-                    file_size=file_size,
-                    last_modified=str(last_modified) if last_modified is not None else None,
-                    processed_at=iso_now(),
-                    error_message=None,
-                    operation_id=operation_id,
+            try:
+                resolved_original = _validate_path_within_root(original_path, root, label="selected file")
+                existing = _find_active_original(manifest_items, resolved_original)
+                if existing is not None:
+                    raise FileExistsError("File already has an active quarantine manifest entry.")
+                if not resolved_original.exists():
+                    raise FileNotFoundError("Source file no longer exists.")
+                relative_path = resolved_original.relative_to(root)
+                destination = quarantine_root / operation_id / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination = safe_destination(destination)
+                manifest_item = {
+                    "original_path": str(resolved_original),
+                    "quarantine_path": str(destination),
+                    "moved_at": iso_now(),
+                    "file_size": file_size,
+                    "reason": reasons,
+                    "operation_id": operation_id,
+                    "last_modified": last_modified,
+                    "status": QuarantineStatus.MOVING.value,
+                    "last_error": "",
+                }
+                manifest_items.append(manifest_item)
+                manifest["items"] = manifest_items
+                save_manifest(root, manifest)
+                shutil.move(str(resolved_original), str(destination))
+                manifest_item["status"] = QuarantineStatus.QUARANTINED.value
+                manifest_item["last_error"] = ""
+                manifest["items"] = manifest_items
+                save_manifest(root, manifest)
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(resolved_original),
+                        new_path=str(destination),
+                        status="SUCCESS",
+                        reason=reasons,
+                        file_size=file_size,
+                        last_modified=str(last_modified) if last_modified is not None else None,
+                        processed_at=iso_now(),
+                        error_message=None,
+                        operation_id=operation_id,
+                    )
                 )
-            )
-        except Exception as exc:
-            for item in reversed(manifest_items):
-                if str(item.get("original_path") or "") == str(original_path) and str(item.get("status") or "") == QuarantineStatus.MOVING.value:
-                    item["status"] = QuarantineStatus.FAILED.value
-                    item["last_error"] = str(exc) or type(exc).__name__
-                    manifest["items"] = manifest_items
-                    save_manifest(root, manifest)
-                    break
-            results.append(
-                FolderOperationRow(
-                    original_path=str(original_path),
-                    new_path=None,
-                    status="FAILED",
-                    reason=reasons,
-                    file_size=file_size,
-                    last_modified=str(last_modified) if last_modified is not None else None,
-                    processed_at=iso_now(),
-                    error_message=str(exc) or type(exc).__name__,
-                    operation_id=operation_id,
+            except Exception as exc:
+                for item in reversed(manifest_items):
+                    if str(item.get("original_path") or "") == str(original_path) and str(item.get("status") or "") == QuarantineStatus.MOVING.value:
+                        item["status"] = QuarantineStatus.FAILED.value
+                        item["last_error"] = str(exc) or type(exc).__name__
+                        manifest["items"] = manifest_items
+                        save_manifest(root, manifest)
+                        break
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original_path),
+                        new_path=None,
+                        status="FAILED",
+                        reason=reasons,
+                        file_size=file_size,
+                        last_modified=str(last_modified) if last_modified is not None else None,
+                        processed_at=iso_now(),
+                        error_message=str(exc) or type(exc).__name__,
+                        operation_id=operation_id,
+                    )
                 )
-            )
 
     return FolderOperationResult(
         operation_id=operation_id,
@@ -538,83 +553,85 @@ def run_folder_organizer(
 
 def list_quarantine_items(folder_path: str) -> list[dict[str, object]]:
     root = Path(folder_path).expanduser()
-    manifest = recover_quarantine_manifest(str(root))
-    items = []
-    for item in object_list(manifest.get("items")):
-        item_dict = dict_object(item)
-        if _is_active_manifest_item(item_dict):
-            items.append(item_dict)
-    return items
+    with quarantine_manifest_guard(root):
+        manifest = recover_quarantine_manifest(str(root))
+        items = []
+        for item in object_list(manifest.get("items")):
+            item_dict = dict_object(item)
+            if _is_active_manifest_item(item_dict):
+                items.append(item_dict)
+        return items
 
 
 def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> dict[str, object]:
     root = Path(folder_path).expanduser()
-    manifest = recover_quarantine_manifest(str(root))
-    items = [dict_object(item) for item in object_list(manifest.get("items"))]
-    lookup = {str(item.get("quarantine_path")): item for item in items}
-    results: list[FolderOperationRow] = []
+    with quarantine_manifest_guard(root):
+        manifest = recover_quarantine_manifest(str(root))
+        items = [dict_object(item) for item in object_list(manifest.get("items"))]
+        lookup = {str(item.get("quarantine_path")): item for item in items}
+        results: list[FolderOperationRow] = []
 
-    for quarantine_path in quarantine_paths:
-        item = lookup.get(quarantine_path)
-        if item is None:
-            results.append(
-                FolderOperationRow(
-                    original_path=None,
-                    new_path=None,
-                    status="FAILED",
-                    reason="Manifest entry not found",
-                    file_size=0,
-                    last_modified=None,
-                    processed_at=iso_now(),
-                    error_message="Manifest entry not found.",
-                    operation_id=None,
+        for quarantine_path in quarantine_paths:
+            item = lookup.get(quarantine_path)
+            if item is None:
+                results.append(
+                    FolderOperationRow(
+                        original_path=None,
+                        new_path=None,
+                        status="FAILED",
+                        reason="Manifest entry not found",
+                        file_size=0,
+                        last_modified=None,
+                        processed_at=iso_now(),
+                        error_message="Manifest entry not found.",
+                        operation_id=None,
+                    )
                 )
-            )
-            continue
-        source = Path(str(item.get("quarantine_path") or ""))
-        original = Path(str(item.get("original_path") or ""))
-        try:
-            quarantine_root = quarantine_dir(root).resolve()
-            validated_source = _validate_quarantine_path(source, quarantine_root, label="manifest quarantine_path")
-            validated_original = _validate_path_within_root(original, root, label="manifest original_path")
-            if not validated_source.exists():
-                raise FileNotFoundError("Quarantined file is missing.")
-            destination = safe_destination(validated_original)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(validated_source), str(destination))
-            item["status"] = QuarantineStatus.RESTORED.value
-            item["restored_at"] = iso_now()
-            item["restored_path"] = str(destination)
-            results.append(
-                FolderOperationRow(
-                    original_path=str(original),
-                    new_path=str(destination),
-                    status="SUCCESS",
-                    reason=str(item.get("reason") or ""),
-                    file_size=safe_int(item.get("file_size")),
-                    last_modified=str(item.get("last_modified") or "") or None,
-                    processed_at=iso_now(),
-                    error_message=None,
-                    operation_id=str(item.get("operation_id") or "") or None,
+                continue
+            source = Path(str(item.get("quarantine_path") or ""))
+            original = Path(str(item.get("original_path") or ""))
+            try:
+                quarantine_root = quarantine_dir(root).resolve()
+                validated_source = _validate_quarantine_path(source, quarantine_root, label="manifest quarantine_path")
+                validated_original = _validate_path_within_root(original, root, label="manifest original_path")
+                if not validated_source.exists():
+                    raise FileNotFoundError("Quarantined file is missing.")
+                destination = safe_destination(validated_original)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(validated_source), str(destination))
+                item["status"] = QuarantineStatus.RESTORED.value
+                item["restored_at"] = iso_now()
+                item["restored_path"] = str(destination)
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original),
+                        new_path=str(destination),
+                        status="SUCCESS",
+                        reason=str(item.get("reason") or ""),
+                        file_size=safe_int(item.get("file_size")),
+                        last_modified=str(item.get("last_modified") or "") or None,
+                        processed_at=iso_now(),
+                        error_message=None,
+                        operation_id=str(item.get("operation_id") or "") or None,
+                    )
                 )
-            )
-        except Exception as exc:
-            results.append(
-                FolderOperationRow(
-                    original_path=str(original) if item.get("original_path") else None,
-                    new_path=None,
-                    status="FAILED",
-                    reason=str(item.get("reason") or ""),
-                    file_size=safe_int(item.get("file_size")),
-                    last_modified=str(item.get("last_modified") or "") or None,
-                    processed_at=iso_now(),
-                    error_message=str(exc) or type(exc).__name__,
-                    operation_id=str(item.get("operation_id") or "") or None,
+            except Exception as exc:
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original) if item.get("original_path") else None,
+                        new_path=None,
+                        status="FAILED",
+                        reason=str(item.get("reason") or ""),
+                        file_size=safe_int(item.get("file_size")),
+                        last_modified=str(item.get("last_modified") or "") or None,
+                        processed_at=iso_now(),
+                        error_message=str(exc) or type(exc).__name__,
+                        operation_id=str(item.get("operation_id") or "") or None,
+                    )
                 )
-            )
 
-    manifest["items"] = items
-    save_manifest(root, manifest)
+        manifest["items"] = items
+        save_manifest(root, manifest)
     return FolderOperationResult(
         operation_id=None,
         dry_run=False,

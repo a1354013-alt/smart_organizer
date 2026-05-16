@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,8 @@ from folder_models import (
     ManifestCompatibilityError,
     QuarantineStatus,
     load_manifest,
+    quarantine_manifest_guard,
+    quarantine_manifest_lock_path,
     quarantine_manifest_path,
     save_manifest,
 )
@@ -134,3 +138,52 @@ def test_recover_moving_manifest_status(tmp_path: Path):
 
     recovered = recover_quarantine_manifest(str(tmp_path))
     assert recovered["items"][0]["status"] == QuarantineStatus.QUARANTINED.value
+
+
+def test_scan_local_folder_warns_and_continues_when_manifest_is_invalid(tmp_path: Path):
+    candidate = tmp_path / "old.log"
+    candidate.write_text("stale", encoding="utf-8")
+    quarantine_root = tmp_path / QUARANTINE_DIRNAME
+    quarantine_root.mkdir()
+    quarantine_manifest_path(tmp_path).write_text("{broken", encoding="utf-8")
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=1024)
+
+    assert scan["stats"]["scanned_files"] == 1
+    assert scan["stats"]["quarantine_files"] == 0
+    assert any("Quarantine manifest warning" in message for message in scan["errors"])
+    assert quarantine_manifest_path(tmp_path).read_text(encoding="utf-8") == "{broken"
+
+
+def test_manifest_guard_blocks_until_lock_is_released(tmp_path: Path):
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    observed: list[float] = []
+
+    def worker() -> None:
+        with quarantine_manifest_guard(tmp_path):
+            entered.set()
+            release.wait(timeout=2)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    assert entered.wait(timeout=2)
+
+    def saver() -> None:
+        started = time.perf_counter()
+        save_manifest(tmp_path, {"items": []})
+        observed.append(time.perf_counter() - started)
+        completed.set()
+
+    saver_thread = threading.Thread(target=saver, daemon=True)
+    saver_thread.start()
+    time.sleep(0.2)
+    assert not completed.is_set()
+
+    release.set()
+    assert completed.wait(timeout=2)
+    saver_thread.join(timeout=2)
+    thread.join(timeout=2)
+    assert observed and observed[0] >= 0.15
+    assert not quarantine_manifest_lock_path(tmp_path).exists()

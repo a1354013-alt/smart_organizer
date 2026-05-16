@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import sys
 from pathlib import Path
 
@@ -32,6 +33,21 @@ def verify_release_zip(zip_path: Path) -> None:
         raise ValueError(f"Release zip contains non-allowlisted files: {extra}")
 
 
+def resolve_zip_paths(zip_path_arg: str) -> list[Path]:
+    pattern = str(zip_path_arg or "").strip()
+    if not pattern:
+        raise FileNotFoundError("Release zip path is required.")
+
+    has_glob = any(token in pattern for token in "*?[")
+    if not has_glob:
+        return [Path(pattern)]
+
+    matches = sorted(Path(value) for value in glob.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(f"Release zip not found: {pattern}")
+    return matches
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify Smart Organizer release zip policy.")
     parser.add_argument("zip_path", help="Path to release zip.")
@@ -40,8 +56,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    verify_release_zip(Path(args.zip_path))
-    print(f"Release zip verified: {Path(args.zip_path).resolve()}")
+    matched_paths = resolve_zip_paths(args.zip_path)
+    for zip_path in matched_paths:
+        verify_release_zip(zip_path)
+        print(f"Release zip verified: {zip_path.resolve()}")
     return 0
 
 

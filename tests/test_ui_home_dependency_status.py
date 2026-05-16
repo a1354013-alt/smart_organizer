@@ -4,11 +4,13 @@ from types import SimpleNamespace
 
 import core_processor
 from core import FileProcessor
+from folder_models import Recommendation
 from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     cache_dependency_status,
     get_cached_dependency_status,
     refresh_dependency_status,
+    summarize_recommendations,
 )
 
 
@@ -66,3 +68,20 @@ def test_file_processor_dependency_status_checks_ffmpeg_lazily(monkeypatch):
 
     assert calls == [True]
     assert status["system"]["ffmpeg"] is True
+
+
+def test_summarize_recommendations_uses_shared_contract_labels():
+    records = [
+        {"recommendation": Recommendation.SAFE_TO_REVIEW.value},
+        {"recommendation": Recommendation.NEEDS_MANUAL_CHECK.value},
+        {"recommendation": Recommendation.DO_NOT_TOUCH.value},
+    ]
+    candidates = records[:2]
+
+    summary = summarize_recommendations(records, candidates)
+
+    assert summary == {
+        Recommendation.SAFE_TO_REVIEW.value: 1,
+        Recommendation.NEEDS_MANUAL_CHECK.value: 1,
+        Recommendation.DO_NOT_TOUCH.value: 1,
+    }

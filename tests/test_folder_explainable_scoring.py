@@ -4,6 +4,7 @@ import os
 import time
 from pathlib import Path
 
+from folder_models import Recommendation
 from folder_organizer import scan_local_folder
 
 
@@ -38,4 +39,4 @@ def test_low_confidence_items_are_manual_or_do_not_touch(tmp_path: Path):
 
     assert record["confidence"] < 0.72
     assert record["risk_level"] in {"needs_manual_check", "do_not_touch"}
-    assert record["recommendation"] != "Safe to review"
+    assert record["recommendation"] != Recommendation.SAFE_TO_REVIEW.value

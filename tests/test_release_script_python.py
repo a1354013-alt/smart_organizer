@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import zipfile
 
-from scripts.create_release_zip import RELEASE_ALLOWLIST, build_zip, zip_contains_forbidden_entries
+from scripts.create_release_zip import (
+    RELEASE_ALLOWLIST,
+    build_zip,
+    get_version,
+    zip_contains_forbidden_entries,
+)
+from scripts.verify_release_zip import resolve_zip_paths
 
 
 def test_python_release_script_builds_clean_zip(tmp_path):
@@ -36,3 +42,23 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "report_exports.py" in names
     assert "docs/KNOWN_LIMITATIONS.md" in names
     assert "docs/PORTFOLIO_CASE_STUDY.md" in names
+
+
+def test_get_version_uses_static_parsing(monkeypatch):
+    import scripts.create_release_zip as release_script
+
+    monkeypatch.setattr(
+        release_script.Path,
+        "read_text",
+        lambda self, encoding="utf-8": "__version__ = '9.9.9'\nraise RuntimeError('should not execute')\n",
+    )
+
+    assert get_version() == "9.9.9"
+
+
+def test_verify_release_zip_expands_glob_patterns(tmp_path):
+    zip_path = build_zip(tmp_path, "package.zip")
+
+    matches = resolve_zip_paths(str(tmp_path / "*.zip"))
+
+    assert matches == [zip_path]

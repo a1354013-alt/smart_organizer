@@ -3,6 +3,9 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import threading
+import time
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -34,6 +37,19 @@ class RiskLevel(StrEnum):
     DO_NOT_TOUCH = "do_not_touch"
 
 
+class Recommendation(StrEnum):
+    SAFE_TO_REVIEW = "Safe to review"
+    NEEDS_MANUAL_CHECK = "Needs manual check"
+    DO_NOT_TOUCH = "Do not touch"
+
+
+RISK_LABELS = (
+    Recommendation.SAFE_TO_REVIEW.value,
+    Recommendation.NEEDS_MANUAL_CHECK.value,
+    Recommendation.DO_NOT_TOUCH.value,
+)
+
+
 def is_relative_to_path(child: Path, parent: Path) -> bool:
     try:
         child.relative_to(parent)
@@ -52,6 +68,10 @@ class ScanPathError(FolderOrganizerError):
 
 class ManifestCompatibilityError(FolderOrganizerError):
     """Raised when a quarantine manifest is unusable."""
+
+
+_MANIFEST_LOCKS = threading.Lock()
+_MANIFEST_LOCK_OWNERS: dict[str, tuple[int, int]] = {}
 
 
 @dataclass(slots=True)
@@ -241,6 +261,10 @@ def quarantine_manifest_path(root: Path) -> Path:
     return quarantine_dir(root) / QUARANTINE_MANIFEST
 
 
+def quarantine_manifest_lock_path(root: Path) -> Path:
+    return quarantine_manifest_path(root).with_name(f"{QUARANTINE_MANIFEST}.lock")
+
+
 def object_list(value: object) -> list[object]:
     if isinstance(value, list):
         return value
@@ -290,6 +314,69 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
     return normalized
 
 
+@contextmanager
+def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_seconds: float = 0.05):
+    lock_path = quarantine_manifest_lock_path(root)
+    lock_key = str(lock_path)
+    thread_id = threading.get_ident()
+
+    with _MANIFEST_LOCKS:
+        owner = _MANIFEST_LOCK_OWNERS.get(lock_key)
+        if owner is not None and owner[0] == thread_id:
+            _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, owner[1] + 1)
+            already_held = True
+        else:
+            already_held = False
+
+    if already_held:
+        try:
+            yield
+        finally:
+            with _MANIFEST_LOCKS:
+                owner = _MANIFEST_LOCK_OWNERS.get(lock_key, (thread_id, 1))
+                remaining = owner[1] - 1
+                if remaining <= 0:
+                    _MANIFEST_LOCK_OWNERS.pop(lock_key, None)
+                else:
+                    _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, remaining)
+        return
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+    handle_fd: int | None = None
+    try:
+        while True:
+            try:
+                handle_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                with _MANIFEST_LOCKS:
+                    _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, 1)
+                break
+            except FileExistsError as exc:
+                if time.monotonic() >= deadline:
+                    raise ManifestCompatibilityError(f"Timed out waiting for manifest lock: {lock_path}") from exc
+                time.sleep(max(0.01, float(poll_seconds)))
+            except OSError as exc:
+                raise ManifestCompatibilityError(f"Failed to create manifest lock: {exc}") from exc
+        yield
+    finally:
+        if handle_fd is not None:
+            with suppress(OSError):
+                os.close(handle_fd)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise ManifestCompatibilityError(f"Failed to release manifest lock: {exc}") from exc
+        with _MANIFEST_LOCKS:
+            owner = _MANIFEST_LOCK_OWNERS.get(lock_key, (thread_id, 1))
+            remaining = owner[1] - 1
+            if remaining <= 0:
+                _MANIFEST_LOCK_OWNERS.pop(lock_key, None)
+            else:
+                _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, remaining)
+
+
 def load_manifest(root: Path) -> dict[str, object]:
     manifest_path = quarantine_manifest_path(root)
     if not manifest_path.exists():
@@ -308,28 +395,29 @@ def load_manifest(root: Path) -> dict[str, object]:
 
 
 def save_manifest(root: Path, manifest: dict[str, object]) -> None:
-    target_dir = quarantine_dir(root)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    normalized = {"items": _normalize_manifest_items(manifest.get("items"))}
-    manifest_path = quarantine_manifest_path(root)
-    tmp_path = manifest_path.with_name(f"{manifest_path.name}.tmp")
-    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    with quarantine_manifest_guard(root):
+        target_dir = quarantine_dir(root)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        normalized = {"items": _normalize_manifest_items(manifest.get("items"))}
+        manifest_path = quarantine_manifest_path(root)
+        tmp_path = manifest_path.with_name(f"{manifest_path.name}.tmp")
+        payload = json.dumps(normalized, ensure_ascii=False, indent=2)
 
-    try:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        with tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, manifest_path)
-    except OSError as exc:
         try:
             if tmp_path.exists():
                 tmp_path.unlink()
-        except OSError:
-            pass
-        raise ManifestCompatibilityError(f"Failed to atomically save manifest: {exc}") from exc
+            with tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, manifest_path)
+        except OSError as exc:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            raise ManifestCompatibilityError(f"Failed to atomically save manifest: {exc}") from exc
 
 
 def safe_destination(path: Path) -> Path:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import re
 import shutil
 import zipfile
 from datetime import datetime
@@ -118,10 +119,12 @@ FORBIDDEN_PATTERNS = [
 
 
 def get_version() -> str:
-    namespace: dict[str, object] = {}
     version_path = PROJECT_ROOT / "version.py"
-    exec(version_path.read_text(encoding="utf-8"), namespace)
-    return str(namespace.get("__version__", "unknown"))
+    source = version_path.read_text(encoding="utf-8")
+    match = re.search(r"^__version__\s*=\s*[\"']([^\"']+)[\"']\s*$", source, flags=re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"Could not parse __version__ from {version_path}")
+    return match.group(1)
 
 
 def build_zip(output_dir: Path, zip_name: str | None = None) -> Path:
@@ -207,7 +210,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--output-dir",
-        default="release",
+        default="dist",
         help="Directory where the release zip will be written.",
     )
     parser.add_argument(

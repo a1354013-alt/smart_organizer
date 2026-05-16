@@ -96,7 +96,7 @@ If these tools are missing, the app still starts and falls back where possible.
 ## 6. Safety expectations
 
 - Folder cleanup uses quarantine by default.
-- The homepage never permanently deletes files automatically.
+- The homepage does not permanently delete selected user files automatically.
 - Restore writes a safe non-overwriting filename if the original path is already occupied.
 
 ## 7. Verify that the release zip is usable

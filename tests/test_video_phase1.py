@@ -123,6 +123,40 @@ def test_core_processor_import_does_not_run_ffmpeg_detection(monkeypatch):
         importlib.import_module("core_processor")
 
 
+def test_core_processor_invalid_video_timeout_env_does_not_crash_on_import(monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", "not-a-number")
+    sys.modules.pop("core_processor", None)
+    try:
+        reloaded = importlib.import_module("core_processor")
+        assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 10
+    finally:
+        sys.modules.pop("core_processor", None)
+        importlib.import_module("core_processor")
+
+
+def test_core_processor_non_positive_video_timeout_env_falls_back_to_minimum(monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", "")
+    sys.modules.pop("core_processor", None)
+    reloaded = importlib.import_module("core_processor")
+    assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 10
+    sys.modules.pop("core_processor", None)
+
+    for raw in ("0", "-5"):
+        monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", raw)
+        sys.modules.pop("core_processor", None)
+        reloaded = importlib.import_module("core_processor")
+        assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 1
+        sys.modules.pop("core_processor", None)
+
+    importlib.import_module("core_processor")
+
+
 def test_video_duplicate_detection_still_works(tmp_path: Path):
     db_path = str(tmp_path / "test.db")
     repo_root = str(tmp_path / "repo")

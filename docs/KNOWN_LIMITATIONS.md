@@ -13,4 +13,4 @@
 - PDF preview, OCR, and video helpers use timeouts and best-effort fallbacks. A timeout may still leave a single worker thread or subprocess finishing in the background before cleanup completes.
 - If `ffmpeg` or `ffprobe` is unavailable or times out, the app falls back to partial video metadata with no guaranteed thumbnail.
 - AI summary features require a valid OpenAI API key. Core review and organization flows should still work without one.
-- The default cleanup flow does not permanently delete files. Selected files are moved into quarantine unless the user restores them later.
+- The default cleanup flow does not permanently delete selected user files. Selected files are moved into quarantine unless the user restores them later.

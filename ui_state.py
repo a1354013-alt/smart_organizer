@@ -35,7 +35,6 @@ SESSION_DEFAULTS: dict[str, object] = {
     SESSION_FOLDER_LAST_OPERATION_RESULT: None,
     SESSION_FOLDER_SCAN_ACTIONS: [],
     SESSION_FOLDER_SCAN_OPTIONS: {
-        "dry_run": True,
         "stale_days": 364,
         "recursive": True,
         "max_files": 5000,

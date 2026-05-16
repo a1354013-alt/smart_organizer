@@ -5,11 +5,18 @@ from typing import Any, cast
 
 import streamlit as st
 
-from folder_models import FolderOrganizerError, ScanPathError, human_bytes, safe_int
+from folder_models import (
+    RISK_LABELS,
+    FolderOrganizerError,
+    Recommendation,
+    ScanPathError,
+    human_bytes,
+    safe_int,
+)
 from folder_report import export_folder_report_csv, export_folder_report_markdown
 from folder_service import (
     build_report_snapshot,
-    get_quarantine_items,
+    get_quarantine_items_safe,
     preview_selected_actions,
     quarantine_selected_files,
     resolve_report_inputs,
@@ -41,6 +48,23 @@ def _coerce_message_list(value: object) -> list[str]:
     return [str(item) for item in value]
 
 
+def summarize_recommendations(
+    records: list[dict[str, object]],
+    candidates: list[dict[str, object]],
+) -> dict[str, int]:
+    return {
+        Recommendation.SAFE_TO_REVIEW.value: sum(
+            1 for item in candidates if item.get("recommendation") == Recommendation.SAFE_TO_REVIEW.value
+        ),
+        Recommendation.NEEDS_MANUAL_CHECK.value: sum(
+            1 for item in candidates if item.get("recommendation") == Recommendation.NEEDS_MANUAL_CHECK.value
+        ),
+        Recommendation.DO_NOT_TOUCH.value: sum(
+            1 for item in records if item.get("recommendation") == Recommendation.DO_NOT_TOUCH.value
+        ),
+    }
+
+
 def get_cached_dependency_status(session_state: Any) -> dict[str, Any] | None:
     status = session_state.get(DEPENDENCY_STATUS_SESSION_KEY)
     return dict(status) if isinstance(status, dict) else None
@@ -60,13 +84,11 @@ def render_sidebar(context: UIContext) -> None:
     st.sidebar.header("Folder organizer settings")
 
     with st.sidebar.expander("Scan options", expanded=True):
-        folder_dry_run = st.checkbox("Default to dry-run preview", value=True, key="folder_dry_run")
         stale_days = st.slider("Consider unused after this many days", 7, 3650, 365, step=7)
         large_file_mb = st.slider("Large file threshold (MB)", 10, 2048, 250, step=10)
         recursive = st.checkbox("Scan subfolders", value=True, key="folder_recursive")
         max_files = st.number_input("Max files to inspect", min_value=100, max_value=200000, value=5000, step=500)
         st.session_state[SESSION_FOLDER_SCAN_OPTIONS] = {
-            "dry_run": bool(folder_dry_run),
             "stale_days": int(stale_days),
             "large_file_bytes": int(large_file_mb) * 1024 * 1024,
             "recursive": bool(recursive),
@@ -142,7 +164,7 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
         return []
 
-    st.caption("Risk labels: Safe to review | Needs manual check | Do not touch")
+    st.caption(f"Risk labels: {' | '.join(RISK_LABELS)}")
     if st.button("Select all candidates for preview", key="select_all_candidates_for_preview"):
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = [str(item.get("path")) for item in candidates]
     if st.button("Select all safe-to-review candidates", key="select_safe_review_candidates"):
@@ -236,8 +258,8 @@ def render_home(context: UIContext) -> None:
 
     st.markdown("**Workflow:** Scan -> Preview -> Quarantine -> Restore -> Export report")
     st.info(
-        "Safety guardrails: this tool never directly deletes files, every cleanup move goes to quarantine first, "
-        "restore is available, and atime/mtime are only supporting signals. Please review before moving anything."
+        "Safety guardrails: selected user files are not directly deleted, every cleanup move goes to quarantine first, "
+        "restore is available, and atime/mtime are only supporting signals. Internal temp files and previews may still be cleaned up by maintenance tools."
     )
 
     scan_options_obj = st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS)
@@ -300,7 +322,7 @@ def render_home(context: UIContext) -> None:
         if scan:
             stats_obj = scan.get("stats")
             stats = cast(dict[str, object], stats_obj) if isinstance(stats_obj, dict) else {}
-            quarantine_items = get_quarantine_items(str(scan.get("path") or ""))
+            quarantine_items, quarantine_warnings = get_quarantine_items_safe(str(scan.get("path") or ""))
 
             metric_cols = st.columns(6)
             metrics = [
@@ -319,6 +341,8 @@ def render_home(context: UIContext) -> None:
                     card_close()
 
             errors = _coerce_message_list(scan.get("errors"))
+            if quarantine_warnings:
+                errors.extend(quarantine_warnings)
             if errors:
                 with st.expander("Scan warnings", expanded=False):
                     for message in errors[:50]:
@@ -408,14 +432,12 @@ def render_home(context: UIContext) -> None:
                 for item in top_stale:
                     st.write(f"- `{item.get('name')}` | {item.get('days_since_access')} days idle")
 
-            safe_archive = sum(1 for item in candidates if item.get("recommendation") == "Safe to archive")
-            manual_review = sum(1 for item in candidates if item.get("recommendation") == "Needs manual review")
-            avoid_auto = sum(1 for item in records if item.get("recommendation") == "Not recommended for automatic handling")
+            recommendation_summary = summarize_recommendations(records, candidates)
             st.markdown("**Recommended actions**")
             st.write(
-                f"- Safe to archive: {safe_archive}\n"
-                f"- Needs manual review: {manual_review}\n"
-                f"- Not recommended for automatic handling: {avoid_auto}"
+                f"- {Recommendation.SAFE_TO_REVIEW.value}: {recommendation_summary[Recommendation.SAFE_TO_REVIEW.value]}\n"
+                f"- {Recommendation.NEEDS_MANUAL_CHECK.value}: {recommendation_summary[Recommendation.NEEDS_MANUAL_CHECK.value]}\n"
+                f"- {Recommendation.DO_NOT_TOUCH.value}: {recommendation_summary[Recommendation.DO_NOT_TOUCH.value]}"
             )
         else:
             st.info("Scan a folder to build your cleanup candidates, quarantine list, and report.")
@@ -429,7 +451,12 @@ def render_home(context: UIContext) -> None:
             unsafe_allow_html=True,
         )
         current_scan = cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {})
-        quarantine_items = get_quarantine_items(str(current_scan.get("path") or folder_path or "")) if (current_scan or folder_path) else []
+        quarantine_items = []
+        quarantine_warnings: list[str] = []
+        if current_scan or folder_path:
+            quarantine_items, quarantine_warnings = get_quarantine_items_safe(str(current_scan.get("path") or folder_path or ""))
+        for warning in quarantine_warnings:
+            st.warning(warning)
         if quarantine_items:
             restore_choices = st.multiselect(
                 "Choose quarantine items to restore",

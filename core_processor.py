@@ -67,13 +67,30 @@ try:
 except Exception:  # pragma: no cover
     OpenAI = None
 
-VIDEO_TOOL_TIMEOUT_SECONDS = max(1, int(os.getenv("VIDEO_TOOL_TIMEOUT_SECONDS", "10")))
-
 logger = logging.getLogger(__name__)
 
 
 def _warning_note(kind: str, message: str) -> str:
     return f"{kind}: {message}"
+
+
+def _parse_int_env(value: object, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        parsed = int(default)
+    if min_value is not None:
+        parsed = max(int(min_value), parsed)
+    if max_value is not None:
+        parsed = min(int(max_value), parsed)
+    return parsed
+
+
+def _read_int_env(key: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    return _parse_int_env(os.getenv(key, ""), default, min_value=min_value, max_value=max_value)
+
+
+VIDEO_TOOL_TIMEOUT_SECONDS = _read_int_env("VIDEO_TOOL_TIMEOUT_SECONDS", 10, min_value=1)
 
 
 def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None):
@@ -124,16 +141,7 @@ class FileProcessor:
         )
 
     def _read_int_env(self, key, default, min_value=None, max_value=None):
-        raw = os.getenv(key, "")
-        try:
-            value = int(str(raw).strip())
-        except Exception:
-            value = int(default)
-        if min_value is not None:
-            value = max(int(min_value), value)
-        if max_value is not None:
-            value = min(int(max_value), value)
-        return value
+        return _read_int_env(key, int(default), min_value=min_value, max_value=max_value)
 
     def get_dependency_status(self):
         python_deps = {

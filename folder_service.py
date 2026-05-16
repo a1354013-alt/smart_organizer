@@ -7,6 +7,7 @@ from folder_models import FolderActionResult, FolderOrganizerError, ScanPathErro
 from folder_organizer import (
     FolderOrganizer,
     list_quarantine_items,
+    load_quarantine_items_with_warnings,
     restore_quarantined_items,
     run_folder_organizer,
     scan_local_folder,
@@ -122,6 +123,10 @@ def restore_quarantine_selection(
 
 def get_quarantine_items(folder_path: str) -> list[dict[str, object]]:
     return list_quarantine_items(folder_path)
+
+
+def get_quarantine_items_safe(folder_path: str) -> tuple[list[dict[str, object]], list[str]]:
+    return load_quarantine_items_with_warnings(folder_path)
 
 
 def resolve_report_inputs(

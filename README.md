@@ -28,7 +28,7 @@ Folder organizer flow:
 
 ## Safety Design
 
-- No direct delete: cleanup actions move files to quarantine first.
+- No direct delete of selected user files: cleanup actions move selected files to quarantine first.
 - Path containment: scan, quarantine, and restore paths are validated against the selected root.
 - Restore protection: restore uses a safe destination and does not overwrite a new user file.
 - Atomic manifest: `manifest.json` is saved through `manifest.json.tmp`, flush, `fsync`, and `os.replace`.
@@ -43,7 +43,7 @@ python scripts/create_demo_folder.py
 streamlit run app.py
 ```
 
-Then scan the generated `demo_files` folder. It contains old, duplicate, recent, and keep-focused sample files so reviewers can experience the full flow in about one minute.
+Then scan the generated `demo_files` folder. It contains old, suspected duplicate-name, recent, and keep-focused sample files so reviewers can experience the full flow in about one minute.
 
 ## Validation
 
@@ -57,7 +57,7 @@ ruff check .
 mypy core_processor.py core_metadata.py services_analysis.py services_finalize.py storage_repository.py storage_recovery.py storage_search.py folder_organizer.py folder_models.py
 python scripts/create_demo_folder.py
 python scripts/create_release_zip.py
-python scripts/verify_release_zip.py release/*.zip
+python scripts/verify_release_zip.py dist/*.zip
 ```
 
 CI runs compile checks, full pytest, ruff, mypy on core/UI modules, release zip creation, and release zip policy verification.
@@ -83,7 +83,8 @@ Low-confidence items are marked for manual review or do-not-touch handling. The 
 - Modified time (`mtime`) and file size are supporting signals, not proof that a file is safe to archive.
 - Users must manually confirm before moving files.
 - OCR, PDF preview, and video metadata depend on optional system tools.
-- The app never automatically deletes files.
+- The app does not automatically delete selected user files.
+- Internal temp files, previews, and caches may be cleaned up by maintenance routines.
 
 ## Portfolio Highlights
 
