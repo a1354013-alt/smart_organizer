@@ -57,6 +57,7 @@ python -m mypy core_processor.py core_metadata.py services_analysis.py services_
 python -m pytest
 python scripts/create_release_zip.py --output-dir release_ci
 python scripts/verify_release_zip.py release_ci/*.zip
+python scripts/check_workspace_clean.py
 ```
 
 If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.

@@ -20,12 +20,12 @@ It includes these runtime categories:
 
 - app entry: `app.py`, `app_main.py`
 - core/storage/config: `core*.py`, `storage*.py`, `config.py`
-- UI modules: `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`
+- UI modules: `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_labels.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`
 - folder organizer modules: `folder_models.py`, `folder_organizer.py`, `folder_service.py`, `folder_report.py`
 - report export modules: `report_exports.py`
 - docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`
 - requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
-- demo helper scripts: `scripts/create_demo_folder.py`
+- demo helper scripts: `scripts/create_demo_folder.py`, `scripts/check_workspace_clean.py`
 - supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 This is an official runtime/demo package. It intentionally does not include tests, CI files, development configs, or workspace snapshots.
@@ -69,6 +69,7 @@ The packaging policy is enforced by:
 
 - `scripts/create_release_zip.py`
 - `scripts/verify_release_zip.py`
+- `scripts/check_workspace_clean.py`
 - `create_release_zip.ps1` (delegates to the Python script only)
 - `tests/test_delivery_cleanliness.py`
 - `tests/test_release_packaging_policy.py`

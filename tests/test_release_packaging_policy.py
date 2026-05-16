@@ -26,11 +26,13 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "supported_formats.py",
         "ui_common.py",
         "ui_home.py",
+        "ui_labels.py",
         "folder_models.py",
         "folder_organizer.py",
         "folder_service.py",
         "folder_report.py",
         "report_exports.py",
+        "scripts/check_workspace_clean.py",
         "docs/KNOWN_LIMITATIONS.md",
         "docs/PORTFOLIO_CASE_STUDY.md",
     }

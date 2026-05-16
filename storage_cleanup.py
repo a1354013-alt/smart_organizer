@@ -50,11 +50,11 @@ class StorageCleanupMixin:
 
             conn.commit()
             return {"success": True, "summary": summary}
-        except Exception as e:
-            logger.error("重新整理檔案位置失敗: %s", e)
+        except Exception as exc:
+            logger.error("Failed to refresh file locations: %s", exc)
             if conn:
                 conn.rollback()
-            return {"success": False, "error": str(e), "summary": summary}
+            return {"success": False, "error": str(exc), "summary": summary}
         finally:
             if conn:
                 conn.close()
@@ -78,6 +78,28 @@ class StorageCleanupMixin:
 
         hash_prefix = source_basename.split("_", 1)[0].lower()
         return len(hash_prefix) == 8 and hash_prefix in valid_hash_prefixes
+
+    def _record_cleanup_action(
+        self: Any,
+        actions: list[dict[str, object]],
+        *,
+        action_type: str,
+        path: Path,
+        dry_run: bool,
+        age_sec: int | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        entry: dict[str, object] = {
+            "type": action_type,
+            "path": str(path),
+            "status": "planned" if dry_run else "deleted",
+        }
+        if age_sec is not None:
+            entry["age_sec"] = age_sec
+        if error is not None:
+            entry["status"] = "error"
+            entry["error"] = f"{type(error).__name__}: {error}"
+        actions.append(entry)
 
     def cleanup_orphaned_uploads(self: Any, preview_ttl_days: int = 7, dry_run: bool = True):
         if self._mem_files is not None:
@@ -108,8 +130,8 @@ class StorageCleanupMixin:
                     valid_preview_paths.add(preview_path)
                 if file_hash:
                     valid_hash_prefixes.add(file_hash[:8].lower())
-        except Exception as e:
-            logger.error("清理暫存檔失敗(讀 DB): %s", e)
+        except Exception as exc:
+            logger.error("Failed to load cleanup metadata: %s", exc)
             return []
         finally:
             if conn:
@@ -118,51 +140,98 @@ class StorageCleanupMixin:
         now = time.time()
         ttl_sec = preview_ttl_days * 24 * 3600
         actions: list[dict[str, object]] = []
-
         temp_pattern = re.compile(r"^[a-f0-9]{8}_.+")
 
-        for p in self.upload_dir.glob("*"):
-            if p.is_file():
-                p_str = str(p)
-                try:
-                    age_sec = now - p.stat().st_mtime
-                except Exception:
-                    age_sec = 0
+        for temp_file in self.upload_dir.glob("*"):
+            if not temp_file.is_file():
+                continue
+            temp_path = str(temp_file)
+            try:
+                age_sec = now - temp_file.stat().st_mtime
+            except OSError:
+                age_sec = 0
 
-                if age_sec > 300 and temp_pattern.match(p.name) and p_str not in valid_temp_paths:
-                    try:
-                        actions.append({"type": "temp", "path": p_str, "age_sec": int(age_sec)})
-                        if not dry_run:
-                            p.unlink()
-                            logger.info("已清理孤立暫存檔: %s (年齡: %ss)", p_str, int(age_sec))
-                    except Exception as e:
-                        logger.warning("刪除暫存檔失敗 %s: %s", p_str, e)
+            if age_sec <= 300 or not temp_pattern.match(temp_file.name) or temp_path in valid_temp_paths:
+                continue
+
+            if dry_run:
+                self._record_cleanup_action(
+                    actions,
+                    action_type="temp",
+                    path=temp_file,
+                    dry_run=True,
+                    age_sec=int(age_sec),
+                )
+                continue
+
+            try:
+                temp_file.unlink()
+                self._record_cleanup_action(
+                    actions,
+                    action_type="temp",
+                    path=temp_file,
+                    dry_run=False,
+                    age_sec=int(age_sec),
+                )
+                logger.info("Removed orphaned temp upload: %s", temp_path)
+            except Exception as exc:
+                self._record_cleanup_action(
+                    actions,
+                    action_type="temp",
+                    path=temp_file,
+                    dry_run=False,
+                    age_sec=int(age_sec),
+                    error=exc,
+                )
+                logger.warning("Failed to remove orphaned temp upload %s: %s", temp_path, exc)
 
         preview_dir = self.upload_dir / "previews"
         if preview_dir.exists():
             for pattern in ("*.png", "*.jpg", "*.jpeg"):
-                for p in preview_dir.glob(pattern):
-                    p_str = str(p)
+                for preview_file in preview_dir.glob(pattern):
+                    preview_path = str(preview_file)
                     try:
-                        too_old = (now - p.stat().st_mtime) > ttl_sec
+                        too_old = (now - preview_file.stat().st_mtime) > ttl_sec
                     except OSError:
                         too_old = True
 
-                    is_referenced = self._is_preview_referenced(
-                        p_str,
+                    if not too_old:
+                        continue
+
+                    if self._is_preview_referenced(
+                        preview_path,
                         valid_preview_paths,
                         valid_temp_names,
                         valid_hash_prefixes,
-                    )
-                    is_orphan = not is_referenced
+                    ):
+                        continue
 
-                    if too_old and is_orphan:
-                        try:
-                            actions.append({"type": "preview", "path": p_str})
-                            if not dry_run:
-                                p.unlink()
-                                logger.info("已清理孤立預覽圖: %s", p_str)
-                        except Exception as e:
-                            logger.warning("刪除預覽圖失敗 %s: %s", p_str, e)
+                    if dry_run:
+                        self._record_cleanup_action(
+                            actions,
+                            action_type="preview",
+                            path=preview_file,
+                            dry_run=True,
+                        )
+                        continue
+
+                    try:
+                        preview_file.unlink()
+                        self._record_cleanup_action(
+                            actions,
+                            action_type="preview",
+                            path=preview_file,
+                            dry_run=False,
+                        )
+                        logger.info("Removed orphaned preview: %s", preview_path)
+                    except Exception as exc:
+                        self._record_cleanup_action(
+                            actions,
+                            action_type="preview",
+                            path=preview_file,
+                            dry_run=False,
+                            error=exc,
+                        )
+                        logger.warning("Failed to remove orphaned preview %s: %s", preview_path, exc)
 
         return actions

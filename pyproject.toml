@@ -6,8 +6,7 @@ exclude = [
   ".pytest_cache",
   "__pycache__",
   "release",
-  "release_ci2",
-  "release_ci3",
+  "release_ci*",
 ]
 
 [tool.ruff.lint]
@@ -19,7 +18,8 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 no_implicit_optional = true
 check_untyped_defs = false
-exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci2|release_ci3|uploads|repo|tests[\\/]_tmp_pytest)([\\/]|$)'
+incremental = false
+exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci[^\\/]*|uploads|repo|tests[\\/]_tmp_pytest)([\\/]|$)'
 files = [
   "app_main.py",
   "core_metadata.py",
@@ -27,6 +27,7 @@ files = [
   "ui_state.py",
   "ui_common.py",
   "ui_home.py",
+  "ui_labels.py",
   "ui_upload.py",
   "ui_review.py",
   "ui_execute.py",
@@ -46,5 +47,6 @@ files = [
   "storage_recovery.py",
   "storage_search.py",
   "scripts/create_release_zip.py",
+  "scripts/check_workspace_clean.py",
 ]
 

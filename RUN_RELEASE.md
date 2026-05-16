@@ -38,7 +38,7 @@ Key runtime groups:
 - UI modules: `ui_*.py`
 - folder organizer/report modules: `folder_*.py`, `report_exports.py`
 - docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
-- demo helper: `scripts/create_demo_folder.py`
+- demo helper: `scripts/create_demo_folder.py`, `scripts/check_workspace_clean.py`
 - runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 Not included:

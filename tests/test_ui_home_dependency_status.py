@@ -9,10 +9,10 @@ from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     cache_dependency_status,
     get_cached_dependency_status,
-    recommendation_display_label,
     refresh_dependency_status,
     summarize_recommendations,
 )
+from ui_labels import recommendation_display_label
 
 
 def test_dependency_status_cache_starts_empty():

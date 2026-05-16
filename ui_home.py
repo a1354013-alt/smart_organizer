@@ -24,6 +24,7 @@ from folder_service import (
     scan_folder,
 )
 from ui_common import UIContext, card_close, card_open, handle_ui_exception, is_debug
+from ui_labels import recommendation_display_label
 from ui_renderers import render_dependency_status
 from ui_state import (
     SESSION_AI_ENABLED,
@@ -40,11 +41,6 @@ from ui_state import (
 from version import APP_NAME, APP_TITLE, __version__
 
 DEPENDENCY_STATUS_SESSION_KEY = "dependency_status"
-RECOMMENDATION_DISPLAY_LABELS = {
-    Recommendation.SAFE_TO_REVIEW.value: "\u53ef\u5b89\u5168\u8907\u67e5",
-    Recommendation.NEEDS_MANUAL_CHECK.value: "\u9700\u8981\u4eba\u5de5\u78ba\u8a8d",
-    Recommendation.DO_NOT_TOUCH.value: "\u4e0d\u8981\u64cd\u4f5c",
-}
 
 
 def _coerce_message_list(value: object) -> list[str]:
@@ -68,11 +64,6 @@ def summarize_recommendations(
             1 for item in records if item.get("recommendation") == Recommendation.DO_NOT_TOUCH.value
         ),
     }
-
-
-def recommendation_display_label(value: object) -> str:
-    return RECOMMENDATION_DISPLAY_LABELS.get(str(value), str(value))
-
 
 def get_cached_dependency_status(session_state: Any) -> dict[str, Any] | None:
     status = session_state.get(DEPENDENCY_STATUS_SESSION_KEY)

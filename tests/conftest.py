@@ -58,6 +58,16 @@ def _cleanup_repo_caches() -> None:
     for path in PROJECT_ROOT.rglob("__pycache__"):
         with suppress(PermissionError):
             shutil.rmtree(path, ignore_errors=True)
+    for pattern in (".mypy_cache", ".ruff_cache", ".pytest_runtime_tmp*"):
+        for path in PROJECT_ROOT.glob(pattern):
+            with suppress(PermissionError):
+                shutil.rmtree(path, ignore_errors=True)
+    for path in (PROJECT_ROOT / "repo", PROJECT_ROOT / "uploads"):
+        with suppress(PermissionError):
+            shutil.rmtree(path, ignore_errors=True)
+    for path in (PROJECT_ROOT / "smart_organizer.db",):
+        with suppress(FileNotFoundError, PermissionError):
+            path.unlink()
     for pattern in ("*.pyc", "*.pyc.*"):
         for path in PROJECT_ROOT.rglob(pattern):
             with suppress(FileNotFoundError, PermissionError):
@@ -128,21 +138,27 @@ def pytest_sessionfinish(session, exitstatus):
     """
 
     try:
-        basetemp = session.config._tmp_path_factory.getbasetemp()
-    except Exception:
-        return
-
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
         try:
-            # Force a scandir/iterdir to verify accessibility.
-            for _ in Path(basetemp).iterdir():
-                break
+            basetemp = session.config._tmp_path_factory.getbasetemp()
+        except Exception:
+            basetemp = None
+
+        if basetemp is None:
             return
-        except PermissionError:
-            time.sleep(0.25)
-        except FileNotFoundError:
-            return
+
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            try:
+                # Force a scandir/iterdir to verify accessibility.
+                for _ in Path(basetemp).iterdir():
+                    break
+                return
+            except PermissionError:
+                time.sleep(0.25)
+            except FileNotFoundError:
+                return
+    finally:
+        _cleanup_repo_caches()
 
 
 @pytest.fixture(autouse=True)
