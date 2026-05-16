@@ -81,7 +81,6 @@ These commands belong to the source repository, not the runtime package:
 Why:
 
 - the official release zip does not include tests or dev dependencies
-- the official release zip does not include tests or dev dependencies
 - the official release zip is a runtime/demo package, not a packaging toolchain
 
 ## 5. Required system dependencies

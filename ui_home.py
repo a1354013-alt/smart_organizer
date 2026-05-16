@@ -40,6 +40,11 @@ from ui_state import (
 from version import APP_NAME, APP_TITLE, __version__
 
 DEPENDENCY_STATUS_SESSION_KEY = "dependency_status"
+RECOMMENDATION_DISPLAY_LABELS = {
+    Recommendation.SAFE_TO_REVIEW.value: "\u53ef\u5b89\u5168\u8907\u67e5",
+    Recommendation.NEEDS_MANUAL_CHECK.value: "\u9700\u8981\u4eba\u5de5\u78ba\u8a8d",
+    Recommendation.DO_NOT_TOUCH.value: "\u4e0d\u8981\u64cd\u4f5c",
+}
 
 
 def _coerce_message_list(value: object) -> list[str]:
@@ -63,6 +68,10 @@ def summarize_recommendations(
             1 for item in records if item.get("recommendation") == Recommendation.DO_NOT_TOUCH.value
         ),
     }
+
+
+def recommendation_display_label(value: object) -> str:
+    return RECOMMENDATION_DISPLAY_LABELS.get(str(value), str(value))
 
 
 def get_cached_dependency_status(session_state: Any) -> dict[str, Any] | None:
@@ -186,7 +195,7 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
                 "confidence": item.get("confidence"),
                 "risk_level": item.get("risk_level"),
                 "reasons": ", ".join(str(reason) for reason in cast(list[object], item.get("candidate_reasons") or [])),
-                "recommendation": item.get("recommendation"),
+                "recommendation": recommendation_display_label(item.get("recommendation")),
                 "path": item.get("path"),
             }
         )
@@ -322,7 +331,7 @@ def render_home(context: UIContext) -> None:
         if scan:
             stats_obj = scan.get("stats")
             stats = cast(dict[str, object], stats_obj) if isinstance(stats_obj, dict) else {}
-            quarantine_items, quarantine_warnings = get_quarantine_items_safe(str(scan.get("path") or ""))
+            quarantine_items, scan_quarantine_warnings = get_quarantine_items_safe(str(scan.get("path") or ""))
 
             metric_cols = st.columns(6)
             metrics = [
@@ -341,8 +350,8 @@ def render_home(context: UIContext) -> None:
                     card_close()
 
             errors = _coerce_message_list(scan.get("errors"))
-            if quarantine_warnings:
-                errors.extend(quarantine_warnings)
+            if scan_quarantine_warnings:
+                errors.extend(scan_quarantine_warnings)
             if errors:
                 with st.expander("Scan warnings", expanded=False):
                     for message in errors[:50]:
@@ -435,9 +444,9 @@ def render_home(context: UIContext) -> None:
             recommendation_summary = summarize_recommendations(records, candidates)
             st.markdown("**Recommended actions**")
             st.write(
-                f"- {Recommendation.SAFE_TO_REVIEW.value}: {recommendation_summary[Recommendation.SAFE_TO_REVIEW.value]}\n"
-                f"- {Recommendation.NEEDS_MANUAL_CHECK.value}: {recommendation_summary[Recommendation.NEEDS_MANUAL_CHECK.value]}\n"
-                f"- {Recommendation.DO_NOT_TOUCH.value}: {recommendation_summary[Recommendation.DO_NOT_TOUCH.value]}"
+                f"- {recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value)}: {recommendation_summary[Recommendation.SAFE_TO_REVIEW.value]}\n"
+                f"- {recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value)}: {recommendation_summary[Recommendation.NEEDS_MANUAL_CHECK.value]}\n"
+                f"- {recommendation_display_label(Recommendation.DO_NOT_TOUCH.value)}: {recommendation_summary[Recommendation.DO_NOT_TOUCH.value]}"
             )
         else:
             st.info("Scan a folder to build your cleanup candidates, quarantine list, and report.")
@@ -452,10 +461,12 @@ def render_home(context: UIContext) -> None:
         )
         current_scan = cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {})
         quarantine_items = []
-        quarantine_warnings: list[str] = []
+        restore_quarantine_warnings: list[str] = []
         if current_scan or folder_path:
-            quarantine_items, quarantine_warnings = get_quarantine_items_safe(str(current_scan.get("path") or folder_path or ""))
-        for warning in quarantine_warnings:
+            quarantine_items, restore_quarantine_warnings = get_quarantine_items_safe(
+                str(current_scan.get("path") or folder_path or "")
+            )
+        for warning in restore_quarantine_warnings:
             st.warning(warning)
         if quarantine_items:
             restore_choices = st.multiselect(

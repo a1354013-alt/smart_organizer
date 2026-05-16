@@ -4,34 +4,23 @@ import streamlit as st
 
 
 def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
-    """Best-effort mitigation for browser JSON.parse console errors.
-
-    Streamlit's frontend (and some libraries) persist UI state in Web Storage.
-    If a key that is expected to be JSON contains a non-JSON string (e.g. "v2.8.4",
-    "", "undefined", or a corrupted number like "1e+"), the browser console may
-    show JSON.parse errors and some UI code can break.
-
-    We can't change Streamlit's internal JSON.parse calls, but we *can* sanitize
-    storage values early in the app render via an embedded script that:
-      - wraps JSON.parse in safeParse (never throws)
-      - removes obviously-corrupted JSON-like values
-      - avoids touching plain strings that don't look like JSON
-    """
+    """Best-effort mitigation for browser JSON.parse console errors."""
 
     if not enabled:
         return
 
-    # Use components.html so the JS executes; markdown sanitization would strip scripts.
-    # The iframe is served from the same origin as the Streamlit app, so it can
-    # access localStorage/sessionStorage for that origin.
-    st.components.v1.html(
+    # Streamlit 1.56+ supports inline HTML with JavaScript via st.html.
+    # Keeping this script inline lets it sanitize same-origin browser storage
+    # without relying on the deprecated components.v1 HTML iframe helper.
+    st.html(
         """
+        <div style="display:none"></div>
         <script>
         (function () {
           function previewValue(value) {
             if (value === null || value === undefined) return String(value);
             const text = String(value);
-            return text.length > 100 ? (text.slice(0, 100) + "…") : text;
+            return text.length > 100 ? (text.slice(0, 100) + "...") : text;
           }
 
           function safeParse(value, key, storageName) {
@@ -55,9 +44,9 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
             const s = String(text).trim();
             if (s === "") return false;
             const first = s[0];
-            if (first === "{" || first === "[" || first === "\"") return true;
+            if (first === "{" || first === "[" || first === '"') return true;
             if (s === "null" || s === "true" || s === "false") return true;
-            // JSON numbers (incl. exponent) OR things that start like numbers (so corrupted ones get caught)
+            // JSON numbers (including exponent) or strings that begin like numbers.
             return /^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/.test(s) || /^[+-]?\\d/.test(s);
           }
 
@@ -85,7 +74,7 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
               const parsed = safeParse(text, key, storageName);
               if (parsed !== null) continue;
 
-              // Looks JSON-like but can't be parsed => corrupted JSON string. Remove to avoid downstream crashes.
+              // Looks JSON-like but cannot be parsed, so remove it to avoid downstream crashes.
               try {
                 storage.removeItem(key);
                 try {
@@ -103,7 +92,6 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
         })();
         </script>
         """,
-        height=0,
-        width=0,
+        width="content",
+        unsafe_allow_javascript=True,
     )
-

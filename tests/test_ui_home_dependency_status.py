@@ -9,6 +9,7 @@ from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     cache_dependency_status,
     get_cached_dependency_status,
+    recommendation_display_label,
     refresh_dependency_status,
     summarize_recommendations,
 )
@@ -85,3 +86,10 @@ def test_summarize_recommendations_uses_shared_contract_labels():
         Recommendation.NEEDS_MANUAL_CHECK.value: 1,
         Recommendation.DO_NOT_TOUCH.value: 1,
     }
+
+
+def test_recommendation_display_label_keeps_data_contract_and_localizes_ui_text():
+    assert recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value) == "可安全複查"
+    assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == "需要人工確認"
+    assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == "不要操作"
+    assert recommendation_display_label("Custom label") == "Custom label"

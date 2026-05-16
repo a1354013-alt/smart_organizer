@@ -353,7 +353,11 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
                 break
             except FileExistsError as exc:
                 if time.monotonic() >= deadline:
-                    raise ManifestCompatibilityError(f"Timed out waiting for manifest lock: {lock_path}") from exc
+                    raise ManifestCompatibilityError(
+                        "Timed out waiting for manifest lock: "
+                        f"{lock_path}. A previous run may have left a stale lock file. "
+                        "Do not remove the lock until you confirm no Smart Organizer process is using this folder."
+                    ) from exc
                 time.sleep(max(0.01, float(poll_seconds)))
             except OSError as exc:
                 raise ManifestCompatibilityError(f"Failed to create manifest lock: {exc}") from exc

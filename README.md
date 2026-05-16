@@ -47,20 +47,19 @@ Then scan the generated `demo_files` folder. It contains old, suspected duplicat
 
 ## Validation
 
-Run the main quality gates:
+Run the same commands used by `.github/workflows/ci.yml`:
 
 ```bash
 python -m compileall -q .
 python scripts/safe_compileall.py -q .
-pytest
 ruff check .
-mypy core_processor.py core_metadata.py services_analysis.py services_finalize.py storage_repository.py storage_recovery.py storage_search.py folder_organizer.py folder_models.py
-python scripts/create_demo_folder.py
-python scripts/create_release_zip.py
-python scripts/verify_release_zip.py dist/*.zip
+python -m mypy core_processor.py core_metadata.py services_analysis.py services_finalize.py storage_repository.py storage_recovery.py storage_search.py folder_organizer.py folder_models.py ui_common.py ui_home.py ui_upload.py ui_review.py ui_execute.py ui_search.py ui_renderers.py ui_records.py
+python -m pytest
+python scripts/create_release_zip.py --output-dir release_ci
+python scripts/verify_release_zip.py release_ci/*.zip
 ```
 
-CI runs compile checks, full pytest, ruff, mypy on core/UI modules, release zip creation, and release zip policy verification.
+If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
 
 ## Explainable Scoring
 

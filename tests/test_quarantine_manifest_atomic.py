@@ -187,3 +187,17 @@ def test_manifest_guard_blocks_until_lock_is_released(tmp_path: Path):
     thread.join(timeout=2)
     assert observed and observed[0] >= 0.15
     assert not quarantine_manifest_lock_path(tmp_path).exists()
+
+
+def test_manifest_guard_reports_stale_lock_file_clearly(tmp_path: Path):
+    lock_path = quarantine_manifest_lock_path(tmp_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("stale", encoding="utf-8")
+
+    with (
+        pytest.raises(ManifestCompatibilityError, match="stale lock file"),
+        quarantine_manifest_guard(tmp_path, timeout_seconds=0.1, poll_seconds=0.01),
+    ):
+        raise AssertionError("Expected stale lock acquisition to fail")
+
+    assert lock_path.exists()
