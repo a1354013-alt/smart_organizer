@@ -48,5 +48,11 @@ files = [
   "storage_search.py",
   "scripts/create_release_zip.py",
   "scripts/check_workspace_clean.py",
+  "scripts/validate_release_source.py",
 ]
+
+[[tool.mypy.overrides]]
+module = ["streamlit", "streamlit.*"]
+follow_imports = "skip"
+ignore_errors = true
 

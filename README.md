@@ -50,14 +50,12 @@ Then scan the generated `demo_files` folder. It contains old, suspected duplicat
 Run the same commands used by `.github/workflows/ci.yml`:
 
 ```bash
-python scripts/safe_compileall.py -q .
-python -m ruff check .
-python -m mypy
-python -m pytest
-python scripts/create_release_zip.py --output-dir release_ci
-python scripts/verify_release_zip.py release_ci/*.zip
-python scripts/check_workspace_clean.py --project-root .
+python scripts/validate_release_source.py
 ```
+
+The validation script runs cache-safe checks, including `ruff check --no-cache`
+and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
+cleanliness.
 
 If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
 

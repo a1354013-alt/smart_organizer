@@ -52,8 +52,8 @@ def test_release_packaging_docs_match_current_policy():
         assert expected in allowlist
         assert expected in packaging
 
-    assert "python scripts/create_release_zip.py" in readme
-    assert "python scripts/create_release_zip.py" in run_release
+    assert "python scripts/validate_release_source.py" in readme
+    assert "python scripts/validate_release_source.py" in run_release
     assert "python -m pip install -r requirements.txt" in readme
     assert "python -m pip install -r requirements.txt" in run_release
     assert "streamlit run app.py" in readme
@@ -63,22 +63,32 @@ def test_release_packaging_docs_match_current_policy():
 
 
 def test_release_validation_commands_are_consistent_and_cache_safe():
+    from scripts.validate_release_source import build_validation_commands
+
     docs = [
         (PROJECT_ROOT / "README.md").read_text(encoding="utf-8"),
         (PROJECT_ROOT / "RUN_RELEASE.md").read_text(encoding="utf-8"),
         (PROJECT_ROOT / "RELEASE_PACKAGING.md").read_text(encoding="utf-8"),
     ]
+    command_text = "\n".join(" ".join(command[1:]) for command in build_validation_commands())
     required_commands = [
-        "python scripts/safe_compileall.py -q .",
-        "python -m ruff check .",
-        "python -m mypy",
-        "python -m pytest",
-        "python scripts/create_release_zip.py --output-dir release_ci",
-        "python scripts/verify_release_zip.py release_ci/*.zip",
-        "python scripts/check_workspace_clean.py --project-root .",
+        "scripts/safe_compileall.py -q .",
+        "-m ruff check --no-cache .",
+        "-m mypy --cache-dir=/dev/null",
+        "-m pytest -q",
+        "scripts/create_release_zip.py --output-dir release_ci",
+        "scripts/verify_release_zip.py release_ci/*.zip",
+        "scripts/check_workspace_clean.py --project-root .",
     ]
 
     for content in docs:
-        for command in required_commands:
-            assert command in content
+        assert "python scripts/validate_release_source.py" in content
         assert "python -m compileall -q ." not in content
+        assert "python -m ruff check ." not in content
+        assert "python -m mypy\n" not in content
+
+    for command in required_commands:
+        assert command in command_text
+
+    assert "--no-cache" in command_text
+    assert "--cache-dir=/dev/null" in command_text

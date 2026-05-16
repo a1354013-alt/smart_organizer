@@ -76,7 +76,7 @@ These commands belong to the source repository, not the runtime package:
 - `powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1`
 - `python -m pytest`
 - `python -m mypy`
-- `python -m ruff check .`
+- `python -m ruff check --no-cache .`
 
 Why:
 
@@ -112,13 +112,13 @@ Recommended smoke test after extraction:
 Run these commands from the source repository root before publishing a release. Use
 `scripts/safe_compileall.py` instead of `python -m compileall` so validation does not
 create `__pycache__` directories that would fail the final workspace-cleanliness check.
+Use the release validation script as the single source of truth for the full command
+sequence.
 
 ```bash
-python scripts/safe_compileall.py -q .
-python -m ruff check .
-python -m mypy
-python -m pytest
-python scripts/create_release_zip.py --output-dir release_ci
-python scripts/verify_release_zip.py release_ci/*.zip
-python scripts/check_workspace_clean.py --project-root .
+python scripts/validate_release_source.py
 ```
+
+The validation script runs cache-safe checks, including `ruff check --no-cache`
+and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
+cleanliness.

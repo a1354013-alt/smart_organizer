@@ -78,17 +78,13 @@ The packaging policy is enforced by:
 Run the full source-repository validation sequence before publishing:
 
 ```bash
-python scripts/safe_compileall.py -q .
-python -m ruff check .
-python -m mypy
-python -m pytest
-python scripts/create_release_zip.py --output-dir release_ci
-python scripts/verify_release_zip.py release_ci/*.zip
-python scripts/check_workspace_clean.py --project-root .
+python scripts/validate_release_source.py
 ```
 
 Do not use the standard-library compileall module directly for release validation because
 it can leave `__pycache__` directories in the workspace.
+The validation script also runs cache-safe `ruff check --no-cache` and
+`mypy --cache-dir=/dev/null` so the final workspace-cleanliness check remains valid.
 
 After unpacking the release zip:
 
