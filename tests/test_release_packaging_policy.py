@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -92,3 +94,65 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
 
     assert "--no-cache" in command_text
     assert "--cache-dir=/dev/null" in command_text
+
+
+def test_release_validation_dry_run_lists_expected_commands(capsys):
+    from scripts.validate_release_source import main
+
+    assert main(["--dry-run"]) == 0
+
+    output = capsys.readouterr().out
+    expected_commands = [
+        "python scripts/safe_compileall.py -q .",
+        "python -m ruff check --no-cache .",
+        "python -m mypy --cache-dir=/dev/null",
+        "python -m pytest -q",
+        "python scripts/create_release_zip.py --output-dir release_ci",
+        "python scripts/verify_release_zip.py release_ci/*.zip",
+        "python scripts/check_workspace_clean.py --project-root .",
+    ]
+
+    for command in expected_commands:
+        assert f"$ {command}" in output
+
+
+def test_release_validation_commands_include_cache_safe_tool_options():
+    from scripts.validate_release_source import build_validation_commands
+
+    command_text = "\n".join(" ".join(command) for command in build_validation_commands())
+
+    assert f"{sys.executable} -m ruff check --no-cache ." in command_text
+    assert f"{sys.executable} -m mypy --cache-dir=/dev/null" in command_text
+
+
+def test_release_validation_timeout_reports_command(monkeypatch, capsys):
+    import scripts.validate_release_source as validate_release_source
+
+    timed_out_command = [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"]
+
+    def fake_build_validation_commands(output_dir: str = "release_ci") -> list[list[str]]:
+        return [timed_out_command]
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(validate_release_source, "build_validation_commands", fake_build_validation_commands)
+    monkeypatch.setattr(validate_release_source.subprocess, "run", fake_run)
+
+    assert validate_release_source.main([]) != 0
+
+    captured = capsys.readouterr()
+    assert "$ python -m mypy --cache-dir=/dev/null" in captured.out
+    assert "timed out" in captured.err
+    assert "python -m mypy --cache-dir=/dev/null" in captured.err
+
+
+def test_release_validation_docs_reference_single_entrypoint():
+    docs = [
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "RUN_RELEASE.md",
+        PROJECT_ROOT / "RELEASE_PACKAGING.md",
+    ]
+
+    for path in docs:
+        assert "python scripts/validate_release_source.py" in path.read_text(encoding="utf-8")
