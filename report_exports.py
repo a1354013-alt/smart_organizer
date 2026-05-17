@@ -4,7 +4,9 @@ import csv
 import html
 import json
 from collections.abc import Iterable
+from datetime import date, datetime
 from io import StringIO
+from pathlib import Path
 
 
 def escape_markdown_table_cell(value: object) -> str:
@@ -37,7 +39,44 @@ def export_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
 
 
 def export_rows_to_json(rows: Iterable[dict[str, object]]) -> str:
-    return json.dumps([dict(row) for row in rows], ensure_ascii=False, indent=2)
+    return json.dumps(
+        [{str(key): _json_safe(value) for key, value in row.items()} for row in rows],
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def export_rows_to_markdown(rows: Iterable[dict[str, object]], *, title: str = "Records Export") -> str:
+    materialized = [dict(row) for row in rows]
+    lines = [f"# {escape_markdown_table_cell(title)}", ""]
+    if not materialized:
+        lines.append("_No records available._")
+        return "\n".join(lines) + "\n"
+
+    fieldnames: list[str] = []
+    for row in materialized:
+        for key in row:
+            key_text = str(key)
+            if key_text not in fieldnames:
+                fieldnames.append(key_text)
+
+    lines.append("| " + " | ".join(escape_markdown_table_cell(key) for key in fieldnames) + " |")
+    lines.append("| " + " | ".join("---" for _ in fieldnames) + " |")
+    for row in materialized:
+        lines.append(
+            "| "
+            + " | ".join(escape_markdown_table_cell(row.get(key)) for key in fieldnames)
+            + " |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def export_records_csv(records: list[dict[str, object]]) -> str:

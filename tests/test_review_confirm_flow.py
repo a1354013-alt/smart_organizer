@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from contracts import ExtractedMetadata
 from services import AnalysisResult, build_confirmed_results
 
@@ -84,3 +86,18 @@ def test_build_confirmed_results_without_overrides_clones_result():
     assert item.main_topic == original.main_topic
     assert item.summary == original.summary
     assert item.tag_scores == original.tag_scores
+
+
+def test_build_confirmed_results_handles_multiple_items_and_summaries():
+    first = _result(1)
+    second = _result(2)
+    confirmed = build_confirmed_results([first, second], summaries={2: "second summary"})
+
+    assert [item.file_id for item in confirmed] == [1, 2]
+    assert confirmed[0].summary == first.summary
+    assert confirmed[1].summary == "second summary"
+
+
+def test_review_manual_override_requires_processor_safety_gate():
+    with pytest.raises(ValueError, match="processor is required"):
+        build_confirmed_results([_result()], selected_topics={1: "Tax"})

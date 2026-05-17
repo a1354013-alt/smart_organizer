@@ -35,6 +35,26 @@ Folder organizer flow:
 - Interrupted move recovery: `MOVING` manifest entries are repaired on the next quarantine/restore/list operation.
 - Release allowlist: the runtime zip is built from explicit files and rejects caches, DBs, uploads, temp folders, and `.git`.
 
+## Safe Organization Flow
+
+Smart Organizer is designed around preview-first, reversible cleanup. It does not directly delete selected user files.
+
+```mermaid
+flowchart TD
+    A["Choose a folder or upload files"] --> B["Scan and analyze"]
+    B --> C["Generate explainable organization suggestions"]
+    C --> D["Dry-run preview"]
+    D --> E{"User confirms?"}
+    E -->|No| F["Do not move files"]
+    E -->|Yes| G["Move selected files to Quarantine"]
+    G --> H["Write operation record and manifest"]
+    H --> I{"Restore needed?"}
+    I -->|Yes| J["Restore to original path or safe renamed path"]
+    I -->|No| K["Keep quarantine record for review"]
+```
+
+Release packaging follows the same safety boundary: generated runtime zips are built from an explicit allowlist and must not include local user data, SQLite DB files, `uploads/`, `repo/`, caches, virtual environments, or release temp extraction folders.
+
 ## Quick Demo
 
 ```bash
@@ -44,6 +64,14 @@ streamlit run app.py
 ```
 
 Then scan the generated `demo_files` folder. It contains old, suspected duplicate-name, recent, and keep-focused sample files so reviewers can experience the full flow in about one minute.
+
+Recommended demo screenshots for a portfolio or interview walkthrough:
+
+1. Folder scan results showing candidate reasons, risk labels, and recommendations.
+2. Dry-run preview showing the exact quarantine target path before any move happens.
+3. Quarantine result showing `.smart_organizer_quarantine/<operation_id>/...`.
+4. Restore result showing files returned without overwriting existing user files.
+5. Exported Markdown or CSV report preview.
 
 ## Validation
 
