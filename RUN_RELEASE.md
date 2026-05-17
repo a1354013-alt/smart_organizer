@@ -124,3 +124,6 @@ This command is only available in the source repository and is not included in t
 The validation script runs cache-safe checks, including `ruff check --no-cache`
 and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
 cleanliness.
+For this integrated validation run, the script writes and verifies
+`release_ci/smart_organizer-release-validation.zip` so stale local release zips
+do not influence the result.

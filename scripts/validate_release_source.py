@@ -13,6 +13,7 @@ from typing import TextIO, cast
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 90
 LONG_COMMAND_TIMEOUT_SECONDS = 180
+VALIDATION_ZIP_NAME = "smart_organizer-release-validation.zip"
 COMMAND_TIMEOUTS_SECONDS = {
     "scripts/safe_compileall.py": 60,
     "ruff": 60,
@@ -26,13 +27,21 @@ DEFAULT_TIMEOUT_TAIL_LINES = 40
 
 
 def build_validation_commands(output_dir: str = "release_ci") -> list[list[str]]:
+    validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
         [sys.executable, "scripts/safe_compileall.py", "-q", "."],
         [sys.executable, "-m", "ruff", "check", "--no-cache", "."],
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],
         [sys.executable, "-m", "pytest", "-q"],
-        [sys.executable, "scripts/create_release_zip.py", "--output-dir", output_dir],
-        [sys.executable, "scripts/verify_release_zip.py", f"{output_dir}/*.zip"],
+        [
+            sys.executable,
+            "scripts/create_release_zip.py",
+            "--output-dir",
+            output_dir,
+            "--zip-name",
+            VALIDATION_ZIP_NAME,
+        ],
+        [sys.executable, "scripts/verify_release_zip.py", validation_zip_path],
         [sys.executable, "scripts/check_workspace_clean.py", "--project-root", "."],
     ]
 

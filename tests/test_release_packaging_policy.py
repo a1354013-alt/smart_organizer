@@ -77,8 +77,8 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
         "-m ruff check --no-cache .",
         "-m mypy --cache-dir=/dev/null",
         "-m pytest -q",
-        "scripts/create_release_zip.py --output-dir release_ci",
-        "scripts/verify_release_zip.py release_ci/*.zip",
+        "scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
+        "scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
         "scripts/check_workspace_clean.py --project-root .",
     ]
 
@@ -106,8 +106,8 @@ def test_release_validation_dry_run_lists_expected_commands(capsys):
         "python -m ruff check --no-cache .",
         "python -m mypy --cache-dir=/dev/null",
         "python -m pytest -q",
-        "python scripts/create_release_zip.py --output-dir release_ci",
-        "python scripts/verify_release_zip.py release_ci/*.zip",
+        "python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
+        "python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
         "python scripts/check_workspace_clean.py --project-root .",
     ]
 
@@ -122,6 +122,16 @@ def test_release_validation_commands_include_cache_safe_tool_options():
 
     assert f"{sys.executable} -m ruff check --no-cache ." in command_text
     assert f"{sys.executable} -m mypy --cache-dir=/dev/null" in command_text
+
+
+def test_release_validation_verifies_only_the_current_zip():
+    from scripts.validate_release_source import VALIDATION_ZIP_NAME, build_validation_commands
+
+    command_text = "\n".join(" ".join(command) for command in build_validation_commands())
+
+    assert f"--zip-name {VALIDATION_ZIP_NAME}" in command_text
+    assert f"release_ci/{VALIDATION_ZIP_NAME}" in command_text
+    assert "release_ci/*.zip" not in command_text
 
 
 def test_release_validation_timeout_reports_command(monkeypatch, capsys):

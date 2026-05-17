@@ -87,6 +87,9 @@ Do not use the standard-library compileall module directly for release validatio
 it can leave `__pycache__` directories in the workspace.
 The validation script also runs cache-safe `ruff check --no-cache` and
 `mypy --cache-dir=/dev/null` so the final workspace-cleanliness check remains valid.
+During validation, the script writes and verifies the deterministic
+`release_ci/smart_organizer-release-validation.zip` artifact so older local zips
+cannot affect the result.
 
 After unpacking the release zip:
 

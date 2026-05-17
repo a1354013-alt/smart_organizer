@@ -84,6 +84,9 @@ python scripts/validate_release_source.py
 The validation script runs cache-safe checks, including `ruff check --no-cache`
 and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
 cleanliness.
+The integrated validation run verifies its own deterministic
+`release_ci/smart_organizer-release-validation.zip` artifact, so stale local
+release zips cannot change the result.
 
 If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
 
