@@ -14,7 +14,8 @@ python scripts/create_release_zip.py
 
 ## Runtime/demo allowlist
 
-The official release zip is built from the allowlist in `scripts/create_release_zip.py`.
+The official runtime release zip is built from the allowlist in `scripts/release_policy.py`
+and packaged by `scripts/create_release_zip.py`.
 
 It includes these runtime categories:
 
@@ -25,10 +26,19 @@ It includes these runtime categories:
 - report export modules: `report_exports.py`
 - docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`
 - requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
-- demo helper scripts: `scripts/create_demo_folder.py`, `scripts/check_workspace_clean.py`
+- demo helper scripts: `scripts/create_demo_folder.py`
 - supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 This is an official runtime/demo package. It intentionally does not include tests, CI files, development configs, or workspace snapshots.
+
+Source-only scripts stay in the source repository and are never included in the runtime zip:
+
+- `scripts/check_workspace_clean.py`
+- `scripts/create_release_zip.py`
+- `scripts/release_policy.py`
+- `scripts/safe_compileall.py`
+- `scripts/validate_release_source.py`
+- `scripts/verify_release_zip.py`
 
 ## Forbidden paths
 
@@ -67,6 +77,7 @@ These must stay out of the release zip:
 
 The packaging policy is enforced by:
 
+- `scripts/release_policy.py`
 - `scripts/create_release_zip.py`
 - `scripts/verify_release_zip.py`
 - `scripts/check_workspace_clean.py`
@@ -83,7 +94,7 @@ Source repository only, not included in runtime release zip.
 python scripts/validate_release_source.py
 ```
 
-This command is only available in the source repository and is not included in the extracted runtime/demo zip.
+This command is only available in the source repository and is not included in the extracted runtime/demo zip because source-only scripts stay in the source repository.
 
 Do not use the standard-library compileall module directly for release validation because
 it can leave `__pycache__` directories in the workspace.

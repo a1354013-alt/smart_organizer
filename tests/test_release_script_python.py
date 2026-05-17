@@ -13,6 +13,7 @@ from scripts.create_release_zip import (
     get_version,
     zip_contains_forbidden_entries,
 )
+from scripts.release_policy import SOURCE_ONLY_RELEASE_FILES
 from scripts.validate_release_source import run_step
 from scripts.verify_release_zip import default_zip_path_arg, resolve_zip_paths, verify_release_zip
 
@@ -65,9 +66,10 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "folder_service.py" in names
     assert "folder_report.py" in names
     assert "report_exports.py" in names
-    assert "scripts/check_workspace_clean.py" in names
     assert "docs/KNOWN_LIMITATIONS.md" in names
     assert "docs/PORTFOLIO_CASE_STUDY.md" in names
+    for source_only_path in SOURCE_ONLY_RELEASE_FILES:
+        assert source_only_path not in names
 
 
 def test_get_version_uses_static_parsing(monkeypatch):
@@ -119,6 +121,51 @@ def test_verify_release_zip_rejects_forbidden_and_extra_entries(tmp_path: Path):
         assert "forbidden paths" in str(exc)
     else:
         raise AssertionError("Expected forbidden zip entry to fail verification")
+
+
+def test_verify_release_zip_rejects_missing_required_file(tmp_path: Path):
+    zip_path = tmp_path / "missing.zip"
+    required_entries = [entry for entry in RELEASE_ALLOWLIST if entry != "app_main.py"]
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry in required_entries:
+            archive.writestr(entry, "placeholder\n")
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "missing allowlisted files" in str(exc)
+        assert "app_main.py" in str(exc)
+    else:
+        raise AssertionError("Expected missing allowlisted file to fail verification")
+
+
+def test_verify_release_zip_rejects_source_only_script(tmp_path: Path):
+    zip_path = build_zip(tmp_path, "runtime-plus-source-only.zip")
+    with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("scripts/validate_release_source.py", "print('source only')\n")
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "source-only files" in str(exc) or "non-allowlisted files" in str(exc)
+        assert "scripts/validate_release_source.py" in str(exc)
+    else:
+        raise AssertionError("Expected source-only script to fail verification")
+
+
+def test_verify_release_zip_rejects_runtime_artifacts_in_zip(tmp_path: Path):
+    zip_path = build_zip(tmp_path, "runtime-with-artifacts.zip")
+    with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("dist/runtime.zip", b"zip-in-zip")
+        archive.writestr("coverage/index.html", "<html></html>")
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "forbidden paths" in str(exc)
+        assert "dist/runtime.zip" in str(exc) or "coverage/index.html" in str(exc)
+    else:
+        raise AssertionError("Expected runtime artifacts to fail verification")
 
 
 def test_extracted_release_zip_smoke_imports_app_main(tmp_path: Path):
@@ -212,15 +259,16 @@ def test_validate_release_run_step_times_out_with_tail(capsys):
 
 
 def test_validate_release_run_step_times_out_with_partial_line(capsys):
-    if os.name == "nt":
-        command = [
-            "cmd",
-            "/d",
-            "/c",
-            "set /p dummy=partial stdout<nul & set /p dummy=partial stderr<nul 1>&2 & ping -n 11 127.0.0.1 >nul",
-        ]
-    else:
-        command = ["sh", "-c", "printf 'partial stdout'; printf 'partial stderr' >&2; sleep 10"]
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys, time; "
+            "sys.stdout.write('partial stdout'); sys.stdout.flush(); "
+            "sys.stderr.write('partial stderr'); sys.stderr.flush(); "
+            "time.sleep(10)"
+        ),
+    ]
 
     started = time.perf_counter()
     returncode = run_step(
@@ -265,6 +313,8 @@ def test_validate_release_run_step_timeout_tail_keeps_flushed_partial_stdout_and
 def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_path: Path):
     parent_pid_file = tmp_path / "parent.pid"
     child_pid_file = tmp_path / "child.pid"
+    parent_ready_file = tmp_path / "parent.ready"
+    child_ready_file = tmp_path / "child.ready"
     child_script = tmp_path / "child_sleep.py"
     child_script.write_text(
         "import os\n"
@@ -272,7 +322,10 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         "import sys\n"
         "import time\n"
         "\n"
-        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8')\n"
+        "pid_path = pathlib.Path(sys.argv[1])\n"
+        "ready_path = pathlib.Path(sys.argv[2])\n"
+        "pid_path.write_text(str(os.getpid()), encoding='utf-8')\n"
+        "ready_path.write_text('child-ready', encoding='utf-8')\n"
         "time.sleep(10)\n",
         encoding="utf-8",
     )
@@ -286,14 +339,19 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         "\n"
         "parent_path = pathlib.Path(sys.argv[1])\n"
         "child_path = pathlib.Path(sys.argv[2])\n"
-        "child_script = pathlib.Path(sys.argv[3])\n"
-        "subprocess.Popen([sys.executable, str(child_script), str(child_path)])\n"
+        "child_ready = pathlib.Path(sys.argv[3])\n"
+        "parent_ready = pathlib.Path(sys.argv[4])\n"
+        "child_script = pathlib.Path(sys.argv[5])\n"
+        "subprocess.Popen([sys.executable, str(child_script), str(child_path), str(child_ready)])\n"
         "deadline = time.monotonic() + 5\n"
-        "while (not child_path.exists()) and time.monotonic() < deadline:\n"
+        "while (not child_path.exists() or not child_ready.exists()) and time.monotonic() < deadline:\n"
         "    time.sleep(0.01)\n"
-        "if not child_path.exists():\n"
-        "    raise RuntimeError('child pid file was not created')\n"
+        "if not child_path.exists() or not child_ready.exists():\n"
+        "    raise RuntimeError('child ready handshake was not completed')\n"
         "parent_path.write_text(str(os.getpid()), encoding='utf-8')\n"
+        "parent_ready.write_text('parent-ready', encoding='utf-8')\n"
+        "sys.stdout.write('parent partial stdout'); sys.stdout.flush()\n"
+        "sys.stderr.write('parent partial stderr'); sys.stderr.flush()\n"
         "time.sleep(10)\n",
         encoding="utf-8",
     )
@@ -302,16 +360,22 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         str(parent_script),
         str(parent_pid_file),
         str(child_pid_file),
+        str(child_ready_file),
+        str(parent_ready_file),
         str(child_script),
     ]
 
-    returncode = run_step(command, timeout_seconds=1, timeout_tail_lines=5)
+    returncode = run_step(command, timeout_seconds=2, timeout_tail_lines=5)
 
     captured = capsys.readouterr()
     assert returncode == 124
     assert "TIMEOUT" in captured.err
     assert parent_pid_file.exists()
     assert child_pid_file.exists()
+    assert parent_ready_file.exists()
+    assert child_ready_file.exists()
+    assert "parent partial stdout" in captured.out
+    assert "parent partial stderr" in captured.err
     assert not _pid_exists(int(parent_pid_file.read_text(encoding="utf-8")))
     assert not _pid_exists(int(child_pid_file.read_text(encoding="utf-8")))
 

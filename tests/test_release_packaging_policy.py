@@ -35,12 +35,21 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "folder_service.py",
         "folder_report.py",
         "report_exports.py",
-        "scripts/check_workspace_clean.py",
+        "scripts/create_demo_folder.py",
         "docs/KNOWN_LIMITATIONS.md",
         "docs/PORTFOLIO_CASE_STUDY.md",
     }
     assert required.issubset(set(allowlist))
     assert "compileall.py" not in allowlist
+    for source_only_path in (
+        "scripts/check_workspace_clean.py",
+        "scripts/create_release_zip.py",
+        "scripts/release_policy.py",
+        "scripts/safe_compileall.py",
+        "scripts/validate_release_source.py",
+        "scripts/verify_release_zip.py",
+    ):
+        assert source_only_path not in allowlist
 
 
 def test_release_packaging_docs_match_current_policy():
@@ -58,12 +67,15 @@ def test_release_packaging_docs_match_current_policy():
     assert "python scripts/validate_release_source.py" in run_release
     assert "python -m pip install -r requirements.txt" in readme
     assert "requirements-dev.txt" not in readme
-    assert "python scripts/validate_release_source.py" not in readme
+    assert "Source Repository Release Validation" in readme
+    assert "RUN_RELEASE.md" in readme
     assert "python -m pip install -r requirements.txt" in run_release
     assert "streamlit run app.py" in readme
     assert "streamlit run app.py" in run_release
     assert "$includePaths" not in ps1
     assert "python scripts/create_release_zip.py" in ps1 or "scripts\\create_release_zip.py" in ps1
+    assert "source-only scripts" in packaging
+    assert "source-only scripts" in run_release
 
 
 def test_release_validation_commands_are_consistent_and_cache_safe():
@@ -87,6 +99,7 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
     for content in docs:
         assert "python scripts/validate_release_source.py" in content
         assert "Source repository only, not included in runtime release zip." in content
+        assert "source-only scripts stay in the source repository" in content
         assert "python -m compileall -q ." not in content
         assert "python -m ruff check ." not in content
         assert "python -m mypy\n" not in content
@@ -196,7 +209,10 @@ def test_release_readme_references_only_files_in_runtime_zip(tmp_path: Path):
     missing = sorted(path for path in referenced_files if path not in names)
     assert missing == []
     assert "requirements-dev.txt" not in readme
-    assert "python scripts/validate_release_source.py" not in readme
+    assert "Source Repository Release Validation" in readme
+    assert "scripts/create_release_zip.py" not in readme
+    assert "scripts/verify_release_zip.py" not in readme
+    assert "scripts/validate_release_source.py" not in readme
 
     for doc_name in ("RUN_RELEASE.md", "RELEASE_PACKAGING.md"):
         content = (extract_dir / doc_name).read_text(encoding="utf-8")

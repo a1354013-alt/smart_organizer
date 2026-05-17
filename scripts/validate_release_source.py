@@ -15,9 +15,14 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+sys.dont_write_bytecode = True
+
+from scripts.release_policy import DEFAULT_RELEASE_OUTPUT_DIR, VALIDATION_ZIP_NAME
+
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 90
 LONG_COMMAND_TIMEOUT_SECONDS = 180
-VALIDATION_ZIP_NAME = "smart_organizer-release-validation.zip"
 COMMAND_TIMEOUTS_SECONDS = {
     "scripts/safe_compileall.py": 60,
     "ruff": 60,
@@ -60,7 +65,7 @@ class OutputTail:
         return lines
 
 
-def build_validation_commands(output_dir: str = "release_ci") -> list[list[str]]:
+def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> list[list[str]]:
     validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
         [sys.executable, "scripts/safe_compileall.py", "-q", "."],
@@ -96,7 +101,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run source repository release validation.")
     parser.add_argument(
         "--output-dir",
-        default="release_ci",
+        default=DEFAULT_RELEASE_OUTPUT_DIR,
         help="Release output directory used by create_release_zip.py.",
     )
     parser.add_argument(
@@ -185,6 +190,32 @@ def _join_reader_threads(threads: list[threading.Thread], *, deadline: float) ->
         thread.join(timeout=min(READER_JOIN_GRACE_SECONDS, remaining))
 
 
+def _drain_until_closed(
+    output_queue: queue.Queue[tuple[str, bytes | None]],
+    tail: OutputTail,
+    threads: list[threading.Thread],
+    *,
+    closed: int,
+    deadline: float,
+) -> int:
+    while closed < 2 and time.perf_counter() < deadline:
+        closed = _drain_output_queue(output_queue, tail, closed=closed)
+        if closed >= 2:
+            break
+        if not any(thread.is_alive() for thread in threads):
+            closed = _drain_output_queue(output_queue, tail, closed=closed)
+            break
+        try:
+            stream_name, chunk = output_queue.get(timeout=min(0.05, max(0.0, deadline - time.perf_counter())))
+        except queue.Empty:
+            continue
+        if chunk is None:
+            closed += 1
+            continue
+        _handle_output_chunk(stream_name, chunk, tail)
+    return _drain_output_queue(output_queue, tail, closed=closed)
+
+
 def _popen_kwargs() -> dict[str, Any]:
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
@@ -267,6 +298,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         **_popen_kwargs(),
     )
     assert proc.stdout is not None
@@ -290,7 +322,13 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
             cleanup_deadline = time.perf_counter() + PROCESS_TERMINATE_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS
             _terminate_process(proc, deadline=cleanup_deadline)
             _join_reader_threads(threads, deadline=cleanup_deadline + READER_JOIN_GRACE_SECONDS)
-            closed = _drain_output_queue(output_queue, tail, closed=closed)
+            closed = _drain_until_closed(
+                output_queue,
+                tail,
+                threads,
+                closed=closed,
+                deadline=cleanup_deadline + READER_JOIN_GRACE_SECONDS,
+            )
             duration = time.perf_counter() - started
             print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
             _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))

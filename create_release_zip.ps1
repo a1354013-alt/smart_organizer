@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDir = "dist",
+    [string]$OutputDir = "release_ci",
     [string]$ZipName = ""
 )
 

@@ -19,7 +19,7 @@ python scripts/create_release_zip.py
 What this does:
 
 - Creates the official runtime/demo zip from the source repo allowlist.
-- Excludes tests, CI files, development tooling, and packaging-only assets.
+- Excludes tests, CI files, development tooling, packaging-only assets, and source-only scripts.
 - Verifies that the generated zip does not contain forbidden entries.
 
 What this does not do:
@@ -38,7 +38,7 @@ Key runtime groups:
 - UI modules: `ui_*.py`
 - folder organizer/report modules: `folder_*.py`, `report_exports.py`
 - docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
-- demo helper: `scripts/create_demo_folder.py`, `scripts/check_workspace_clean.py`
+- demo helper: `scripts/create_demo_folder.py`
 - runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
 Not included:
@@ -51,6 +51,15 @@ Not included:
 - `repo/`
 - `previews/`
 - cache, build, temp, database, and generated zip artifacts
+
+Source-only scripts stay in the source repository and are not shipped in the runtime zip:
+
+- `scripts/check_workspace_clean.py`
+- `scripts/create_release_zip.py`
+- `scripts/release_policy.py`
+- `scripts/safe_compileall.py`
+- `scripts/validate_release_source.py`
+- `scripts/verify_release_zip.py`
 
 ## 3. Run the extracted release zip
 
@@ -70,7 +79,7 @@ The release zip is intended for:
 
 ## 4. Commands that must not be run inside the extracted release zip
 
-These commands belong to the source repository, not the runtime package:
+These commands belong to the source repository, not the runtime package, because the source-only scripts stay in the source repository:
 
 - `python scripts/create_release_zip.py`
 - `powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1`
@@ -129,6 +138,7 @@ python scripts/validate_release_source.py
 ```
 
 This command is only available in the source repository and is not included in the extracted runtime/demo zip.
+The runtime zip does not ship any source-only scripts.
 
 The validation script runs cache-safe checks, including `ruff check --no-cache`
 and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace

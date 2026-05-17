@@ -81,7 +81,13 @@ python scripts/create_demo_folder.py
 streamlit run app.py
 ```
 
-Then scan the generated `demo_files` folder. It contains old, recent, keep-focused, and duplicate-name examples so reviewers can experience the flow in about one minute.
+Then scan the generated `demo_files` folder. It contains old, recent, keep-focused, and duplicate-name examples so reviewers can experience the flow in about one minute. Re-running the command is safe: it creates any missing demo files but preserves existing user-edited files.
+
+Preview the demo setup without writing files:
+
+```bash
+python scripts/create_demo_folder.py --dry-run
+```
 
 ## Screenshots And Demo Placeholder
 
@@ -120,34 +126,13 @@ streamlit run app.py
 - Missing PDF preview / OCR dependencies falls back to notes instead of aborting analysis.
 - Corrupt image OCR or metadata reads return a conservative fallback result.
 
-## Local Validation
+## Source Repository Release Validation
 
-```bash
-python scripts/safe_compileall.py -q .
-python -m ruff check --no-cache .
-python -m mypy --cache-dir=/tmp/mypy_cache .
-python -m pytest
-```
+Source repository only, not included in runtime release zip. The extracted runtime zip is for running the app, not for packaging or source-repo validation. Use `RUN_RELEASE.md` from the source repository when you need the full validation and packaging workflow.
 
 ## Release Build And Verification
 
-Create a release zip:
-
-```bash
-python scripts/create_release_zip.py --output-dir release_ci
-```
-
-Verify the latest release zip:
-
-```bash
-python scripts/verify_release_zip.py
-```
-
-Verify a specific release zip or glob:
-
-```bash
-python scripts/verify_release_zip.py "release_ci/*.zip"
-```
+Release packaging and verification are source-repository workflows. Follow `RUN_RELEASE.md` when building or validating an official runtime zip.
 
 ## Portfolio Highlights
 

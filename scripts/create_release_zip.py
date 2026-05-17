@@ -1,127 +1,33 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import os
 import re
 import shutil
+import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+sys.dont_write_bytecode = True
 
-RELEASE_ALLOWLIST_GROUPS: dict[str, list[str]] = {
-    "app_entry": [
-        "app.py",
-        "app_main.py",
-    ],
-    "core_modules": [
-        "core.py",
-        "core_metadata.py",
-        "core_utils.py",
-        "core_classification.py",
-        "core_processor.py",
-        "supported_formats.py",
-    ],
-    "service_modules": [
-        "services.py",
-        "services_models.py",
-        "services_analysis.py",
-        "services_review.py",
-        "services_finalize.py",
-        "async_processor.py",
-        "contracts.py",
-        "frontend_safety.py",
-        "logging_config.py",
-        "version.py",
-    ],
-    "storage_modules": [
-        "storage.py",
-        "storage_base.py",
-        "storage_schema.py",
-        "storage_repository.py",
-        "storage_recovery.py",
-        "storage_search.py",
-        "storage_cleanup.py",
-        "storage_manager.py",
-        "config.py",
-    ],
-    "ui_modules": [
-        "ui_common.py",
-        "ui_state.py",
-        "ui_home.py",
-        "ui_labels.py",
-        "ui_upload.py",
-        "ui_review.py",
-        "ui_execute.py",
-        "ui_search.py",
-        "ui_records.py",
-        "ui_renderers.py",
-    ],
-    "folder_modules": [
-        "folder_models.py",
-        "folder_organizer.py",
-        "folder_service.py",
-        "folder_report.py",
-        "report_exports.py",
-    ],
-    "docs_and_runtime_files": [
-        "requirements.txt",
-        "README.md",
-        "RELEASE_PACKAGING.md",
-        "RUN_RELEASE.md",
-        "scripts/__init__.py",
-        "scripts/check_workspace_clean.py",
-        "scripts/create_release_zip.py",
-        "scripts/create_demo_folder.py",
-        "scripts/safe_compileall.py",
-        "scripts/validate_release_source.py",
-        "scripts/verify_release_zip.py",
-        "docs/KNOWN_LIMITATIONS.md",
-        "docs/PORTFOLIO_CASE_STUDY.md",
-    ],
+from scripts.release_policy import (
+    DEFAULT_RELEASE_OUTPUT_DIR,
+    FORBIDDEN_RELEASE_PATTERNS,
+    RUNTIME_RELEASE_ALLOWLIST,
+    RUNTIME_RELEASE_ALLOWLIST_GROUPS,
+    release_forbidden_entries,
+)
+
+RELEASE_ALLOWLIST_GROUPS = {
+    group: list(paths)
+    for group, paths in RUNTIME_RELEASE_ALLOWLIST_GROUPS.items()
 }
-
-RELEASE_ALLOWLIST = [
-    path
-    for group in RELEASE_ALLOWLIST_GROUPS.values()
-    for path in group
-]
-
-FORBIDDEN_PATTERNS = [
-    ".git/",
-    "release/",
-    "release_ci*/",
-    "*.zip",
-    "__pycache__/",
-    ".pytest_cache/",
-    ".mypy_cache/",
-    ".ruff_cache/",
-    ".venv/",
-    "venv/",
-    "*.pyc",
-    "*.db",
-    "*.sqlite",
-    "*.sqlite3",
-    "uploads/",
-    "demo_files/",
-    "repo/",
-    "previews/",
-    "tmp/",
-    "tmp_*",
-    "logs/",
-    "dist/",
-    "build/",
-    "node_modules/",
-    "*.onnx",
-    "*.pt",
-    "*.pth",
-    "*.bin",
-    "tests/_tmp*/",
-    ".coverage",
-    "htmlcov/",
-]
+RELEASE_ALLOWLIST = list(RUNTIME_RELEASE_ALLOWLIST)
+FORBIDDEN_PATTERNS = list(FORBIDDEN_RELEASE_PATTERNS)
 
 
 def get_version() -> str:
@@ -182,31 +88,9 @@ def build_zip(output_dir: Path, zip_name: str | None = None) -> Path:
 
 
 def zip_contains_forbidden_entries(zip_path: Path) -> list[str]:
-    hits: list[str] = []
-
     with zipfile.ZipFile(zip_path) as archive:
         names = archive.namelist()
-
-    for name in names:
-        normalized = name.replace("\\", "/")
-        parts = [part for part in normalized.split("/") if part]
-
-        for pattern in FORBIDDEN_PATTERNS:
-            stripped = pattern.rstrip("/")
-
-            if fnmatch.fnmatch(normalized, pattern):
-                hits.append(normalized)
-                break
-
-            if "/" not in stripped and "*" not in stripped and stripped in parts:
-                hits.append(normalized)
-                break
-
-            if pattern.endswith("/") and stripped in parts:
-                hits.append(normalized)
-                break
-
-    return hits
+    return release_forbidden_entries(names)
 
 
 def parse_args() -> argparse.Namespace:
@@ -216,7 +100,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--output-dir",
-        default="release_ci",
+        default=DEFAULT_RELEASE_OUTPUT_DIR,
         help="Directory where the release zip will be written.",
     )
     parser.add_argument(
