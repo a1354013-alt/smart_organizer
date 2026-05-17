@@ -8,8 +8,35 @@ from storage_base import CURRENT_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
+FILE_INDEX_STATEMENTS = {
+    "idx_files_created_at_file_id": (
+        {"created_at", "file_id"},
+        "CREATE INDEX IF NOT EXISTS idx_files_created_at_file_id ON files(created_at DESC, file_id DESC)",
+    ),
+    "idx_files_status_created_at": (
+        {"status", "created_at", "file_id"},
+        "CREATE INDEX IF NOT EXISTS idx_files_status_created_at ON files(status, created_at DESC, file_id DESC)",
+    ),
+    "idx_files_main_topic_created_at": (
+        {"main_topic", "created_at", "file_id"},
+        "CREATE INDEX IF NOT EXISTS idx_files_main_topic_created_at ON files(main_topic, created_at DESC, file_id DESC)",
+    ),
+    "idx_files_file_type_created_at": (
+        {"file_type", "created_at", "file_id"},
+        "CREATE INDEX IF NOT EXISTS idx_files_file_type_created_at ON files(file_type, created_at DESC, file_id DESC)",
+    ),
+}
+
 
 class StorageSchemaMixin:
+    def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute("PRAGMA table_info(files)")
+        columns = {str(row[1]) for row in cursor.fetchall()}
+        for required_columns, statement in FILE_INDEX_STATEMENTS.values():
+            if not required_columns.issubset(columns):
+                continue
+            cursor.execute(statement)
+
     def _init_db(self: Any) -> None:
         conn: sqlite3.Connection | None = None
         try:
@@ -70,6 +97,7 @@ class StorageSchemaMixin:
                 "INSERT OR IGNORE INTO sys_config (key, value) VALUES (?, ?)",
                 ("schema_version", str(CURRENT_SCHEMA_VERSION)),
             )
+            self._ensure_indexes(cursor)
             conn.commit()
         except sqlite3.Error as e:
             logger.error("db init failed: %s", e)
@@ -114,6 +142,8 @@ class StorageSchemaMixin:
             for col_name, col_type in new_cols:
                 if col_name not in columns:
                     cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
+
+            self._ensure_indexes(cursor)
 
             if version < CURRENT_SCHEMA_VERSION:
                 logger.info("Migration: V%s -> V%s", version, CURRENT_SCHEMA_VERSION)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import html
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
@@ -39,7 +39,7 @@ def format_timestamp_for_export(value: object) -> str:
     return dt.astimezone(UTC).isoformat(timespec="seconds")
 
 
-def export_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
+def export_rows_to_csv(rows: Iterable[Mapping[str, object]]) -> str:
     materialized = [dict(row) for row in rows]
     if not materialized:
         return ""
@@ -58,7 +58,7 @@ def export_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
     return buffer.getvalue()
 
 
-def export_rows_to_json(rows: Iterable[dict[str, object]]) -> str:
+def export_rows_to_json(rows: Iterable[Mapping[str, object]]) -> str:
     return json.dumps(
         [{str(key): _json_safe(value) for key, value in row.items()} for row in rows],
         ensure_ascii=False,
@@ -74,7 +74,11 @@ def _json_safe(value: object) -> object:
     return value
 
 
-def export_rows_to_markdown(rows: Iterable[dict[str, object]], *, title: str = "Records Export") -> str:
+def export_rows_to_markdown(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    title: str = "Records Export",
+) -> str:
     materialized = [dict(row) for row in rows]
     lines = [f"# {escape_markdown_table_cell(title)}", ""]
     if not materialized:

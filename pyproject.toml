@@ -71,6 +71,14 @@ files = [
   "scripts/safe_compileall.py",
   "scripts/validate_release_source.py",
   "scripts/verify_release_zip.py",
+  "tests/conftest.py",
+  "tests/test_pdf_image_video_fallbacks.py",
+  "tests/test_report_exports.py",
+  "tests/test_storage.py",
+  "tests/test_storage_decision_history_schema.py",
+  "tests/test_streamlit_smoke.py",
+  "tests/test_ui_smoke_imports.py",
+  "tests/test_utils.py",
 ]
 
 [[tool.mypy.overrides]]
@@ -80,5 +88,7 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = ["tests", "tests.*"]
-ignore_errors = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_return_any = false
 

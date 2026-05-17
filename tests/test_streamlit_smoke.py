@@ -3,10 +3,13 @@ from __future__ import annotations
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import app_main
 import ui_home
 import ui_state
+from ui_common import UIContext
+from version import APP_NAME
 
 
 def _noop(*args, **kwargs):  # noqa: ANN001, ANN002
@@ -94,6 +97,17 @@ def test_app_entrypoints_are_importable():
     assert callable(app_main.main)
 
 
+def test_page_config_smoke(monkeypatch):
+    fake_st = _FakeStreamlit()
+    monkeypatch.setattr(app_main, "st", fake_st)
+    monkeypatch.setattr(app_main, "inject_browser_storage_sanitizer", _noop)
+    monkeypatch.setattr(app_main, "setup_logging", _noop)
+
+    app_main._configure_page()
+
+    assert ("set_page_config", {"page_title": APP_NAME, "layout": "wide"}) in fake_st.calls
+
+
 def test_session_state_defaults_are_initialized_without_existing_keys(monkeypatch):
     fake_st = SimpleNamespace(session_state=_SessionState())
     monkeypatch.setattr(ui_state, "st", fake_st)
@@ -149,7 +163,9 @@ def test_sidebar_dependency_fallback_smoke(monkeypatch, tmp_path: Path):
     fake_st = _FakeStreamlit()
     monkeypatch.setattr(ui_home, "st", fake_st)
     monkeypatch.setattr(ui_home, "render_dependency_status", lambda status: fake_st.calls.append(("deps", status)))
-    context = SimpleNamespace(
+    context = cast(
+        UIContext,
+        SimpleNamespace(
         processor=SimpleNamespace(
             pdf_ocr_max_pages=3,
             pdf_preview_max_pages=1,
@@ -164,9 +180,15 @@ def test_sidebar_dependency_fallback_smoke(monkeypatch, tmp_path: Path):
         repo_root=tmp_path / "repo",
         db_path=tmp_path / "app.db",
         max_upload_bytes=1024,
+        ),
     )
 
     ui_home.render_sidebar(context)
 
     assert ("success", "Dependency check completed.") in fake_st.calls
-    assert any(call[0] == "deps" and call[1]["system"]["ffmpeg"] is False for call in fake_st.calls)
+    assert any(
+        call[0] == "deps"
+        and isinstance(call[1], dict)
+        and call[1]["system"]["ffmpeg"] is False
+        for call in fake_st.calls
+    )

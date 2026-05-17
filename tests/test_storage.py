@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import hashlib
 import os
 import sqlite3
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,6 @@ from storage import StorageManager
 
 
 def _make_workspace_tmp_dir() -> Path:
-    # 已改用 storage 的 in-memory 檔案模式；保留函式避免大改動（不再建立資料夾）。
     return Path("tests") / ("_unused_" + uuid.uuid4().hex)
 
 
@@ -20,8 +21,18 @@ def _sha256(data: bytes) -> str:
 
 
 def _minimal_pdf_bytes() -> bytes:
-    # 只需通過簽章檢查（%PDF-）即可
     return b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+def _require_record(record: dict[str, object] | None) -> Mapping[str, object]:
+    assert record is not None
+    return record
+
+
+def _page_items(page: dict[str, object]) -> list[Mapping[str, object]]:
+    items = page.get("items")
+    assert isinstance(items, list)
+    return items
 
 
 def test_create_temp_file_and_duplicate_detection():
@@ -33,9 +44,9 @@ def test_create_temp_file_and_duplicate_detection():
     res1 = storage.create_temp_file('inv<>:"/\\\\|?*..a.pdf', payload, file_hash, "document")
     assert res1["success"] is True
 
-    info = storage.get_file_by_id(res1["file_id"])
-    assert info["original_name"].endswith(".pdf")
-    assert info["safe_name"].endswith(".pdf")
+    info = _require_record(storage.get_file_by_id(res1["file_id"]))
+    assert str(info["original_name"]).endswith(".pdf")
+    assert str(info["safe_name"]).endswith(".pdf")
     assert isinstance(info["temp_path"], str)
 
     res2 = storage.create_temp_file("anything.pdf", payload, file_hash, "document")
@@ -53,12 +64,12 @@ def test_finalize_organization_uses_safe_name():
     res = storage.create_temp_file(original_name, payload, file_hash, "document")
     file_id = res["file_id"]
 
-    final_path = storage.finalize_organization(file_id, "2026-04-08", "發票", original_name)
+    final_path = storage.finalize_organization(file_id, "2026-04-08", "?潛巨", original_name)
     assert isinstance(final_path, str)
     assert "<" not in os.path.basename(final_path)
     assert ">" not in os.path.basename(final_path)
 
-    info = storage.get_file_by_id(file_id)
+    info = _require_record(storage.get_file_by_id(file_id))
     assert info["status"] == "COMPLETED"
     assert info["final_path"] == final_path
     assert info["final_name"] == os.path.basename(final_path)
@@ -72,30 +83,31 @@ def test_search_content_fts_and_fallback():
     res = storage.create_temp_file("invoice.pdf", payload, file_hash, "document")
     file_id = res["file_id"]
 
-    storage.update_file_metadata(file_id, {
-        "standard_date": "2026-04-08",
-        "main_topic": "發票",
-        "summary": "測試摘要",
-        "content": "hello world invoice 123",
-        "is_scanned": False,
-        "preview_path": None,
-        "classification_reason": "test",
-        "tag_scores": {"發票": 1.0},
-    })
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-04-08",
+            "main_topic": "?潛巨",
+            "summary": "皜祈岫??",
+            "content": "hello world invoice 123",
+            "is_scanned": False,
+            "preview_path": None,
+            "classification_reason": "test",
+            "tag_scores": {"?潛巨": 1.0},
+        },
+    )
 
     r1 = storage.search_content("hello")
     assert any(r["file_id"] == file_id for r in r1)
 
-    # fallback：不依賴 content，也能用 main_topic / tags 命中
-    r2 = storage.search_content("發票")
+    r2 = storage.search_content("?潛巨")
     assert any(r["file_id"] == file_id for r in r2)
 
-    # 特殊字元不應造成崩潰
     r3 = storage.search_content('(" )')
     assert r3 == []
 
 
-def test_migration_failure_aborts_startup(tmp_path):
+def test_migration_failure_aborts_startup(tmp_path: Path):
     db_path = os.path.join(str(tmp_path), "bad.db")
     conn = sqlite3.connect(db_path)
     try:
@@ -144,9 +156,9 @@ def test_get_records_page_escapes_like_wildcards():
     underscore_hits = storage.get_records_page(search="_")
     keyword_hits = storage.get_records_page(search="ordinary")
 
-    assert [item["original_name"] for item in percent_hits["items"]] == ["100%complete.pdf"]
-    assert [item["original_name"] for item in underscore_hits["items"]] == ["under_score.pdf"]
-    assert [item["original_name"] for item in keyword_hits["items"]] == ["ordinary.pdf"]
+    assert [item["original_name"] for item in _page_items(percent_hits)] == ["100%complete.pdf"]
+    assert [item["original_name"] for item in _page_items(underscore_hits)] == ["under_score.pdf"]
+    assert [item["original_name"] for item in _page_items(keyword_hits)] == ["ordinary.pdf"]
 
 
 def test_search_content_returns_plain_text_snippets_without_html_tags():
@@ -156,16 +168,19 @@ def test_search_content_returns_plain_text_snippets_without_html_tags():
     res = storage.create_temp_file("invoice.pdf", payload, _sha256(payload + b"plain"), "document")
     file_id = res["file_id"]
 
-    storage.update_file_metadata(file_id, {
-        "standard_date": "2026-04-08",
-        "main_topic": "Invoices",
-        "summary": "invoice summary",
-        "content": "alpha invoice beta",
-        "is_scanned": False,
-        "preview_path": None,
-        "classification_reason": "test",
-        "tag_scores": {"Invoices": 1.0},
-    })
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-04-08",
+            "main_topic": "Invoices",
+            "summary": "invoice summary",
+            "content": "alpha invoice beta",
+            "is_scanned": False,
+            "preview_path": None,
+            "classification_reason": "test",
+            "tag_scores": {"Invoices": 1.0},
+        },
+    )
 
     hits = storage.search_content("invoice")
     assert hits
@@ -184,7 +199,7 @@ class _FailingInsertCursor:
             raise sqlite3.OperationalError("forced insert failure")
         return self._real.execute(sql, tuple(params))
 
-    def fetchone(self):
+    def fetchone(self) -> object:
         return self._real.fetchone()
 
     @property
@@ -209,15 +224,18 @@ class _FailingInsertConnection:
         self._real.close()
 
 
-def test_create_temp_file_cleans_orphan_temp_file_when_db_insert_fails(tmp_path: Path, monkeypatch):
+def test_create_temp_file_cleans_orphan_temp_file_when_db_insert_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     db_path = str(tmp_path / "test.db")
     repo_root = str(tmp_path / "repo")
     upload_dir = str(tmp_path / "uploads")
     storage = StorageManager(db_path, repo_root, upload_dir)
     real_get_connection = storage._get_connection
 
-    def failing_get_connection(*args, **kwargs):
-        return _FailingInsertConnection(real_get_connection(*args, **kwargs))
+    def failing_get_connection() -> _FailingInsertConnection:
+        return _FailingInsertConnection(real_get_connection())
 
     monkeypatch.setattr(storage, "_get_connection", failing_get_connection)
 

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import core_processor
 from core import FileProcessor, FileUtils
+from services import UploadedFileData, analyze_upload_batch
+from storage import StorageManager
 
 
 def test_fake_pdf_with_missing_optional_tools_returns_fallback_notes(monkeypatch, tmp_path: Path):
@@ -42,6 +44,42 @@ def test_corrupt_pdf_text_extraction_does_not_crash(monkeypatch, tmp_path: Path)
     notes = "\n".join(metadata.get("notes", []))
     assert metadata["file_type"] == "document"
     assert "PDF text extraction failed: PdfReadError: broken xref" in notes
+
+
+def test_pdf_text_failure_does_not_interrupt_batch_analysis(monkeypatch, tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    processor = FileProcessor()
+    broken_pdf = UploadedFileData(
+        name="broken.pdf",
+        content=b"%PDF-1.4\nbroken\n%%EOF\n",
+        mime_type="application/pdf",
+    )
+    valid_image = UploadedFileData(
+        name="photo.jpg",
+        content=b"\xff\xd8\xff\xd9",
+        mime_type="image/jpeg",
+    )
+    original_extract_metadata = processor.extract_metadata
+
+    def fake_extract_metadata(file_path: str, options=None):
+        if str(file_path).endswith("broken.pdf"):
+            raise RuntimeError("forced PDF text failure")
+        return original_extract_metadata(file_path, options)
+
+    monkeypatch.setattr(processor, "extract_metadata", fake_extract_metadata)
+
+    outcome = analyze_upload_batch(
+        [broken_pdf, valid_image],
+        processor=processor,
+        storage=storage,
+        processing_options={"enable_ocr": False, "enable_pdf_preview": False},
+    )
+
+    assert outcome.errors == []
+    assert len(outcome.results) == 2
+    assert outcome.results[0].analysis_status == "PARTIAL"
+    assert "extract_metadata failed" in str(outcome.results[0].last_error or "")
+    assert outcome.results[1].metadata["file_type"] == "photo"
 
 
 def test_image_metadata_and_ocr_fallback_for_corrupt_image(monkeypatch, tmp_path: Path):

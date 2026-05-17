@@ -1,19 +1,26 @@
 # Smart Organizer (v2.8.4)
 
-Smart Organizer is a local-first safe file organization assistant. It is not an automatic delete tool, knowledge base, RAG system, chatbot, or document QA app.
+Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
-The core product promise is simple: scan a folder, explain why files may need review, move selected files into quarantine, restore them if needed, and export a report.
+It is not an auto-delete tool, background cleanup daemon, chatbot, RAG app, or document QA system.
+
+## What Problem It Solves
+
+Messy download folders and mixed personal archives are hard to review safely. Smart Organizer focuses on a narrower but more trustworthy workflow:
+
+- inspect files locally
+- classify them with explainable rules
+- preview the proposed move before execution
+- quarantine instead of deleting
+- restore without overwriting an existing user file
+- export a report for audit or portfolio review
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
 
-Python support: the project is intended to run on Python 3.11, 3.12, and 3.13, and CI validates all three versions.
+## Recommended Python Version
 
-Time policy:
-
-- Database records use UTC ISO 8601 timestamps.
-- Folder scan and quarantine manifests use UTC ISO 8601 timestamps.
-- The Streamlit UI renders record timestamps in local time for easier review.
-- Exported records and folder reports label timestamps as UTC.
+- Recommended: Python `3.11`
+- Supported and validated in CI: Python `3.11`, `3.12`, `3.13`
 
 ## Core Workflow
 
@@ -26,108 +33,138 @@ flowchart LR
     Restore --> Report["Report"]
 ```
 
-Folder organizer flow:
-
-1. Scan a local folder with metadata-only inspection.
-2. Dry-run the selected cleanup actions before any move happens.
-3. Execute only the user-confirmed move operation.
-4. Move selected files into `.smart_organizer_quarantine/`.
-5. Restore quarantined files without overwriting existing files.
-6. Export Markdown or CSV reports.
-
-## Safety Design
-
-- No direct delete of selected user files: cleanup actions move selected files to quarantine first.
-- Path containment: scan, quarantine, and restore paths are validated against the selected root.
-- Restore protection: restore uses a safe destination and does not overwrite a new user file.
-- Atomic manifest: `manifest.json` is saved through `manifest.json.tmp`, flush, `fsync`, and `os.replace`.
-- Interrupted move recovery: `MOVING` manifest entries are repaired on the next quarantine/restore/list operation.
-- Release allowlist: the runtime zip is built from explicit files and rejects caches, DBs, uploads, temp folders, and `.git`.
-
 ## Safe Organization Flow
 
-Smart Organizer is designed around preview-first, reversible cleanup. It does not directly delete selected user files.
+Smart Organizer is designed around preview-first, reversible cleanup. It does not directly permanently delete selected user files.
 
 ```mermaid
 flowchart TD
-    A["Choose a folder or upload files"] --> B["Scan and analyze"]
-    B --> C["Generate explainable organization suggestions"]
-    C --> D["Dry-run preview"]
-    D --> E{"User confirms?"}
-    E -->|No| F["Do not move files"]
-    E -->|Yes| G["Move selected files to Quarantine"]
-    G --> H["Write operation record and manifest"]
-    H --> I{"Restore needed?"}
-    I -->|Yes| J["Restore to original path or safe renamed path"]
-    I -->|No| K["Keep quarantine record for review"]
+    Upload["Upload / choose folder"] --> Analyze["Analyze metadata"]
+    Analyze --> DryRun["Dry-run preview"]
+    DryRun --> Execute{"User confirms execute?"}
+    Execute -->|No| Stop["Stop with no file move"]
+    Execute -->|Yes| Quarantine["Move selected files to quarantine"]
+    Quarantine --> Restore{"Restore needed?"}
+    Restore -->|Yes| RestoreAction["Restore to original path or safe renamed path"]
+    Restore -->|No| Keep["Keep quarantined record for review"]
 ```
 
-Release packaging follows the same safety boundary: generated runtime zips are built from an explicit allowlist and must not include local user data, SQLite DB files, `uploads/`, `repo/`, caches, virtual environments, or release temp extraction folders.
+Safety rules:
 
-## Quick Demo
+- User files are not directly permanently deleted by the organizer flow.
+- Cleanup actions move selected files into `.smart_organizer_quarantine/` first.
+- Restore uses a safe target path and avoids overwriting a newer user file.
+- Quarantine state is tracked through `manifest.json`, written atomically via temp file + flush + `fsync` + `os.replace`.
+- Interrupted move recovery is handled on the next quarantine, restore, or list operation.
+- Release packaging uses an explicit allowlist and rejects user data, caches, DB files, and temp folders.
+
+## Repository, Quarantine, And Restore Logic
+
+- `uploads/`: temporary upload staging area used before a record is finalized
+- `repo/`: organized repository output grouped by normalized date folders
+- `.smart_organizer_quarantine/`: reversible holding area for folder-cleanup moves
+- `restore`: returns quarantined files to the original path when possible, or a safe renamed path when a collision exists
+
+This means Smart Organizer preserves a review trail and a recovery path instead of silently removing data.
+
+## Quick Start
 
 ```bash
 python -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+## Demo Dataset
+
+```bash
 python scripts/create_demo_folder.py
 streamlit run app.py
 ```
 
-Then scan the generated `demo_files` folder. It contains old, suspected duplicate-name, recent, and keep-focused sample files so reviewers can experience the full flow in about one minute.
+Then scan the generated `demo_files` folder. It contains old, recent, keep-focused, and duplicate-name examples so reviewers can experience the flow in about one minute.
 
-Recommended demo screenshots for a portfolio or interview walkthrough:
+## Screenshots And Demo Placeholder
 
-1. Folder scan results showing candidate reasons, risk labels, and recommendations.
-2. Dry-run preview showing the exact quarantine target path before any move happens.
-3. Quarantine result showing `.smart_organizer_quarantine/<operation_id>/...`.
-4. Restore result showing files returned without overwriting existing user files.
-5. Exported Markdown or CSV report preview.
+This repository does not currently bundle screenshot assets. To avoid fake portfolio artifacts, the README keeps this as a placeholder section.
 
-If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
+Recommended screenshots to capture locally:
 
-## Upload And Video Contract
+1. Upload or folder scan screen with explainable candidate reasons
+2. Dry-run preview showing the exact target path before execution
+3. Quarantine result showing `.smart_organizer_quarantine/<operation_id>/...`
+4. Restore result showing collision-safe restore behavior
+5. Records or exported report view
+
+Suggested capture flow:
+
+```bash
+python scripts/create_demo_folder.py
+streamlit run app.py
+```
+
+## Why It Is Safe
+
+- No direct permanent delete in the main organization workflow
+- Preview before move
+- Path containment checks for scan, quarantine, and restore
+- Atomic manifest persistence
+- Recovery logic for interrupted move states
+- Partial / degraded fallback for optional PDF, image, and video tooling
+
+## Upload And Media Fallback Contract
 
 - Upload validation rejects obviously invalid PDF and image signatures before analysis.
 - Video uploads are accepted by extension and then validated during analysis.
-- If a file is named like a video but the container signature does not match, the analysis is kept as a degraded video result instead of crashing the batch.
-- If `ffmpeg` or `ffprobe` is missing, video analysis falls back to partial metadata with clear warnings and no guaranteed thumbnail.
-- Unsupported file extensions are rejected at upload time.
+- Fake video containers are reported as degraded results instead of crashing the batch.
+- Missing `ffmpeg` or `ffprobe` falls back to partial video metadata with clear warnings.
+- Missing PDF preview / OCR dependencies falls back to notes instead of aborting analysis.
+- Corrupt image OCR or metadata reads return a conservative fallback result.
 
-This means a fake `.mp4` is not silently treated as a healthy video, but it is also not allowed to take down the review flow.
+## Local Validation
 
-## Explainable Scoring
+```bash
+python scripts/safe_compileall.py -q .
+python -m ruff check --no-cache .
+python -m mypy --cache-dir=/tmp/mypy_cache .
+python -m pytest
+```
 
-The organizer is intentionally rule-based and reproducible. Each scan record includes:
+## Release Build And Verification
 
-- `confidence`
-- `risk_level`
-- `candidate_reasons`
-- `reason_codes`
-- `file_age_score`
-- `size_score`
-- `duplicate_score`
-- `extension_risk_score`
+Create a release zip:
 
-Low-confidence items are marked for manual review or do-not-touch handling. The app does not use opaque AI decisions for quarantine recommendations.
+```bash
+python scripts/create_release_zip.py --output-dir release_ci
+```
+
+Verify the latest release zip:
+
+```bash
+python scripts/verify_release_zip.py
+```
+
+Verify a specific release zip or glob:
+
+```bash
+python scripts/verify_release_zip.py "release_ci/*.zip"
+```
+
+## Portfolio Highlights
+
+- Safe folder organization workflow
+- Reversible quarantine and restore manifest
+- Explainable rule-based scoring
+- Streamlit smoke tests without browser E2E dependency
+- Release packaging with allowlist verification
+- One-command demo dataset generator
 
 ## Known Limitations
 
 - Access time (`atime`) can be unreliable on some filesystems and OS settings.
 - Modified time (`mtime`) and file size are supporting signals, not proof that a file is safe to archive.
-- Users must manually confirm before moving files.
 - OCR, PDF preview, and video metadata depend on optional system tools.
-- Async batch upload processing exists as an internal or future-use implementation path. The main demo and supported UI flow use the synchronous path for clearer progress and safer error handling.
+- The main product flow is synchronous for predictability and simpler recovery behavior.
 - The app does not automatically delete selected user files.
-- Internal temp files, previews, and caches may be cleaned up by maintenance routines.
-
-## Portfolio Highlights
-
-- Safe folder organization workflow
-- Quarantine and restore manifest
-- Atomic manifest write and recovery tests
-- Streamlit UI flow tests with `tmp_path` demo files
-- Explainable rule scoring
-- Release packaging with allowlist verification
-- One-command demo dataset generator
 
 ## Additional Docs
 
@@ -135,7 +172,3 @@ Low-confidence items are marked for manual review or do-not-touch handling. The 
 - Known limitations: `docs/KNOWN_LIMITATIONS.md`
 - Release packaging notes: `RELEASE_PACKAGING.md`
 - Release runbook: `RUN_RELEASE.md`
-
-## Local Validation
-
-Source-repository validation lives in the release runbook. Use `RUN_RELEASE.md` as the single source of truth for release-confidence and local verification commands.

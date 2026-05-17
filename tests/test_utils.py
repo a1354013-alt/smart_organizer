@@ -16,6 +16,36 @@ def test_sanitize_filename_empty_name_fallback():
 
 
 @pytest.mark.parametrize(
+    ("raw_name", "expected_stem", "expected_suffix"),
+    [
+        ("CON.txt", "CON_file", ".txt"),
+        ("nul", "nul_file", ""),
+        ("report .txt", "report", ".txt"),
+        ("folder name. ", "folder name", ""),
+        ("LPT9...", "LPT9_file", ""),
+    ],
+)
+def test_sanitize_filename_handles_windows_reserved_names_and_trailing_chars(
+    raw_name: str,
+    expected_stem: str,
+    expected_suffix: str,
+):
+    sanitized = FileUtils.sanitize_filename(raw_name)
+
+    assert sanitized == f"{expected_stem}{expected_suffix}"
+    assert not sanitized.endswith((" ", "."))
+    assert sanitized.split(".")[0].upper() not in FileUtils.WINDOWS_RESERVED_NAMES
+
+
+def test_sanitize_filename_truncates_stem_but_preserves_extension_within_limit():
+    sanitized = FileUtils.sanitize_filename(f"{'a' * 80}.jpeg", max_length=32)
+
+    assert sanitized.endswith(".jpeg")
+    assert len(sanitized) <= 32
+    assert sanitized[:-5] == "a" * (32 - len(".jpeg"))
+
+
+@pytest.mark.parametrize(
     "raw,expected",
     [
         ("2026-04-08", "2026-04-08"),
