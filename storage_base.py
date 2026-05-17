@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import shutil
@@ -10,12 +11,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class SearchContentError(RuntimeError):
     pass
+
+
+def utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
 def _log_context(**fields: object) -> str:
@@ -52,7 +57,7 @@ class StorageBase:
         if self._db_uri and "mode=memory" in str(self.db_path):
             try:
                 self._keepalive_conn = sqlite3.connect(self.db_path, uri=True)
-            except Exception as e:
+            except sqlite3.Error as e:
                 logger.warning("in-memory keepalive connection failed: %s", e)
                 self._keepalive_conn = None
 
@@ -66,7 +71,7 @@ class StorageBase:
             return
         try:
             keepalive.close()
-        except Exception:
+        except sqlite3.Error:
             logger.debug("keepalive close failed", exc_info=True)
 
     def _get_connection(self, timeout: int = 30000) -> sqlite3.Connection:
@@ -78,14 +83,14 @@ class StorageBase:
                 conn.execute("PRAGMA journal_mode=WAL;")
             except sqlite3.OperationalError as e:
                 logger.warning("WAL not available; falling back to DELETE journal_mode: %s", e)
-                with suppress(Exception):
+                with suppress(sqlite3.Error):
                     conn.execute("PRAGMA journal_mode=DELETE;")
 
             conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("PRAGMA foreign_keys=ON;")
             conn.execute(f"PRAGMA busy_timeout={timeout};")
             return conn
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.error("DB connection failed: %s", e)
             raise
 

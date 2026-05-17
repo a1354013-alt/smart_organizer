@@ -4,7 +4,7 @@ import csv
 import html
 import json
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
 
@@ -17,6 +17,26 @@ def escape_markdown_table_cell(value: object) -> str:
 
 def escape_display_text(value: object) -> str:
     return html.escape(str(value if value not in (None, "") else "-"), quote=True)
+
+
+def format_timestamp_for_export(value: object) -> str:
+    if value in (None, ""):
+        return "-"
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat(timespec="seconds")
+
+    text = str(value).strip()
+    if not text:
+        return "-"
+    normalized = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def export_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
@@ -97,13 +117,17 @@ def export_records_csv(records: list[dict[str, object]]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()
     for record in records:
-        writer.writerow({key: record.get(key) for key in fieldnames})
+        row = {key: record.get(key) for key in fieldnames}
+        row["created_at"] = format_timestamp_for_export(record.get("created_at"))
+        writer.writerow(row)
     return buffer.getvalue()
 
 
 def export_records_markdown(records: list[dict[str, object]]) -> str:
     lines = [
         "# Filtered Records Export",
+        "",
+        "Timestamps are stored and exported as UTC ISO 8601.",
         "",
         "| ID | File | Type | Topic | Status | Created at | Last error |",
         "| --- | --- | --- | --- | --- | --- | --- |",
@@ -118,7 +142,7 @@ def export_records_markdown(records: list[dict[str, object]]) -> str:
                     escape_markdown_table_cell(record.get("file_type")),
                     escape_markdown_table_cell(record.get("main_topic")),
                     escape_markdown_table_cell(record.get("status")),
-                    escape_markdown_table_cell(record.get("created_at")),
+                    escape_markdown_table_cell(format_timestamp_for_export(record.get("created_at"))),
                     escape_markdown_table_cell(record.get("last_error")),
                 ]
             )

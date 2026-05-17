@@ -7,7 +7,12 @@ import streamlit as st
 
 from report_exports import export_records_csv, export_records_markdown
 from services import reclassify_record
-from ui_common import UIContext, handle_ui_exception, safe_display_text
+from ui_common import (
+    UIContext,
+    format_timestamp_for_display,
+    handle_ui_exception,
+    safe_display_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,9 @@ def render_records(context: UIContext) -> None:
         date_to=date_to.isoformat() if date_to else None,
     )
     records = list(page.get("items") or [])
+    display_records = [dict(record) for record in records]
+    for record in display_records:
+        record["created_at"] = format_timestamp_for_display(record.get("created_at"))
     total = int(page.get("total") or 0)
     file_id_options = [record.get("file_id") for record in records if record.get("file_id") is not None]
 
@@ -68,7 +76,7 @@ def render_records(context: UIContext) -> None:
             st.caption("Reset filters or clear search to bring records back into view.")
 
     if records and context.pandas is not None:
-        df = context.pandas.DataFrame(records)
+        df = context.pandas.DataFrame(display_records)
         cols = [
             "file_id",
             "original_name",
@@ -83,7 +91,7 @@ def render_records(context: UIContext) -> None:
         ]
         st.dataframe(df[[col for col in cols if col in df.columns]], use_container_width=True)
     elif records:
-        st.dataframe(records, use_container_width=True)
+        st.dataframe(display_records, use_container_width=True)
 
     if records:
         csv_payload = export_records_csv(records)

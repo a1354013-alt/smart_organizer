@@ -29,6 +29,7 @@ from ui_common import (
     card_open,
     handle_ui_exception,
     is_debug,
+    render_safe_html_text,
     safe_display_text,
 )
 from ui_labels import recommendation_display_label
@@ -355,8 +356,8 @@ def render_home(context: UIContext) -> None:
             for column, (value, label) in zip(metric_cols, metrics, strict=False):
                 with column:
                     card_open("status-card")
-                    st.markdown(f'<div class="status-metric">{value}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="status-label">{label}</div>', unsafe_allow_html=True)
+                    render_safe_html_text("status-metric", value, max_chars=200)
+                    render_safe_html_text("status-label", label, max_chars=200)
                     card_close()
 
             errors = _coerce_message_list(scan.get("errors"))

@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import shutil
+import subprocess
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -104,7 +105,11 @@ def _sniff_video_container(file_path: str, *, max_bytes: int = 4096) -> tuple[bo
     try:
         with open(file_path, "rb") as handle:
             header = handle.read(max(32, int(max_bytes)))
-    except Exception as exc:
+    except FileNotFoundError as exc:
+        return False, f"video container validation failed: file not found: {exc.filename or file_path}"
+    except PermissionError as exc:
+        return False, f"video container validation failed: permission denied: {exc.filename or file_path}"
+    except OSError as exc:
         return False, f"video container validation failed: {exc}"
     if len(header) < 12:
         return False, "video container validation failed: file is too small"
@@ -126,7 +131,7 @@ def _detect_ffmpeg_available() -> bool:
         probe = _run_video_subprocess(["ffprobe", "-version"], timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
         ffmpeg = _run_video_subprocess(["ffmpeg", "-version"], timeout_seconds=VIDEO_TOOL_TIMEOUT_SECONDS)
         return probe.returncode == 0 and ffmpeg.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -210,10 +215,7 @@ class FileProcessor:
         def _record(step: str, started_at: float) -> None:
             if timings is None:
                 return
-            try:
-                timings[step] = round(time.perf_counter() - started_at, 4)
-            except Exception:
-                return
+            timings[step] = round(time.perf_counter() - started_at, 4)
 
         file_type: FileType = "document"
         if ext in {".jpg", ".jpeg", ".png"}:
@@ -236,7 +238,7 @@ class FileProcessor:
         file_size_bytes: int | None
         try:
             file_size_bytes = int(os.path.getsize(file_path))
-        except Exception:
+        except OSError:
             file_size_bytes = None
 
         max_heavy_bytes_raw = options.get("max_heavy_bytes")
@@ -244,7 +246,7 @@ class FileProcessor:
         if max_heavy_bytes_raw is not None and file_size_bytes is not None:
             try:
                 heavy_allowed = file_size_bytes <= int(max_heavy_bytes_raw)
-            except Exception:
+            except (TypeError, ValueError):
                 heavy_allowed = True
 
         if file_type == "photo":
@@ -364,7 +366,7 @@ class FileProcessor:
         if file_type == "photo" and bool(options.get("enable_ocr", False)):
             try:
                 extracted_text = self._ocr_image(file_path) or extracted_text
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 ocr_error = str(exc)
         elif file_type == "photo":
             notes.append("OCR is disabled.")
@@ -388,7 +390,7 @@ class FileProcessor:
         try:
             image = Image.open(file_path)
             return pytesseract.image_to_string(image, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")) or ""
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.error("Image OCR failed: %s", exc)
             return ""
 
@@ -414,7 +416,7 @@ class FileProcessor:
                 if images:
                     images[0].save(preview_path, "PNG")
             return preview_path
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.error("PDF preview failed: %s", exc)
             return None
 
@@ -427,17 +429,17 @@ class FileProcessor:
                 if "EXIF DateTimeOriginal" in tags:
                     date_str = str(tags["EXIF DateTimeOriginal"])
                     return FileUtils.normalize_standard_date(date_str.split(" ")[0].replace(":", "-"))
-        except Exception as exc:
+        except (OSError, ValueError, AttributeError) as exc:
             logger.debug("EXIF date read failed: %s", exc)
         return None
 
     def _get_file_mtime(self, file_path: str) -> str:
         try:
             mtime = os.path.getmtime(file_path)
-            return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        except Exception as exc:
+            return datetime.datetime.fromtimestamp(mtime, tz=datetime.UTC).date().isoformat()
+        except OSError as exc:
             logger.error("File mtime read failed: %s", exc)
-            return datetime.datetime.now().strftime("%Y-%m-%d")
+            return datetime.datetime.now(datetime.UTC).date().isoformat()
 
     def _extract_video_metadata(self, file_path: str, timeout_seconds: int = 10) -> VideoMetadata:
         result: VideoMetadata = {
@@ -459,13 +461,12 @@ class FileProcessor:
 
         try:
             import json
-            import subprocess
 
-            with suppress(Exception):
+            with suppress(OSError):
                 result["file_size"] = os.path.getsize(file_path)
-            with suppress(Exception):
+            with suppress(OSError):
                 mtime = os.path.getmtime(file_path)
-                result["modified_at"] = datetime.datetime.fromtimestamp(mtime).isoformat()
+                result["modified_at"] = datetime.datetime.fromtimestamp(mtime, tz=datetime.UTC).isoformat(timespec="seconds")
 
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", file_path]
             try:
@@ -480,7 +481,7 @@ class FileProcessor:
 
                 duration = fmt.get("duration")
                 if duration is not None:
-                    with suppress(Exception):
+                    with suppress(TypeError, ValueError):
                         result["duration_seconds"] = float(duration)
 
                 video_stream = next((stream for stream in streams if (stream.get("codec_type") or "") == "video"), None)
@@ -493,13 +494,13 @@ class FileProcessor:
                         try:
                             numerator, denominator = frame_rate.split("/", 1)
                             result["fps"] = float(numerator) / float(denominator) if float(denominator) else None
-                        except Exception:
+                        except (TypeError, ValueError, ZeroDivisionError):
                             pass
             except subprocess.TimeoutExpired:
                 result["ffprobe_error"] = f"ffprobe timed out after {timeout_seconds}s"
-            except Exception as exc:
+            except (json.JSONDecodeError, OSError, subprocess.SubprocessError, ValueError) as exc:
                 result["ffprobe_error"] = f"ffprobe failed: {exc}"
-        except Exception as exc:
+        except (ImportError, OSError) as exc:
             result["ffprobe_error"] = str(exc)
         return result
 
@@ -508,8 +509,6 @@ class FileProcessor:
         if not is_ffmpeg_available():
             return None, "ffmpeg is unavailable; thumbnail generation was skipped."
         try:
-            import subprocess
-
             base_preview_path = FileUtils.build_preview_path(file_path)
             preview_path = os.path.splitext(base_preview_path)[0] + ".jpg"
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
@@ -536,9 +535,9 @@ class FileProcessor:
                 return None, "ffmpeg finished without creating a thumbnail."
             except subprocess.TimeoutExpired:
                 return None, f"ffmpeg thumbnail generation timeout after {timeout_seconds}s"
-            except Exception as exc:
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 return None, f"ffmpeg failed: {str(exc)[:200]}"
-        except Exception as exc:
+        except OSError as exc:
             return None, str(exc)[:200]
 
     def _extract_pdf_text_with_timeout(self, file_path: str, *, max_pages: int, timeout_seconds: int) -> tuple[bool, str | None, str | None]:

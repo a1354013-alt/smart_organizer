@@ -4,11 +4,13 @@ import argparse
 import locale
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
 import time
 from collections import deque
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,9 @@ COMMAND_TIMEOUTS_SECONDS = {
 }
 DEFAULT_TIMEOUT_TAIL_LINES = 40
 STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+PROCESS_TERMINATE_GRACE_SECONDS = 1.0
+PROCESS_KILL_GRACE_SECONDS = 1.0
+READER_JOIN_GRACE_SECONDS = 1.0
 
 
 class OutputTail:
@@ -108,7 +113,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _terminate_process(proc: subprocess.Popen[Any]) -> None:
+def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
+    while proc.poll() is None:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return False
+        try:
+            proc.wait(timeout=min(0.1, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+    return True
+
+
+def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
@@ -118,14 +135,49 @@ def _terminate_process(proc: subprocess.Popen[Any]) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
         )
-        if proc.poll() is not None:
+    else:
+        killpg = getattr(os, "killpg", None)
+        sigkill = getattr(signal, "SIGKILL", None)
+        if killpg is not None and sigkill is not None:
+            with suppress(ProcessLookupError):
+                killpg(proc.pid, sigkill)
+        with suppress(ProcessLookupError):
+            proc.kill()
+
+
+def _terminate_process(proc: subprocess.Popen[Any], *, deadline: float) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        with suppress(Exception):
+            proc.terminate()
+    else:
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            with suppress(ProcessLookupError):
+                killpg(proc.pid, signal.SIGTERM)
+        with suppress(ProcessLookupError):
+            proc.terminate()
+    terminate_deadline = min(deadline, time.perf_counter() + PROCESS_TERMINATE_GRACE_SECONDS)
+    if _wait_until(proc, terminate_deadline):
+        return
+    _kill_process_tree(proc)
+    kill_deadline = min(deadline, time.perf_counter() + PROCESS_KILL_GRACE_SECONDS)
+    _wait_until(proc, kill_deadline)
+
+
+def _join_reader_threads(threads: list[threading.Thread], *, deadline: float) -> None:
+    for thread in threads:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
             return
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        thread.join(timeout=min(READER_JOIN_GRACE_SECONDS, remaining))
+
+
+def _popen_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
 
 
 def _print_timeout_tail(tail: OutputTail, *, tail_lines: int) -> None:
@@ -204,6 +256,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
+        **_popen_kwargs(),
     )
     assert proc.stdout is not None
     assert proc.stderr is not None
@@ -223,9 +276,9 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
         now = time.perf_counter()
         if now >= deadline:
             closed = _drain_output_queue(output_queue, tail, closed=closed)
-            _terminate_process(proc)
-            for thread in threads:
-                thread.join(timeout=1)
+            cleanup_deadline = time.perf_counter() + PROCESS_TERMINATE_GRACE_SECONDS + PROCESS_KILL_GRACE_SECONDS
+            _terminate_process(proc, deadline=cleanup_deadline)
+            _join_reader_threads(threads, deadline=cleanup_deadline + READER_JOIN_GRACE_SECONDS)
             closed = _drain_output_queue(output_queue, tail, closed=closed)
             duration = time.perf_counter() - started
             print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)

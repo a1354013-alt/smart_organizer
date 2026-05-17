@@ -23,6 +23,7 @@ from folder_models import (
     QuarantineStatus,
     Recommendation,
     RiskLevel,
+    ScanPathError,
     dict_object,
     human_bytes,
     infer_local_file_kind,
@@ -45,6 +46,30 @@ DO_NOT_TOUCH_NAMES = {"readme", "license", "copying", "important", "keep"}
 
 def _resolve_path(path_value: Path | str) -> Path:
     return Path(path_value).expanduser().resolve()
+
+
+def validate_scan_root_path(folder_path: str) -> Path:
+    normalized = str(folder_path or "").strip().strip('"')
+    if not normalized:
+        raise ScanPathError("Enter a folder path first.")
+
+    root = Path(normalized).expanduser()
+    try:
+        stat_result = root.stat()
+    except FileNotFoundError as exc:
+        raise ScanPathError(f"Scan root does not exist: {root}") from exc
+    except PermissionError as exc:
+        raise ScanPathError(f"Permission denied for scan root: {root}") from exc
+    except OSError as exc:
+        detail = exc.strerror or type(exc).__name__
+        raise ScanPathError(f"Cannot access scan root {root}: {detail}") from exc
+
+    if not Path(root).is_dir():
+        raise ScanPathError(f"Scan root is not a directory: {root}")
+    if not os.access(root, os.R_OK | os.X_OK):
+        raise ScanPathError(f"Permission denied for scan root: {root}")
+    del stat_result
+    return root.resolve()
 
 
 def _scan_root_path(scan_result: dict[str, object]) -> Path:
@@ -323,7 +348,7 @@ def scan_local_folder(
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
-    root = Path(folder_path).expanduser()
+    root = validate_scan_root_path(folder_path)
     records: list[FolderScanRecord] = []
     errors: list[str] = []
     now = datetime.datetime.now(datetime.UTC)
@@ -385,7 +410,7 @@ def scan_local_folder(
                     errors.append(f"Permission denied: {path_obj}")
                 except FileNotFoundError:
                     continue
-                except Exception as exc:
+                except OSError as exc:
                     errors.append(f"Failed to inspect {path_obj}: {exc}")
             if scanned >= int(max_files):
                 break
@@ -403,10 +428,12 @@ def scan_local_folder(
                     errors.append(f"Permission denied: {entry.path}")
                 except FileNotFoundError:
                     continue
-                except Exception as exc:
+                except OSError as exc:
                     errors.append(f"Failed to inspect {entry.path}: {exc}")
         except PermissionError:
             errors.append(f"Permission denied: {root}")
+        except OSError as exc:
+            errors.append(f"Failed to scan {root}: {exc}")
 
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
@@ -496,7 +523,7 @@ def run_folder_organizer(
                             operation_id=operation_id,
                         )
                     )
-                except Exception as exc:
+                except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
                     results.append(
                         FolderOperationRow(
                             original_path=str(original_path),
@@ -559,7 +586,7 @@ def run_folder_organizer(
                         operation_id=operation_id,
                     )
                 )
-            except Exception as exc:
+            except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
                 for item in reversed(manifest_items):
                     if str(item.get("original_path") or "") == str(original_path) and str(item.get("status") or "") == QuarantineStatus.MOVING.value:
                         item["status"] = QuarantineStatus.FAILED.value
@@ -658,7 +685,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         operation_id=str(item.get("operation_id") or "") or None,
                     )
                 )
-            except Exception as exc:
+            except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
                 results.append(
                     FolderOperationRow(
                         original_path=str(original) if item.get("original_path") else None,

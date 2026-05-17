@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from io import StringIO
 
 from folder_models import FolderActionResult, dict_object, human_bytes, object_list, safe_int
-from report_exports import escape_markdown_table_cell
+from report_exports import escape_markdown_table_cell, format_timestamp_for_export
 
 FOLDER_REPORT_FIELDNAMES = [
     "scan_path",
@@ -60,8 +60,9 @@ def export_folder_report_markdown(
     lines = [
         "# Smart Organizer Report",
         "",
+        "- Timestamps use UTC ISO 8601.",
         f"- Scan path: `{scan_result.get('path') or '-'}`",
-        f"- Scanned at: {scan_result.get('scanned_at')}",
+        f"- Scanned at: {format_timestamp_for_export(scan_result.get('scanned_at'))}",
         f"- Scanned files: {stats.get('scanned_files', 0)}",
         f"- Total size: {human_bytes(safe_int(stats.get('total_bytes')))}",
         f"- Candidate files: {candidate_count}",
@@ -72,7 +73,7 @@ def export_folder_report_markdown(
         f"- Failed: {operation_summary.get('failed', sum(1 for row in rows if row.get('status') == 'FAILED'))}",
         f"- Skipped: {operation_summary.get('skipped', sum(1 for row in rows if row.get('status') == 'SKIPPED'))}",
         f"- Quarantine destination: `{quarantine_destination}`",
-        f"- Generated at: {rows[-1].get('processed_at') if rows else scan_result.get('scanned_at')}",
+        f"- Generated at: {format_timestamp_for_export(rows[-1].get('processed_at') if rows else scan_result.get('scanned_at'))}",
         "",
         "| Original path | New path | Size | Last modified | Status | Failure reason |",
         "| --- | --- | --- | --- | --- | --- |",
@@ -85,7 +86,7 @@ def export_folder_report_markdown(
                     escape_markdown_table_cell(row.get("original_path")),
                     escape_markdown_table_cell(row.get("new_path")),
                     human_bytes(safe_int(row.get("file_size"))),
-                    escape_markdown_table_cell(row.get("last_modified")),
+                    escape_markdown_table_cell(format_timestamp_for_export(row.get("last_modified"))),
                     escape_markdown_table_cell(row.get("status")),
                     escape_markdown_table_cell(row.get("error_message")),
                 ]
@@ -108,11 +109,11 @@ def export_folder_report_csv(
         writer.writerow(
             {
                 "scan_path": scan_result.get("path"),
-                "scanned_at": scan_result.get("scanned_at"),
+                "scanned_at": format_timestamp_for_export(scan_result.get("scanned_at")),
                 "original_path": row.get("original_path"),
                 "new_path": row.get("new_path"),
                 "file_size": safe_int(row.get("file_size")),
-                "last_modified": row.get("last_modified"),
+                "last_modified": format_timestamp_for_export(row.get("last_modified")),
                 "reason": row.get("reason"),
                 "status": row.get("status"),
                 "error_message": row.get("error_message"),

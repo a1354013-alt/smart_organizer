@@ -100,6 +100,66 @@ def test_generate_video_thumbnail_timeout_returns_clean_error(monkeypatch, tmp_p
     assert "timeout" in error.lower() or "逾時" in error
 
 
+def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+    preview_base_path = tmp_path / "preview.png"
+    expected_preview_path = tmp_path / "preview.jpg"
+    processor = FileProcessor()
+    captured: dict[str, object] = {}
+
+    core_processor.is_ffmpeg_available.cache_clear()
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: True)
+    monkeypatch.setattr(
+        core_processor.FileUtils,
+        "build_preview_path",
+        staticmethod(lambda _path: str(preview_base_path)),
+    )
+
+    def fake_run(cmd, capture_output, timeout, text):
+        captured["cmd"] = cmd
+        expected_preview_path.write_bytes(b"jpg")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    preview, error = processor._generate_video_thumbnail(str(video_path), timeout_seconds=7)
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert preview == str(expected_preview_path)
+    assert error is None
+    assert cmd == [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        "thumbnail,scale=320:-1",
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        str(expected_preview_path),
+    ]
+    assert cmd.count(str(video_path)) == 1
+    assert cmd[cmd.index("-i") + 1] == str(video_path)
+    assert cmd[-1] == str(expected_preview_path)
+    assert str(video_path) not in cmd[cmd.index("-vf") + 1 :]
+
+
+def test_generate_video_thumbnail_falls_back_when_ffmpeg_unavailable(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: False)
+
+    preview, error = FileProcessor()._generate_video_thumbnail(str(video_path), timeout_seconds=7)
+
+    assert preview is None
+    assert error == "ffmpeg is unavailable; thumbnail generation was skipped."
+
+
 def test_extract_metadata_gracefully_falls_back_without_ffmpeg(monkeypatch, tmp_path: Path):
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake-video")
@@ -212,6 +272,25 @@ def test_extract_metadata_rejects_fake_video_container_without_crashing(tmp_path
     assert metadata["file_type"] == "video"
     assert metadata["video"]["ffprobe_error"]
     assert any("video container validation failed" in note for note in metadata["notes"])
+
+
+def test_analyze_one_upload_allows_fake_video_but_marks_it_partial(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    uploaded = UploadedFileData(name="fake.mp4", content=b"not-a-real-video", mime_type="video/mp4")
+
+    analyzed, duplicate, err = analyze_one_upload(
+        uploaded,
+        processor=FileProcessor(),
+        storage=storage,
+        processing_options={"enable_ocr": False, "enable_pdf_preview": False},
+    )
+
+    assert duplicate is None
+    assert err is None
+    assert analyzed is not None
+    assert analyzed.analysis_status == "WARNING"
+    assert analyzed.metadata["file_type"] == "video"
+    assert any("video container validation failed" in note for note in analyzed.metadata["notes"])
 
 
 def test_extract_metadata_valid_video_container_falls_back_when_tools_unavailable(monkeypatch, tmp_path: Path):

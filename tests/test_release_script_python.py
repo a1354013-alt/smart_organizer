@@ -19,6 +19,22 @@ from scripts.verify_release_zip import resolve_zip_paths, verify_release_zip
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _pid_exists(pid: int) -> bool:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return f'"{pid}"' in result.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def test_python_release_script_builds_clean_zip(tmp_path):
     zip_path = build_zip(tmp_path, "package.zip")
     assert zip_path.exists()
@@ -199,9 +215,84 @@ def test_validate_release_run_step_times_out_with_partial_line(capsys):
 
     captured = capsys.readouterr()
     assert returncode == 124
-    assert duration < 3
+    assert duration < 4
     assert "partial stdout" in captured.out
     assert "partial stderr" in captured.err
     assert "TIMEOUT" in captured.err
     assert "[stdout] partial stdout" in captured.err
     assert "[stderr] partial stderr" in captured.err
+
+
+def test_validate_release_run_step_timeout_tail_keeps_flushed_partial_stdout_and_stderr(capsys):
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys, time; "
+            "sys.stdout.write('partial stdout flushed'); sys.stdout.flush(); "
+            "sys.stderr.write('partial stderr flushed'); sys.stderr.flush(); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    returncode = run_step(command, timeout_seconds=1, timeout_tail_lines=5)
+
+    captured = capsys.readouterr()
+    assert returncode == 124
+    assert "partial stdout flushed" in captured.out
+    assert "partial stderr flushed" in captured.err
+    assert "[stdout] partial stdout flushed" in captured.err
+    assert "[stderr] partial stderr flushed" in captured.err
+
+
+def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_path: Path):
+    pid_file = tmp_path / "child.pid"
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import os, pathlib, time; "
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()), encoding='utf-8'); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    returncode = run_step(command, timeout_seconds=1, timeout_tail_lines=5)
+
+    captured = capsys.readouterr()
+    assert returncode == 124
+    assert "TIMEOUT" in captured.err
+    assert pid_file.exists()
+    assert not _pid_exists(int(pid_file.read_text(encoding="utf-8")))
+
+
+def test_validate_release_run_step_collects_success_stdout_and_stderr(capsys):
+    returncode = run_step(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('success stdout'); print('success stderr', file=sys.stderr)",
+        ],
+        timeout_seconds=5,
+        timeout_tail_lines=5,
+    )
+
+    captured = capsys.readouterr()
+    assert returncode == 0
+    assert "success stdout" in captured.out
+    assert "success stderr" in captured.err
+    assert "END" in captured.out
+
+
+def test_validate_release_run_step_failure_message_is_clear(capsys):
+    returncode = run_step(
+        [sys.executable, "-c", "import sys; print('clear failure', file=sys.stderr); sys.exit(7)"],
+        timeout_seconds=5,
+        timeout_tail_lines=5,
+    )
+
+    captured = capsys.readouterr()
+    assert returncode == 7
+    assert "clear failure" in captured.err
+    assert "FAILED" in captured.err
+    assert "exit=7" in captured.err

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,42 @@ def safe_display_text(value: object, *, max_chars: int = 2000) -> str:
     if len(text) > max_chars:
         text = f"{text[:max_chars]}..."
     return escape(text, quote=False)
+
+
+_CSS_CLASS_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def safe_css_class_name(value: str) -> str:
+    if not _CSS_CLASS_NAME_RE.fullmatch(value):
+        raise ValueError(f"Unsafe CSS class name: {value!r}")
+    return value
+
+
+def render_safe_html_text(class_name: str, value: object, *, max_chars: int = 2000) -> None:
+    st.markdown(
+        f'<div class="{safe_css_class_name(class_name)}">{safe_display_text(value, max_chars=max_chars)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def format_timestamp_for_display(value: object) -> str:
+    if value in (None, ""):
+        return "-"
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    text = str(value).strip()
+    if not text:
+        return "-"
+    normalized = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -176,7 +214,7 @@ def inject_global_css() -> None:
 
 
 def card_open(class_name: str) -> None:
-    st.markdown(f'<div class="{class_name}">', unsafe_allow_html=True)
+    st.markdown(f'<div class="{safe_css_class_name(class_name)}">', unsafe_allow_html=True)
 
 
 def card_close() -> None:

@@ -110,8 +110,8 @@ def render_video_details(metadata: ExtractedMetadata | dict[str, Any]) -> None:
 
     ffprobe_error = video.get("ffprobe_error")
     if ffprobe_error:
-        st.warning(f"Video metadata failed: {safe_display_text(ffprobe_error)}")
+        st.warning(f"Video metadata degraded: {safe_display_text(ffprobe_error)}")
 
     thumb_error = video.get("thumbnail_error")
     if thumb_error:
-        st.warning(f"Video thumbnail failed: {safe_display_text(thumb_error)}")
+        st.warning(f"Video thumbnail unavailable: {safe_display_text(thumb_error)}")

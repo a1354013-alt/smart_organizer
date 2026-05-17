@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import cast
 
-from folder_models import QUARANTINE_DIRNAME
+from folder_models import QUARANTINE_DIRNAME, ScanPathError
 from folder_organizer import (
     list_quarantine_items,
     restore_quarantined_items,
@@ -30,6 +30,68 @@ def test_scan_local_folder_marks_stale_and_large_candidates(tmp_path: Path):
     assert stats["scanned_files"] == 1
     assert stats["stale_candidates"] == 1
     assert stats["large_candidates"] == 1
+
+
+def test_scan_local_folder_rejects_missing_root(tmp_path: Path):
+    missing = tmp_path / "missing"
+
+    try:
+        scan_local_folder(str(missing), recursive=True, max_files=10, stale_days=0)
+    except ScanPathError as exc:
+        assert "does not exist" in str(exc)
+    else:
+        raise AssertionError("Expected missing scan root to raise ScanPathError")
+
+
+def test_scan_local_folder_rejects_file_root(tmp_path: Path):
+    not_dir = tmp_path / "single.txt"
+    not_dir.write_text("hello", encoding="utf-8")
+
+    try:
+        scan_local_folder(str(not_dir), recursive=True, max_files=10, stale_days=0)
+    except ScanPathError as exc:
+        assert "not a directory" in str(exc)
+    else:
+        raise AssertionError("Expected non-directory scan root to raise ScanPathError")
+
+
+def test_scan_local_folder_reports_permission_denied_without_stopping(monkeypatch, tmp_path: Path):
+    readable = tmp_path / "good.txt"
+    blocked = tmp_path / "blocked.txt"
+    readable.write_text("good", encoding="utf-8")
+    blocked.write_text("blocked", encoding="utf-8")
+    original_stat = Path.stat
+
+    def fake_stat(self: Path):
+        if self == blocked:
+            raise PermissionError("blocked for test")
+        return original_stat(self)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=10, stale_days=0)
+
+    assert scan["stats"]["scanned_files"] == 1
+    assert any("Permission denied" in message for message in scan["errors"])
+    assert any(record["path"] == str(readable) for record in scan["records"])
+
+
+def test_scan_local_folder_rejects_permission_denied_root(monkeypatch, tmp_path: Path):
+    original_stat = Path.stat
+
+    def fake_stat(self: Path):
+        if self == tmp_path:
+            raise PermissionError("blocked root")
+        return original_stat(self)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+
+    try:
+        scan_local_folder(str(tmp_path), recursive=True, max_files=10, stale_days=0)
+    except ScanPathError as exc:
+        assert "Permission denied" in str(exc)
+    else:
+        raise AssertionError("Expected permission denied scan root to raise ScanPathError")
 
 
 def test_quarantine_move_restore_and_report(tmp_path: Path):

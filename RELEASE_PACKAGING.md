@@ -100,3 +100,10 @@ python -m pip install -r requirements.txt
 python scripts/create_demo_folder.py
 streamlit run app.py
 ```
+
+Runtime expectations for demos and reviews:
+
+- The primary supported workflow is `scan -> dry-run -> execute -> quarantine -> restore`.
+- Async batch upload processing is included as an internal or future-use implementation detail, not as the main demo path.
+- Optional dependencies degrade gracefully: PDF preview, OCR, and video helpers may be unavailable without preventing the app from starting.
+- Invalid video containers are reported as degraded analysis results instead of crashing upload review.

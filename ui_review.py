@@ -68,7 +68,7 @@ def render_review(context: UIContext) -> None:
                 st.write(f"**Type**: {safe_display_text(result.file_type)}")
                 st.write(f"**Date**: {safe_display_text(result.standard_date)}")
                 if str(getattr(result, "analysis_status", "OK") or "OK") in {"WARNING", "PARTIAL"}:
-                    st.warning("Some analysis steps were degraded or failed.")
+                    st.warning("Some analysis steps were degraded or fell back safely.")
                     if getattr(result, "last_error", None):
                         st.caption(f"last_error: {safe_display_text(result.last_error)}")
                     if is_debug() and getattr(result, "step_timings", None):

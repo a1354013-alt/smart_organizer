@@ -11,6 +11,7 @@ from folder_organizer import (
     restore_quarantined_items,
     run_folder_organizer,
     scan_local_folder,
+    validate_scan_root_path,
 )
 
 
@@ -33,16 +34,17 @@ def restore_many(
 
 
 def validate_scan_target(folder_path: str) -> Path:
-    normalized = str(folder_path or "").strip().strip('"')
-    if not normalized:
-        raise ScanPathError("Enter a folder path first.")
-
-    path_obj = Path(normalized).expanduser()
-    if not path_obj.exists():
-        raise ScanPathError("The folder does not exist.")
-    if not path_obj.is_dir():
-        raise ScanPathError("The path must point to a folder.")
-    return path_obj
+    try:
+        return validate_scan_root_path(folder_path)
+    except ScanPathError as exc:
+        message = str(exc)
+        if message == "Enter a folder path first.":
+            raise
+        if "does not exist" in message:
+            raise ScanPathError("The folder does not exist.") from exc
+        if "not a directory" in message:
+            raise ScanPathError("The path must point to a folder.") from exc
+        raise
 
 
 def scan_folder(

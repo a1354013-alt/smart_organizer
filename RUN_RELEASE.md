@@ -92,9 +92,16 @@ Why:
 
 If these tools are missing, the app still starts and falls back where possible.
 
+Fallback behavior:
+
+- Missing `poppler` disables PDF preview generation.
+- Missing `tesseract` disables OCR.
+- Missing `ffmpeg` or `ffprobe` keeps upload and folder flows available, but video analysis may become partial and thumbnails may be unavailable.
+- A fake `.mp4` or other bad video container is kept as a degraded analysis result with warnings instead of crashing the batch.
+
 ## 6. Safety expectations
 
-- Folder cleanup uses quarantine by default.
+- Folder cleanup uses `scan -> dry-run -> execute -> quarantine -> restore`.
 - The homepage does not permanently delete selected user files automatically.
 - Restore writes a safe non-overwriting filename if the original path is already occupied.
 
@@ -129,3 +136,16 @@ cleanliness.
 For this integrated validation run, the script writes and verifies
 `release_ci/smart_organizer-release-validation.zip` so stale local release zips
 do not influence the result.
+
+Equivalent explicit commands:
+
+```bash
+python scripts/safe_compileall.py -q .
+python -m ruff check --no-cache .
+python -m mypy --cache-dir=/dev/null
+python -m pytest -q
+python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
+python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
+python scripts/check_workspace_clean.py --project-root .
+python scripts/validate_release_source.py --timeout-tail-lines 20
+```

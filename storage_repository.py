@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from core import FileUtils
-from storage_base import MAX_UPLOAD_BYTES, _log_context
+from storage_base import MAX_UPLOAD_BYTES, _log_context, utc_now_iso
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
@@ -201,10 +201,10 @@ class StorageRepositoryMixin:
 
                 cursor.execute(
                     """
-                    INSERT INTO files (original_name, safe_name, temp_path, file_hash, file_type, status)
-                    VALUES (?, ?, ?, ?, ?, 'PENDING')
+                    INSERT INTO files (original_name, safe_name, temp_path, file_hash, file_type, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
                     """,
-                    (original_name, safe_name, str(temp_path), file_hash, final_file_type),
+                    (original_name, safe_name, str(temp_path), file_hash, final_file_type, utc_now_iso()),
                 )
                 file_id = int(cursor.lastrowid or 0)
                 conn.commit()
@@ -232,7 +232,7 @@ class StorageRepositoryMixin:
                     "status": str(row[1] or ""),
                     "final_path": str(row[2]) if row[2] else None,
                 }
-        except Exception as exc:
+        except (ValueError, OSError, sqlite3.Error) as exc:
             logger.error(
                 "create_temp_file failed%s: %s",
                 _log_context(original_name=uploaded_file_name, file_hash=str(file_hash)[:8]),
@@ -256,7 +256,7 @@ class StorageRepositoryMixin:
             if row:
                 return row[0] if row[0] else row[1]
             return None
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error("get_file_path failed: %s", exc)
             return None
         finally:
@@ -272,7 +272,7 @@ class StorageRepositoryMixin:
             cursor.execute("SELECT * FROM files WHERE file_id = ?", (file_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error("get_file_by_id failed: %s", exc)
             return None
         finally:
@@ -301,6 +301,8 @@ class StorageRepositoryMixin:
                 last_manual_topic = last_manual_topic or main_topic
                 last_manual_reason = last_manual_reason or metadata.get("final_decision_reason")
 
+            decision_updated_at = utc_now_iso() if decision_source is not None else None
+
             cursor.execute(
                 """
                 UPDATE files
@@ -312,7 +314,7 @@ class StorageRepositoryMixin:
                     final_decision_reason = COALESCE(?, final_decision_reason),
                     manual_override = COALESCE(?, manual_override),
                     decision_source = COALESCE(?, decision_source),
-                    decision_updated_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE decision_updated_at END,
+                    decision_updated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE decision_updated_at END,
                     last_manual_topic = COALESCE(?, last_manual_topic),
                     last_manual_reason = COALESCE(?, last_manual_reason),
                     is_scanned = ?,
@@ -332,6 +334,7 @@ class StorageRepositoryMixin:
                     manual_override_val,
                     decision_source,
                     decision_source,
+                    decision_updated_at,
                     last_manual_topic,
                     last_manual_reason,
                     1 if metadata.get("is_scanned") else 0,
@@ -374,7 +377,7 @@ class StorageRepositoryMixin:
                     preview_path=preview_path,
                 ),
             )
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error(
                 "update_file_metadata failed%s: %s",
                 _log_context(file_id=file_id, main_topic=main_topic, decision_source=decision_source),
@@ -393,7 +396,7 @@ class StorageRepositoryMixin:
             merged_tags = self._merge_main_topic_into_tags(main_topic or "", tags_with_confidence)
             self._replace_file_tags(cursor, file_id, merged_tags)
             conn.commit()
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error("add_tags_to_file failed: %s", exc)
             raise
         finally:
@@ -428,7 +431,7 @@ class StorageRepositoryMixin:
                 )
                 values[field] = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
             return values
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error("get_record_filter_values failed: %s", exc)
             return {"status": [], "main_topic": [], "file_type": []}
         finally:
@@ -514,7 +517,7 @@ class StorageRepositoryMixin:
                 tuple(query_params),
             )
             return {"items": [dict(row) for row in cursor.fetchall()], "total": total}
-        except Exception as exc:
+        except sqlite3.Error as exc:
             logger.error("get_records_page failed: %s", exc)
             return {"items": [], "total": 0}
         finally:

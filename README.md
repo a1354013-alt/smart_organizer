@@ -6,6 +6,13 @@ The core product promise is simple: scan a folder, explain why files may need re
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
 
+Time policy:
+
+- Database records use UTC ISO 8601 timestamps.
+- Folder scan and quarantine manifests use UTC ISO 8601 timestamps.
+- The Streamlit UI renders record timestamps in local time for easier review.
+- Exported records and folder reports label timestamps as UTC.
+
 ## Core Workflow
 
 ```mermaid
@@ -20,8 +27,8 @@ flowchart LR
 Folder organizer flow:
 
 1. Scan a local folder with metadata-only inspection.
-2. Analyze candidates using explainable rule-based scoring.
-3. Review reasons, confidence, risk level, and recommended action.
+2. Dry-run the selected cleanup actions before any move happens.
+3. Execute only the user-confirmed move operation.
 4. Move selected files into `.smart_organizer_quarantine/`.
 5. Restore quarantined files without overwriting existing files.
 6. Export Markdown or CSV reports.
@@ -75,6 +82,16 @@ Recommended demo screenshots for a portfolio or interview walkthrough:
 
 If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
 
+## Upload And Video Contract
+
+- Upload validation rejects obviously invalid PDF and image signatures before analysis.
+- Video uploads are accepted by extension and then validated during analysis.
+- If a file is named like a video but the container signature does not match, the analysis is kept as a degraded video result instead of crashing the batch.
+- If `ffmpeg` or `ffprobe` is missing, video analysis falls back to partial metadata with clear warnings and no guaranteed thumbnail.
+- Unsupported file extensions are rejected at upload time.
+
+This means a fake `.mp4` is not silently treated as a healthy video, but it is also not allowed to take down the review flow.
+
 ## Explainable Scoring
 
 The organizer is intentionally rule-based and reproducible. Each scan record includes:
@@ -96,6 +113,7 @@ Low-confidence items are marked for manual review or do-not-touch handling. The 
 - Modified time (`mtime`) and file size are supporting signals, not proof that a file is safe to archive.
 - Users must manually confirm before moving files.
 - OCR, PDF preview, and video metadata depend on optional system tools.
+- Async batch upload processing exists as an internal or future-use implementation path. The main demo and supported UI flow use the synchronous path for clearer progress and safer error handling.
 - The app does not automatically delete selected user files.
 - Internal temp files, previews, and caches may be cleaned up by maintenance routines.
 
@@ -115,3 +133,7 @@ Low-confidence items are marked for manual review or do-not-touch handling. The 
 - Known limitations: `docs/KNOWN_LIMITATIONS.md`
 - Release packaging notes: `RELEASE_PACKAGING.md`
 - Release runbook: `RUN_RELEASE.md`
+
+## Local Validation
+
+Source-repository validation lives in the release runbook. Use `RUN_RELEASE.md` as the single source of truth for release-confidence and local verification commands.

@@ -38,7 +38,7 @@ class StorageSchemaMixin:
                     is_scanned INTEGER DEFAULT 0,
                     last_error TEXT,
                     status TEXT DEFAULT 'PENDING',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
                 )
             """
             )
@@ -71,7 +71,7 @@ class StorageSchemaMixin:
                 ("schema_version", str(CURRENT_SCHEMA_VERSION)),
             )
             conn.commit()
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.error("db init failed: %s", e)
             raise
         finally:
@@ -134,12 +134,28 @@ class StorageSchemaMixin:
                     cursor.execute("INSERT OR IGNORE INTO file_tags SELECT * FROM file_tags_backup")
                     cursor.execute("DROP TABLE IF EXISTS file_tags_backup")
 
+                if version < 14:
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET created_at = REPLACE(created_at, ' ', 'T') || '+00:00'
+                        WHERE created_at GLOB '????-??-?? ??:??:??'
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET decision_updated_at = REPLACE(decision_updated_at, ' ', 'T') || '+00:00'
+                        WHERE decision_updated_at GLOB '????-??-?? ??:??:??'
+                        """
+                    )
+
                 cursor.execute(
                     "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",
                     (str(CURRENT_SCHEMA_VERSION),),
                 )
                 conn.commit()
-        except Exception as e:
+        except (sqlite3.Error, ValueError) as e:
             raise RuntimeError(f"Database migration failed: {e}") from e
         finally:
             if conn:
