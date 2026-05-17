@@ -1,0 +1,22 @@
+[run]
+omit =
+    release_ci/*
+    release/*
+    */extracted/*
+    */.pytest_cache/*
+    */__pycache__/*
+    */site-packages/*
+    .venv/*
+    venv/*
+
+[report]
+# Release zip verification extracts temporary files that are not project source.
+omit =
+    release_ci/*
+    release/*
+    */extracted/*
+    */.pytest_cache/*
+    */__pycache__/*
+    */site-packages/*
+    .venv/*
+    venv/*

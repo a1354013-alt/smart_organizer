@@ -78,6 +78,119 @@ def test_quarantine_move_restore_and_report(tmp_path: Path):
     assert rows[0]["operation_id"] == moved["operation_id"]
 
 
+def test_folder_dry_run_preserves_nested_quarantine_path_without_moving(tmp_path: Path):
+    target = tmp_path / "sub" / "old.txt"
+    target.parent.mkdir()
+    target.write_text("old", encoding="utf-8")
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+
+    preview = run_folder_organizer(scan, [str(target)], dry_run=True)
+
+    rows = preview["results"]
+    assert isinstance(rows, list)
+    operation_id = cast(str, preview["operation_id"])
+    expected = tmp_path / QUARANTINE_DIRNAME / operation_id / "sub" / "old.txt"
+    assert preview["summary"]["skipped"] == 1
+    assert rows[0]["new_path"] == str(expected)
+    assert target.exists()
+    assert not expected.exists()
+    quarantine_root = tmp_path / QUARANTINE_DIRNAME
+    assert not any(path.is_file() for path in quarantine_root.rglob("*"))
+
+
+def test_folder_execute_uses_same_nested_relative_path_shape_as_dry_run(tmp_path: Path):
+    target = tmp_path / "sub" / "old.txt"
+    target.parent.mkdir()
+    target.write_text("old", encoding="utf-8")
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+
+    preview = run_folder_organizer(scan, [str(target)], dry_run=True)
+    moved = run_folder_organizer(scan, [str(target)], dry_run=False)
+
+    preview_row = preview["results"][0]
+    moved_row = moved["results"][0]
+    preview_operation_id = cast(str, preview["operation_id"])
+    moved_operation_id = cast(str, moved["operation_id"])
+    preview_relative = Path(str(preview_row["new_path"])).relative_to(
+        tmp_path / QUARANTINE_DIRNAME / preview_operation_id
+    )
+    moved_relative = Path(str(moved_row["new_path"])).relative_to(
+        tmp_path / QUARANTINE_DIRNAME / moved_operation_id
+    )
+    assert preview_relative == Path("sub") / "old.txt"
+    assert moved_relative == preview_relative
+    assert not target.exists()
+    assert (tmp_path / QUARANTINE_DIRNAME / moved_operation_id / "sub" / "old.txt").exists()
+
+
+def test_folder_restore_nested_file_from_quarantine(tmp_path: Path):
+    target = tmp_path / "sub" / "old.txt"
+    target.parent.mkdir()
+    target.write_text("old", encoding="utf-8")
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+    moved = run_folder_organizer(scan, [str(target)], dry_run=False)
+    operation_id = cast(str, moved["operation_id"])
+    quarantined_path = tmp_path / QUARANTINE_DIRNAME / operation_id / "sub" / "old.txt"
+
+    restored = restore_quarantined_items(str(tmp_path), [str(quarantined_path)])
+
+    assert restored["summary"]["success"] == 1
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == "old"
+    assert not quarantined_path.exists()
+    assert list_quarantine_items(str(tmp_path)) == []
+
+
+def test_same_named_nested_files_keep_distinct_quarantine_targets(tmp_path: Path):
+    first = tmp_path / "a" / "file.txt"
+    second = tmp_path / "b" / "file.txt"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("a", encoding="utf-8")
+    second.write_text("b", encoding="utf-8")
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+
+    preview = run_folder_organizer(scan, [str(first), str(second)], dry_run=True)
+    moved = run_folder_organizer(scan, [str(first), str(second)], dry_run=False)
+
+    preview_paths = {Path(str(row["new_path"])) for row in preview["results"]}
+    operation_id = cast(str, moved["operation_id"])
+    preview_operation_id = cast(str, preview["operation_id"])
+    assert len(preview_paths) == 2
+    assert tmp_path / QUARANTINE_DIRNAME / preview_operation_id / "a" / "file.txt" in preview_paths
+    assert tmp_path / QUARANTINE_DIRNAME / preview_operation_id / "b" / "file.txt" in preview_paths
+    assert (tmp_path / QUARANTINE_DIRNAME / operation_id / "a" / "file.txt").read_text(
+        encoding="utf-8"
+    ) == "a"
+    assert (tmp_path / QUARANTINE_DIRNAME / operation_id / "b" / "file.txt").read_text(
+        encoding="utf-8"
+    ) == "b"
+
+
 def test_restore_quarantined_items_does_not_overwrite_existing_file(tmp_path: Path):
     target = tmp_path / "report.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")

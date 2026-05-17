@@ -65,6 +65,20 @@ def _validate_quarantine_path(path_value: Path | str, quarantine_root: Path, *, 
     return resolved
 
 
+def build_quarantine_target_path(
+    root: Path,
+    original_path: Path | str,
+    quarantine_root: Path,
+    operation_id: str,
+) -> Path:
+    resolved_original = _validate_path_within_root(original_path, root, label="selected file")
+    relative_path = resolved_original.relative_to(root)
+    target = (quarantine_root / operation_id / relative_path).resolve()
+    if not is_relative_to_path(target, quarantine_root):
+        raise ValueError(f"quarantine target escapes quarantine root: {target}")
+    return target
+
+
 def _is_active_manifest_item(item: dict[str, object]) -> bool:
     return str(item.get("status") or "").upper() in ACTIVE_QUARANTINE_STATUSES
 
@@ -460,19 +474,42 @@ def run_folder_organizer(
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
             if dry_run:
-                results.append(
-                    FolderOperationRow(
-                        original_path=str(original_path),
-                        new_path=str(quarantine_dir(root) / operation_id / original_path.name),
-                        status="SKIPPED",
-                        reason=reasons,
-                        file_size=file_size,
-                        last_modified=str(last_modified) if last_modified is not None else None,
-                        processed_at=iso_now(),
-                        error_message="Dry-run preview only.",
-                        operation_id=operation_id,
+                try:
+                    preview_destination = safe_destination(
+                        build_quarantine_target_path(
+                            root,
+                            original_path,
+                            quarantine_root,
+                            operation_id,
+                        )
                     )
-                )
+                    results.append(
+                        FolderOperationRow(
+                            original_path=str(original_path),
+                            new_path=str(preview_destination),
+                            status="SKIPPED",
+                            reason=reasons,
+                            file_size=file_size,
+                            last_modified=str(last_modified) if last_modified is not None else None,
+                            processed_at=iso_now(),
+                            error_message="Dry-run preview only.",
+                            operation_id=operation_id,
+                        )
+                    )
+                except Exception as exc:
+                    results.append(
+                        FolderOperationRow(
+                            original_path=str(original_path),
+                            new_path=None,
+                            status="FAILED",
+                            reason=reasons,
+                            file_size=file_size,
+                            last_modified=str(last_modified) if last_modified is not None else None,
+                            processed_at=iso_now(),
+                            error_message=str(exc) or type(exc).__name__,
+                            operation_id=operation_id,
+                        )
+                    )
                 continue
 
             try:
@@ -482,8 +519,12 @@ def run_folder_organizer(
                     raise FileExistsError("File already has an active quarantine manifest entry.")
                 if not resolved_original.exists():
                     raise FileNotFoundError("Source file no longer exists.")
-                relative_path = resolved_original.relative_to(root)
-                destination = quarantine_root / operation_id / relative_path
+                destination = build_quarantine_target_path(
+                    root,
+                    resolved_original,
+                    quarantine_root,
+                    operation_id,
+                )
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination = safe_destination(destination)
                 manifest_item = {
