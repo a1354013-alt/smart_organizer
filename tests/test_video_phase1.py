@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,17 @@ import core_processor
 from core import VIDEO_TAGS, VIDEO_TOOL_TIMEOUT_SECONDS, FileProcessor, FileUtils
 from services import UploadedFileData, analyze_one_upload
 from storage import StorageManager
+
+
+def _assert_core_processor_import_snippet_succeeds(snippet: str) -> None:
+    proc = subprocess.run(
+        [sys.executable, "-c", snippet],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_video_extensions_defined():
@@ -103,58 +115,54 @@ def test_extract_metadata_gracefully_falls_back_without_ffmpeg(monkeypatch, tmp_
     assert metadata["video"]["ffprobe_error"] is not None
 
 
-def test_core_processor_import_does_not_run_ffmpeg_detection(monkeypatch):
-    import importlib
-    import sys
+def test_core_processor_import_does_not_run_ffmpeg_detection():
+    _assert_core_processor_import_snippet_succeeds(
+        """
+import subprocess
 
-    original_run = subprocess.run
+def fail_run(*args, **kwargs):
+    raise AssertionError("subprocess.run should not execute during import")
 
-    def fail_run(*args, **kwargs):
-        raise AssertionError("subprocess.run should not execute during import")
-
-    monkeypatch.setattr(subprocess, "run", fail_run)
-    sys.modules.pop("core_processor", None)
-    try:
-        reloaded = importlib.import_module("core_processor")
-        assert hasattr(reloaded, "is_ffmpeg_available")
-    finally:
-        monkeypatch.setattr(subprocess, "run", original_run)
-        sys.modules.pop("core_processor", None)
-        importlib.import_module("core_processor")
+subprocess.run = fail_run
+import core_processor
+assert hasattr(core_processor, "is_ffmpeg_available")
+"""
+    )
 
 
-def test_core_processor_invalid_video_timeout_env_does_not_crash_on_import(monkeypatch):
-    import importlib
-    import sys
+def test_core_processor_invalid_video_timeout_env_does_not_crash_on_import():
+    _assert_core_processor_import_snippet_succeeds(
+        """
+import os
 
-    monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", "not-a-number")
-    sys.modules.pop("core_processor", None)
-    try:
-        reloaded = importlib.import_module("core_processor")
-        assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 10
-    finally:
-        sys.modules.pop("core_processor", None)
-        importlib.import_module("core_processor")
+os.environ["VIDEO_TOOL_TIMEOUT_SECONDS"] = "not-a-number"
+import core_processor
+assert core_processor.VIDEO_TOOL_TIMEOUT_SECONDS == 10
+"""
+    )
 
 
-def test_core_processor_non_positive_video_timeout_env_falls_back_to_minimum(monkeypatch):
-    import importlib
-    import sys
+def test_core_processor_non_positive_video_timeout_env_falls_back_to_minimum():
+    _assert_core_processor_import_snippet_succeeds(
+        """
+import os
 
-    monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", "")
-    sys.modules.pop("core_processor", None)
-    reloaded = importlib.import_module("core_processor")
-    assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 10
-    sys.modules.pop("core_processor", None)
+os.environ["VIDEO_TOOL_TIMEOUT_SECONDS"] = ""
+import core_processor
+assert core_processor.VIDEO_TOOL_TIMEOUT_SECONDS == 10
+"""
+    )
 
     for raw in ("0", "-5"):
-        monkeypatch.setenv("VIDEO_TOOL_TIMEOUT_SECONDS", raw)
-        sys.modules.pop("core_processor", None)
-        reloaded = importlib.import_module("core_processor")
-        assert reloaded.VIDEO_TOOL_TIMEOUT_SECONDS == 1
-        sys.modules.pop("core_processor", None)
+        _assert_core_processor_import_snippet_succeeds(
+            f"""
+import os
 
-    importlib.import_module("core_processor")
+os.environ["VIDEO_TOOL_TIMEOUT_SECONDS"] = {raw!r}
+import core_processor
+assert core_processor.VIDEO_TOOL_TIMEOUT_SECONDS == 1
+"""
+        )
 
 
 def test_video_duplicate_detection_still_works(tmp_path: Path):

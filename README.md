@@ -58,7 +58,7 @@ Release packaging follows the same safety boundary: generated runtime zips are b
 ## Quick Demo
 
 ```bash
-python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python scripts/create_demo_folder.py
 streamlit run app.py
 ```
@@ -72,21 +72,6 @@ Recommended demo screenshots for a portfolio or interview walkthrough:
 3. Quarantine result showing `.smart_organizer_quarantine/<operation_id>/...`.
 4. Restore result showing files returned without overwriting existing user files.
 5. Exported Markdown or CSV report preview.
-
-## Validation
-
-Run the same commands used by `.github/workflows/ci.yml`:
-
-```bash
-python scripts/validate_release_source.py
-```
-
-The validation script runs cache-safe checks, including `ruff check --no-cache`
-and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
-cleanliness.
-The integrated validation run verifies its own deterministic
-`release_ci/smart_organizer-release-validation.zip` artifact, so stale local
-release zips cannot change the result.
 
 If quarantine metadata access is blocked by a leftover `manifest.json.lock`, Smart Organizer raises a clear manifest-lock error. It does not silently hang, and it does not auto-delete the lock file because that could conflict with another active process.
 

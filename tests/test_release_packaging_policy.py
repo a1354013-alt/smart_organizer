@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
+import zipfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,9 +55,10 @@ def test_release_packaging_docs_match_current_policy():
         assert expected in allowlist
         assert expected in packaging
 
-    assert "python scripts/validate_release_source.py" in readme
     assert "python scripts/validate_release_source.py" in run_release
     assert "python -m pip install -r requirements.txt" in readme
+    assert "requirements-dev.txt" not in readme
+    assert "python scripts/validate_release_source.py" not in readme
     assert "python -m pip install -r requirements.txt" in run_release
     assert "streamlit run app.py" in readme
     assert "streamlit run app.py" in run_release
@@ -67,7 +70,6 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
     from scripts.validate_release_source import build_validation_commands
 
     docs = [
-        (PROJECT_ROOT / "README.md").read_text(encoding="utf-8"),
         (PROJECT_ROOT / "RUN_RELEASE.md").read_text(encoding="utf-8"),
         (PROJECT_ROOT / "RELEASE_PACKAGING.md").read_text(encoding="utf-8"),
     ]
@@ -84,6 +86,7 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
 
     for content in docs:
         assert "python scripts/validate_release_source.py" in content
+        assert "Source repository only, not included in runtime release zip." in content
         assert "python -m compileall -q ." not in content
         assert "python -m ruff check ." not in content
         assert "python -m mypy\n" not in content
@@ -162,10 +165,40 @@ def test_release_validation_timeout_reports_command(monkeypatch, capsys):
 
 def test_release_validation_docs_reference_single_entrypoint():
     docs = [
-        PROJECT_ROOT / "README.md",
         PROJECT_ROOT / "RUN_RELEASE.md",
         PROJECT_ROOT / "RELEASE_PACKAGING.md",
     ]
 
     for path in docs:
-        assert "python scripts/validate_release_source.py" in path.read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
+        assert "python scripts/validate_release_source.py" in content
+        assert "Source repository only, not included in runtime release zip." in content
+
+
+def test_release_readme_references_only_files_in_runtime_zip(tmp_path: Path):
+    from scripts.create_release_zip import build_zip
+
+    zip_path = build_zip(tmp_path, "runtime-doc-check.zip")
+    extract_dir = tmp_path / "extracted"
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+        archive.extractall(extract_dir)
+
+    readme = (extract_dir / "README.md").read_text(encoding="utf-8")
+    referenced_files = set(
+        re.findall(
+            r"(?:requirements[-\w]*\.txt|scripts/[A-Za-z0-9_./-]+\.py|docs/[A-Za-z0-9_./-]+\.md|RUN_RELEASE\.md|RELEASE_PACKAGING\.md|app\.py)",
+            readme,
+        )
+    )
+
+    missing = sorted(path for path in referenced_files if path not in names)
+    assert missing == []
+    assert "requirements-dev.txt" not in readme
+    assert "python scripts/validate_release_source.py" not in readme
+
+    for doc_name in ("RUN_RELEASE.md", "RELEASE_PACKAGING.md"):
+        content = (extract_dir / doc_name).read_text(encoding="utf-8")
+        assert "python scripts/validate_release_source.py" in content
+        assert "Source repository only, not included in runtime release zip." in content

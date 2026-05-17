@@ -109,6 +109,8 @@ Recommended smoke test after extraction:
 
 ## 8. Source repository release validation
 
+Source repository only, not included in runtime release zip.
+
 Run these commands from the source repository root before publishing a release. Use
 `scripts/safe_compileall.py` instead of `python -m compileall` so validation does not
 create `__pycache__` directories that would fail the final workspace-cleanliness check.

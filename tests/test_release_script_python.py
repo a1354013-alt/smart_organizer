@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -174,3 +175,24 @@ def test_validate_release_run_step_times_out_with_tail(capsys):
     assert returncode == 124
     assert "TIMEOUT" in captured.err
     assert "last visible line" in captured.err
+
+
+def test_validate_release_run_step_times_out_with_partial_line(capsys):
+    started = time.perf_counter()
+    returncode = run_step(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time; sys.stdout.write('partial stdout'); sys.stdout.flush(); time.sleep(10)",
+        ],
+        timeout_seconds=1,
+        timeout_tail_lines=5,
+    )
+    duration = time.perf_counter() - started
+
+    captured = capsys.readouterr()
+    assert returncode == 124
+    assert duration < 3
+    assert "partial stdout" in captured.out
+    assert "TIMEOUT" in captured.err
+    assert "[stdout] partial stdout" in captured.err

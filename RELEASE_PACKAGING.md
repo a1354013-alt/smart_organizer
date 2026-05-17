@@ -77,6 +77,8 @@ The packaging policy is enforced by:
 
 Run the full source-repository validation sequence before publishing:
 
+Source repository only, not included in runtime release zip.
+
 ```bash
 python scripts/validate_release_source.py
 ```

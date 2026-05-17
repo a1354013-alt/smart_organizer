@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import os
-import selectors
+import locale
+import queue
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
+from io import BufferedReader
 from pathlib import Path
-from typing import TextIO, cast
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 90
@@ -24,6 +26,33 @@ COMMAND_TIMEOUTS_SECONDS = {
     "scripts/check_workspace_clean.py": 60,
 }
 DEFAULT_TIMEOUT_TAIL_LINES = 40
+STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+
+
+class OutputTail:
+    def __init__(self, max_lines: int) -> None:
+        self._lines: deque[str] = deque(maxlen=max(1, int(max_lines)))
+        self._partials: dict[str, str] = {"stdout": "", "stderr": ""}
+
+    def append(self, stream_name: str, text: str) -> None:
+        if not text:
+            return
+        current = self._partials.get(stream_name, "") + text
+        parts = current.splitlines(keepends=True)
+        self._partials[stream_name] = ""
+        for part in parts:
+            if part.endswith(("\n", "\r")):
+                self._lines.append(f"[{stream_name}] {part.rstrip()}")
+            else:
+                self._partials[stream_name] = part
+
+    def snapshot(self) -> deque[str]:
+        lines = deque(self._lines, maxlen=self._lines.maxlen)
+        for stream_name in ("stdout", "stderr"):
+            partial = self._partials.get(stream_name, "")
+            if partial:
+                lines.append(f"[{stream_name}] {partial}")
+        return lines
 
 
 def build_validation_commands(output_dir: str = "release_ci") -> list[list[str]]:
@@ -79,7 +108,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _terminate_process(proc: subprocess.Popen[str]) -> None:
+def _terminate_process(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     try:
@@ -90,13 +119,60 @@ def _terminate_process(proc: subprocess.Popen[str]) -> None:
         proc.wait(timeout=5)
 
 
-def _print_timeout_tail(tail: deque[str], *, tail_lines: int) -> None:
-    if not tail:
+def _print_timeout_tail(tail: OutputTail, *, tail_lines: int) -> None:
+    lines = tail.snapshot()
+    if not lines:
         print("No output captured before timeout.", file=sys.stderr, flush=True)
         return
-    print(f"Last {min(len(tail), tail_lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
-    for line in tail:
-        print(line.rstrip("\n"), file=sys.stderr, flush=True)
+    print(f"Last {min(len(lines), tail_lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
+    for line in lines:
+        _write_text(sys.stderr, line + "\n")
+
+
+def _write_text(target: Any, text: str) -> None:
+    try:
+        target.write(text)
+        target.flush()
+    except UnicodeEncodeError:
+        encoding = getattr(target, "encoding", None) or STREAM_ENCODING
+        buffer = getattr(target, "buffer", None)
+        if buffer is None:
+            target.write(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+            target.flush()
+            return
+        buffer.write(text.encode(encoding, errors="replace"))
+        buffer.flush()
+
+
+def _reader_thread(stream_name: str, stream: BufferedReader, output_queue: queue.Queue[tuple[str, bytes | None]]) -> None:
+    try:
+        while True:
+            chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
+            if not chunk:
+                break
+            output_queue.put((stream_name, chunk))
+    finally:
+        output_queue.put((stream_name, None))
+
+
+def _drain_output_queue(
+    output_queue: queue.Queue[tuple[str, bytes | None]],
+    tail: OutputTail,
+    *,
+    closed: int,
+) -> int:
+    while True:
+        try:
+            stream_name, chunk = output_queue.get_nowait()
+        except queue.Empty:
+            return closed
+        if chunk is None:
+            closed += 1
+            continue
+        text = chunk.decode(STREAM_ENCODING, errors="replace")
+        tail.append(stream_name, text)
+        target = sys.stderr if stream_name == "stderr" else sys.stdout
+        _write_text(target, text)
 
 
 def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: int = DEFAULT_TIMEOUT_TAIL_LINES) -> int:
@@ -109,77 +185,47 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
         cwd=PROJECT_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
+        bufsize=0,
     )
     assert proc.stdout is not None
     assert proc.stderr is not None
 
-    tail: deque[str] = deque(maxlen=max(1, int(timeout_tail_lines)))
+    tail = OutputTail(max(1, int(timeout_tail_lines)))
+    output_queue: queue.Queue[tuple[str, bytes | None]] = queue.Queue()
+    threads = [
+        threading.Thread(target=_reader_thread, args=("stdout", proc.stdout, output_queue), daemon=True),
+        threading.Thread(target=_reader_thread, args=("stderr", proc.stderr, output_queue), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
 
-    if os.name == "nt":
-        # `selectors` cannot wait on Windows pipe handles. Reader threads keep
-        # stdout/stderr flowing so CI logs do not look stuck.
-        import queue
-        import threading
-
-        output_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
-
-        def reader(stream_name: str, stream: TextIO) -> None:
-            try:
-                for line in stream:
-                    output_queue.put((stream_name, line))
-            finally:
-                output_queue.put((stream_name, None))
-
-        threads = [
-            threading.Thread(target=reader, args=("stdout", proc.stdout), daemon=True),
-            threading.Thread(target=reader, args=("stderr", proc.stderr), daemon=True),
-        ]
-        for thread in threads:
-            thread.start()
-
-        closed = 0
-        while closed < 2:
-            if time.perf_counter() - started > timeout_seconds:
-                _terminate_process(proc)
-                duration = time.perf_counter() - started
-                print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
-                _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
-                return 124
-            try:
-                stream_name, line = output_queue.get(timeout=0.2)
-            except queue.Empty:
-                if proc.poll() is not None and not any(thread.is_alive() for thread in threads):
-                    break
-                continue
-            if line is None:
-                closed += 1
-                continue
-            tail.append(f"[{stream_name}] {line}")
-            target = sys.stderr if stream_name == "stderr" else sys.stdout
-            print(line, end="", file=target, flush=True)
-    else:
-        selector = selectors.DefaultSelector()
-        selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
-        selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
-        while selector.get_map():
-            if time.perf_counter() - started > timeout_seconds:
-                _terminate_process(proc)
-                duration = time.perf_counter() - started
-                print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
-                _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
-                return 124
-            for key, _events in selector.select(timeout=0.2):
-                stream_name = str(key.data)
-                stream = cast(TextIO, key.fileobj)
-                line = stream.readline()
-                if line:
-                    tail.append(f"[{stream_name}] {line}")
-                    target = sys.stderr if stream_name == "stderr" else sys.stdout
-                    print(line, end="", file=target, flush=True)
-                else:
-                    selector.unregister(key.fileobj)
+    closed = 0
+    deadline = started + max(0.1, float(timeout_seconds))
+    while closed < 2:
+        now = time.perf_counter()
+        if now >= deadline:
+            _terminate_process(proc)
+            for thread in threads:
+                thread.join(timeout=1)
+            closed = _drain_output_queue(output_queue, tail, closed=closed)
+            duration = time.perf_counter() - started
+            print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
+            _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
+            return 124
+        try:
+            stream_name, chunk = output_queue.get(timeout=min(0.05, max(0.0, deadline - now)))
+        except queue.Empty:
+            if proc.poll() is not None and not any(thread.is_alive() for thread in threads):
+                closed = _drain_output_queue(output_queue, tail, closed=closed)
+                break
+            continue
+        if chunk is None:
+            closed += 1
+            continue
+        text = chunk.decode(STREAM_ENCODING, errors="replace")
+        tail.append(stream_name, text)
+        target = sys.stderr if stream_name == "stderr" else sys.stdout
+        _write_text(target, text)
 
     returncode = int(proc.wait())
     duration = time.perf_counter() - started
