@@ -145,6 +145,100 @@ def test_render_search_handles_search_content_error(monkeypatch):
     assert errors
 
 
+def test_render_search_downloads_resolved_repo_file(monkeypatch, tmp_path: Path):
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    stored = repo / "safe.pdf"
+    stored.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    downloads: list[dict[str, object]] = []
+    warnings: list[str] = []
+
+    fake_st = SimpleNamespace(
+        header=_noop,
+        caption=_noop,
+        text_input=lambda *args, **kwargs: "invoice",
+        spinner=lambda *args, **kwargs: nullcontext(),
+        success=_noop,
+        expander=lambda *args, **kwargs: nullcontext(),
+        write=_noop,
+        warning=lambda value: warnings.append(str(value)),
+        download_button=lambda label, handle, **kwargs: downloads.append({"label": label, "data": handle.read(), **kwargs}),
+    )
+    monkeypatch.setattr(ui_search, "st", fake_st)
+
+    storage = SimpleNamespace(
+        repo_root=repo,
+        search_content=lambda _query: [{"file_id": 1, "original_name": "safe.pdf", "standard_date": "2026-05-17", "final_path": repo / "." / "safe.pdf"}],
+    )
+
+    ui_search.render_search(SimpleNamespace(storage=storage))
+
+    assert downloads and downloads[0]["data"] == b"%PDF-1.4\n%%EOF\n"
+    assert warnings == []
+
+
+def test_render_search_warns_when_download_file_missing(monkeypatch, tmp_path: Path):
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    warnings: list[str] = []
+    downloads: list[object] = []
+
+    fake_st = SimpleNamespace(
+        header=_noop,
+        caption=_noop,
+        text_input=lambda *args, **kwargs: "invoice",
+        spinner=lambda *args, **kwargs: nullcontext(),
+        success=_noop,
+        expander=lambda *args, **kwargs: nullcontext(),
+        write=_noop,
+        warning=lambda value: warnings.append(str(value)),
+        download_button=lambda *args, **kwargs: downloads.append(args),
+    )
+    monkeypatch.setattr(ui_search, "st", fake_st)
+
+    storage = SimpleNamespace(
+        repo_root=repo,
+        search_content=lambda _query: [{"file_id": 2, "original_name": "missing.pdf", "standard_date": "2026-05-17", "final_path": repo / "missing.pdf"}],
+    )
+
+    ui_search.render_search(SimpleNamespace(storage=storage))
+
+    assert any("no longer available" in warning for warning in warnings)
+    assert downloads == []
+
+
+def test_render_search_refuses_download_path_outside_repo(monkeypatch, tmp_path: Path):
+    repo = (tmp_path / "repo").resolve()
+    outside = (tmp_path / "outside.pdf").resolve()
+    repo.mkdir()
+    outside.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    warnings: list[str] = []
+    downloads: list[object] = []
+
+    fake_st = SimpleNamespace(
+        header=_noop,
+        caption=_noop,
+        text_input=lambda *args, **kwargs: "invoice",
+        spinner=lambda *args, **kwargs: nullcontext(),
+        success=_noop,
+        expander=lambda *args, **kwargs: nullcontext(),
+        write=_noop,
+        warning=lambda value: warnings.append(str(value)),
+        download_button=lambda *args, **kwargs: downloads.append(args),
+    )
+    monkeypatch.setattr(ui_search, "st", fake_st)
+
+    storage = SimpleNamespace(
+        repo_root=repo,
+        search_content=lambda _query: [{"file_id": 3, "original_name": "outside.pdf", "standard_date": "2026-05-17", "final_path": outside}],
+    )
+
+    ui_search.render_search(SimpleNamespace(storage=storage))
+
+    assert any("outside the repository" in warning for warning in warnings)
+    assert downloads == []
+
+
 def test_render_review_rejects_non_list_analysis_results(monkeypatch):
     errors: list[str] = []
     fake_st = SimpleNamespace(

@@ -11,6 +11,7 @@ from scripts.create_release_zip import (
     get_version,
     zip_contains_forbidden_entries,
 )
+from scripts.validate_release_source import run_step
 from scripts.verify_release_zip import resolve_zip_paths, verify_release_zip
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -146,3 +147,30 @@ def test_extracted_release_zip_smoke_imports_app_main(tmp_path: Path):
         cwd=extract_dir,
         check=True,
     )
+
+
+def test_validate_release_run_step_streams_success(capsys):
+    returncode = run_step(
+        [sys.executable, "-c", "print('release validation alive')"],
+        timeout_seconds=5,
+        timeout_tail_lines=5,
+    )
+
+    captured = capsys.readouterr()
+    assert returncode == 0
+    assert "START" in captured.out
+    assert "release validation alive" in captured.out
+    assert "END" in captured.out
+
+
+def test_validate_release_run_step_times_out_with_tail(capsys):
+    returncode = run_step(
+        [sys.executable, "-c", "import time; print('last visible line', flush=True); time.sleep(10)"],
+        timeout_seconds=1,
+        timeout_tail_lines=5,
+    )
+
+    captured = capsys.readouterr()
+    assert returncode == 124
+    assert "TIMEOUT" in captured.err
+    assert "last visible line" in captured.err

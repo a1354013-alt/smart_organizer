@@ -100,6 +100,25 @@ def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None)
     return subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
 
 
+def _sniff_video_container(file_path: str, *, max_bytes: int = 4096) -> tuple[bool, str | None]:
+    try:
+        with open(file_path, "rb") as handle:
+            header = handle.read(max(32, int(max_bytes)))
+    except Exception as exc:
+        return False, f"video container validation failed: {exc}"
+    if len(header) < 12:
+        return False, "video container validation failed: file is too small"
+    if header.startswith(b"\x1aE\xdf\xa3"):
+        return True, None
+    if header.startswith(b"RIFF") and header[8:12] in {b"AVI ", b"WEBP"}:
+        return True, None
+    if header[4:8] == b"ftyp":
+        return True, None
+    if header.startswith(b"OggS"):
+        return True, None
+    return False, "video container validation failed: signature does not match a supported video container"
+
+
 def _detect_ffmpeg_available() -> bool:
     if not shutil.which("ffprobe") or not shutil.which("ffmpeg"):
         return False
@@ -239,6 +258,26 @@ class FileProcessor:
                 notes.append(_warning_note("partial", "Video metadata and thumbnail were skipped because the file exceeds the heavy-file limit."))
                 video = {"media_type": "video"}
             else:
+                container_ok, container_error = _sniff_video_container(file_path)
+                if not container_ok:
+                    video = {
+                        "media_type": "video",
+                        "file_size": file_size_bytes,
+                        "ffprobe_error": container_error,
+                    }
+                    notes.append(_warning_note("partial", str(container_error or "video container validation failed")))
+                    notes.append(_warning_note("degraded", str(container_error or "video container validation failed")))
+                    invalid_video_metadata: ExtractedMetadata = {
+                        "file_type": file_type,
+                        "standard_date": FileUtils.normalize_standard_date(standard_date),
+                        "extracted_text": extracted_text or "",
+                        "is_scanned": bool(is_scanned),
+                        "preview_path": preview_path,
+                        "ocr_error": ocr_error,
+                        "notes": notes,
+                        "video": video,
+                    }
+                    return validate_extracted_metadata(invalid_video_metadata)
                 meta_timeout = int(options.get("video_metadata_timeout_seconds") or self.video_tool_timeout_seconds)
                 thumb_timeout = int(options.get("video_thumbnail_timeout_seconds") or self.video_tool_timeout_seconds)
 

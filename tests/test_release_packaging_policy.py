@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import subprocess
 import sys
 from pathlib import Path
 
@@ -133,11 +132,15 @@ def test_release_validation_timeout_reports_command(monkeypatch, capsys):
     def fake_build_validation_commands(output_dir: str = "release_ci") -> list[list[str]]:
         return [timed_out_command]
 
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+    def fake_run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: int) -> int:
+        assert command == timed_out_command
+        assert timeout_seconds > 0
+        assert timeout_tail_lines > 0
+        print("ERROR: command timed out after 180s: python -m mypy --cache-dir=/dev/null", file=sys.stderr)
+        return 124
 
     monkeypatch.setattr(validate_release_source, "build_validation_commands", fake_build_validation_commands)
-    monkeypatch.setattr(validate_release_source.subprocess, "run", fake_run)
+    monkeypatch.setattr(validate_release_source, "run_step", fake_run_step)
 
     assert validate_release_source.main([]) != 0
 

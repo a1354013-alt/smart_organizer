@@ -401,7 +401,20 @@ class StorageRepositoryMixin:
                 conn.close()
 
     def get_all_records(self: Any) -> list[dict[str, object]]:
-        return self.get_records_page(limit=500, offset=0)["items"]
+        records: list[dict[str, object]] = []
+        page_size = 500
+        offset = 0
+        while True:
+            page = self.get_records_page(limit=page_size, offset=offset)
+            items = list(page.get("items") or [])
+            records.extend(items)
+            total = int(page.get("total") or 0)
+            if not items or len(records) >= total:
+                return records
+            offset += page_size
+
+    def get_recent_records(self: Any, *, limit: int = 500) -> list[dict[str, object]]:
+        return self.get_records_page(limit=limit, offset=0)["items"]
 
     def get_record_filter_values(self: Any) -> dict[str, list[str]]:
         conn: sqlite3.Connection | None = None

@@ -12,6 +12,7 @@ from folder_models import (
     QUARANTINE_DIRNAME,
     ManifestCompatibilityError,
     QuarantineStatus,
+    describe_manifest_lock,
     load_manifest,
     quarantine_manifest_guard,
     quarantine_manifest_lock_path,
@@ -201,3 +202,19 @@ def test_manifest_guard_reports_stale_lock_file_clearly(tmp_path: Path):
         raise AssertionError("Expected stale lock acquisition to fail")
 
     assert lock_path.exists()
+
+
+def test_manifest_guard_writes_lock_owner_metadata(tmp_path: Path):
+    lock_path = quarantine_manifest_lock_path(tmp_path)
+    with quarantine_manifest_guard(tmp_path):
+        diagnostics = describe_manifest_lock(tmp_path)
+        metadata = diagnostics["metadata"]
+
+        assert lock_path.exists()
+        assert isinstance(metadata, dict)
+        assert metadata["pid"]
+        assert metadata["hostname"]
+        assert metadata["created_at"]
+        assert "command" in metadata
+
+    assert not lock_path.exists()

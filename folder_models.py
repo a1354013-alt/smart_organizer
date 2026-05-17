@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import socket
+import sys
 import threading
 import time
 from contextlib import contextmanager, suppress
@@ -265,6 +267,36 @@ def quarantine_manifest_lock_path(root: Path) -> Path:
     return quarantine_manifest_path(root).with_name(f"{QUARANTINE_MANIFEST}.lock")
 
 
+def build_manifest_lock_metadata() -> dict[str, object]:
+    return {
+        "pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "created_at": iso_now(),
+        "command": " ".join(sys.argv),
+    }
+
+
+def describe_manifest_lock(root: Path) -> dict[str, object]:
+    lock_path = quarantine_manifest_lock_path(root)
+    diagnostics: dict[str, object] = {
+        "lock_path": str(lock_path),
+        "exists": lock_path.exists(),
+        "metadata": {},
+        "raw": "",
+        "error": "",
+    }
+    if not lock_path.exists():
+        return diagnostics
+    try:
+        raw = lock_path.read_text(encoding="utf-8")
+        diagnostics["raw"] = raw
+        parsed = json.loads(raw or "{}")
+        diagnostics["metadata"] = parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        diagnostics["error"] = str(exc)
+    return diagnostics
+
+
 def object_list(value: object) -> list[object]:
     if isinstance(value, list):
         return value
@@ -348,15 +380,19 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
         while True:
             try:
                 handle_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                payload = json.dumps(build_manifest_lock_metadata(), ensure_ascii=False, indent=2).encode("utf-8")
+                os.write(handle_fd, payload)
                 with _MANIFEST_LOCKS:
                     _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, 1)
                 break
             except FileExistsError as exc:
                 if time.monotonic() >= deadline:
+                    lock_info = describe_manifest_lock(root)
                     raise ManifestCompatibilityError(
                         "Timed out waiting for manifest lock: "
                         f"{lock_path}. A previous run may have left a stale lock file. "
-                        "Do not remove the lock until you confirm no Smart Organizer process is using this folder."
+                        "Do not remove the lock until you confirm no Smart Organizer process is using this folder. "
+                        f"Lock owner info: {lock_info}"
                     ) from exc
                 time.sleep(max(0.01, float(poll_seconds)))
             except OSError as exc:

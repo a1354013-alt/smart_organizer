@@ -66,7 +66,7 @@ def test_image_metadata_and_ocr_fallback_for_corrupt_image(monkeypatch, tmp_path
 
 def test_video_ffprobe_and_thumbnail_failures_are_degraded_notes(monkeypatch, tmp_path: Path):
     video = tmp_path / "clip.mp4"
-    video.write_bytes(b"not a real video")
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
     monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: True)
 
     def fake_run(cmd, **kwargs):

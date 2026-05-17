@@ -138,3 +138,15 @@ def test_record_filter_values_reflect_loaded_history_states():
     assert "RESTORED" in values["status"]
     assert "QUARANTINED" in values["status"]
     assert values["main_topic"] == ["Archive"]
+
+
+def test_get_all_records_paginates_beyond_recent_limit():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    for index in range(505):
+        _create_record(storage, f"record-{index}.pdf", topic="Archive", summary=f"summary {index}")
+
+    all_records = storage.get_all_records()
+    recent_records = storage.get_recent_records(limit=500)
+
+    assert len(all_records) == 505
+    assert len(recent_records) == 500

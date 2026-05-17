@@ -193,3 +193,26 @@ def test_analyze_one_upload_infers_video_from_extension_without_video_mime(tmp_p
     stored = storage.get_file_by_id(analyzed.file_id)
     assert stored is not None
     assert stored["file_type"] == "video"
+
+
+def test_extract_metadata_rejects_fake_video_container_without_crashing(tmp_path: Path):
+    video_path = tmp_path / "fake.mp4"
+    video_path.write_bytes(b"this is not a video container")
+
+    metadata = FileProcessor().extract_metadata(str(video_path))
+
+    assert metadata["file_type"] == "video"
+    assert metadata["video"]["ffprobe_error"]
+    assert any("video container validation failed" in note for note in metadata["notes"])
+
+
+def test_extract_metadata_valid_video_container_falls_back_when_tools_unavailable(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
+    monkeypatch.setattr("core_processor.is_ffmpeg_available", lambda: False)
+
+    metadata = FileProcessor().extract_metadata(str(video_path))
+
+    assert metadata["file_type"] == "video"
+    assert metadata["video"]["ffprobe_error"] == "ffprobe is unavailable; video metadata could not be collected."
+    assert any("ffprobe is unavailable" in note for note in metadata["notes"])
