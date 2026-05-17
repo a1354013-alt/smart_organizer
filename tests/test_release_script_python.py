@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from scripts.create_release_zip import (
     zip_contains_forbidden_entries,
 )
 from scripts.verify_release_zip import resolve_zip_paths, verify_release_zip
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_python_release_script_builds_clean_zip(tmp_path):
@@ -79,3 +83,66 @@ def test_verify_release_zip_rejects_forbidden_and_extra_entries(tmp_path: Path):
         assert "forbidden paths" in str(exc)
     else:
         raise AssertionError("Expected forbidden zip entry to fail verification")
+
+
+def test_extracted_release_zip_smoke_imports_app_main(tmp_path: Path):
+    output_dir = tmp_path / "release"
+    extract_dir = tmp_path / "extracted"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "create_release_zip.py"),
+            "--output-dir",
+            str(output_dir),
+            "--zip-name",
+            "smart-organizer-runtime-demo.zip",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+
+    zip_path = output_dir / "smart-organizer-runtime-demo.zip"
+    assert zip_path.exists()
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+        archive.extractall(extract_dir)
+
+    forbidden_roots = {
+        ".github",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "build",
+        "dist",
+        "htmlcov",
+        "logs",
+        "node_modules",
+        "previews",
+        "repo",
+        "release",
+        "tests",
+        "tmp",
+        "uploads",
+        "venv",
+    }
+    forbidden_suffixes = (".db", ".sqlite", ".sqlite3", ".pyc")
+    required_files = {
+        "app.py",
+        "app_main.py",
+        "requirements.txt",
+        "RUN_RELEASE.md",
+    }
+
+    assert required_files.issubset(names)
+    assert not any(Path(name).parts[0] in forbidden_roots for name in names)
+    assert not any(name.endswith(forbidden_suffixes) for name in names)
+
+    subprocess.run(
+        [sys.executable, "-c", "import app_main"],
+        cwd=extract_dir,
+        check=True,
+    )

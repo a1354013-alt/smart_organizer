@@ -30,7 +30,7 @@ The project also includes a separate upload-review workflow for supported PDFs, 
 ## Testing Strategy
 
 - Unit tests cover folder containment, restore safety, async cancellation, metadata extraction fallbacks, records search, release packaging policy, and UI smoke imports.
-- Validation commands include `compileall`, `ruff`, `mypy`, `pytest`, and release zip creation.
+- `scripts/validate_release_source.py` centralizes `safe_compileall`, `ruff --no-cache`, `mypy --cache-dir=/dev/null`, `pytest`, release zip creation, release zip verification, and the workspace-cleanliness check.
 - Release packaging is allowlist-based so runtime bundles stay explicit and reproducible.
 
 ## Known Limitations

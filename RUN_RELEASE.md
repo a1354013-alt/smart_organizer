@@ -119,6 +119,8 @@ sequence.
 python scripts/validate_release_source.py
 ```
 
+This command is only available in the source repository and is not included in the extracted runtime/demo zip.
+
 The validation script runs cache-safe checks, including `ruff check --no-cache`
 and `mypy --cache-dir=/dev/null`, then verifies the release zip and workspace
 cleanliness.

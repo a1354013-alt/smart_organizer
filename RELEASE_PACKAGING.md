@@ -81,6 +81,8 @@ Run the full source-repository validation sequence before publishing:
 python scripts/validate_release_source.py
 ```
 
+This command is only available in the source repository and is not included in the extracted runtime/demo zip.
+
 Do not use the standard-library compileall module directly for release validation because
 it can leave `__pycache__` directories in the workspace.
 The validation script also runs cache-safe `ruff check --no-cache` and
