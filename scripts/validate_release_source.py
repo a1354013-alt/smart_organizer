@@ -145,12 +145,23 @@ def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
             proc.kill()
 
 
+def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
+    if proc.poll() is not None:
+        return
+    subprocess.run(
+        ["taskkill", "/T", "/PID", str(proc.pid)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
 def _terminate_process(proc: subprocess.Popen[Any], *, deadline: float) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
         with suppress(Exception):
-            proc.terminate()
+            _terminate_process_tree_windows(proc)
     else:
         killpg = getattr(os, "killpg", None)
         if killpg is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import core_processor
@@ -10,9 +11,18 @@ from ui_home import (
     cache_dependency_status,
     get_cached_dependency_status,
     refresh_dependency_status,
+    render_home,
     summarize_recommendations,
 )
 from ui_labels import recommendation_display_label
+
+
+class _Column:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
 
 
 def test_dependency_status_cache_starts_empty():
@@ -26,9 +36,7 @@ def test_refresh_dependency_status_calls_processor_once_and_caches(monkeypatch):
     captured: list[str] = []
     session_state: dict[str, object] = {}
     context = SimpleNamespace(
-        processor=SimpleNamespace(
-            get_dependency_status=lambda: captured.append("called") or {"system": {"ffmpeg": True}}
-        )
+        processor=SimpleNamespace(get_dependency_status=lambda: {"system": {"ffmpeg": captured.append("called") is None}})
     )
 
     monkeypatch.setattr("ui_home.st.session_state", session_state)
@@ -57,11 +65,7 @@ def test_file_processor_dependency_status_checks_ffmpeg_lazily(monkeypatch):
     processor = FileProcessor()
 
     monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", None)
-    monkeypatch.setattr(
-        core_processor,
-        "_detect_ffmpeg_available",
-        lambda: calls.append(True) or True,
-    )
+    monkeypatch.setattr(core_processor, "_detect_ffmpeg_available", lambda: calls.append(True) or True)
 
     assert calls == []
 
@@ -93,3 +97,72 @@ def test_recommendation_display_label_keeps_data_contract_and_localizes_ui_text(
     assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == "需要人工確認"
     assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == "不要操作"
     assert recommendation_display_label("Custom label") == "Custom label"
+
+
+def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
+    metric_values: list[tuple[str, object]] = []
+    session_state = {
+        "folder_scan_current": {
+            "path": "C:/scan",
+            "records": [
+                {"name": "keep.txt", "path": "C:/scan/keep.txt", "candidate_reasons": []},
+                {"name": "candidate-a.txt", "path": "C:/scan/candidate-a.txt", "candidate_reasons": ["stale"], "size_bytes": 1},
+                {"name": "candidate-b.txt", "path": "C:/scan/candidate-b.txt", "candidate_reasons": ["large"], "size_bytes": 2},
+            ],
+            "stats": {
+                "scanned_files": 3,
+                "total_bytes": 3,
+                "stale_candidates": 1,
+                "large_candidates": 1,
+            },
+            "errors": [],
+        },
+        "folder_scan_options": {
+            "stale_days": 30,
+            "recursive": True,
+            "max_files": 100,
+            "large_file_bytes": 1024,
+        },
+        "folder_scan_path": "C:/scan",
+    }
+
+    fake_st = SimpleNamespace(
+        session_state=session_state,
+        markdown=lambda *args, **kwargs: None,
+        info=lambda *args, **kwargs: None,
+        columns=lambda spec, **kwargs: [_Column() for _ in range(spec if isinstance(spec, int) else len(spec))],
+        text_input=lambda *args, **kwargs: "C:/scan",
+        button=lambda *args, **kwargs: False,
+        progress=lambda *args, **kwargs: SimpleNamespace(progress=lambda value: None),
+        empty=lambda: SimpleNamespace(text=lambda value: None),
+        expander=lambda *args, **kwargs: nullcontext(),
+        write=lambda *args, **kwargs: None,
+        subheader=lambda *args, **kwargs: None,
+        checkbox=lambda *args, **kwargs: False,
+        download_button=lambda *args, **kwargs: None,
+        code=lambda *args, **kwargs: None,
+        dataframe=lambda *args, **kwargs: None,
+        multiselect=lambda *args, **kwargs: [],
+        divider=lambda: None,
+        caption=lambda *args, **kwargs: None,
+    )
+
+    monkeypatch.setattr("ui_home.st", fake_st)
+    monkeypatch.setattr("ui_home.card_open", lambda *args, **kwargs: None)
+    monkeypatch.setattr("ui_home.card_close", lambda *args, **kwargs: None)
+    monkeypatch.setattr("ui_home.get_quarantine_items_safe", lambda _path: ([], []))
+    monkeypatch.setattr("ui_home._render_candidate_editor", lambda _context, candidates: [str(item["path"]) for item in candidates])
+    monkeypatch.setattr("ui_home._render_operation_results", lambda _result: None)
+    monkeypatch.setattr("ui_home.resolve_report_inputs", lambda current_scan, report_snapshot, operation_result: (current_scan, operation_result))
+    monkeypatch.setattr("ui_home.export_folder_report_markdown", lambda *_args, **_kwargs: "report")
+    monkeypatch.setattr("ui_home.export_folder_report_csv", lambda *_args, **_kwargs: b"csv")
+    monkeypatch.setattr(
+        "ui_home.render_safe_html_text",
+        lambda css_class, value, max_chars=200: metric_values.append((css_class, value)),
+    )
+
+    context = SimpleNamespace(storage=SimpleNamespace(path_exists=lambda path: False), processor=SimpleNamespace())
+    render_home(context)
+
+    candidate_metrics = [value for css_class, value in metric_values if css_class == "status-metric"]
+    assert 2 in candidate_metrics

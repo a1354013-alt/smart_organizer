@@ -212,7 +212,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--output-dir",
-        default="dist",
+        default="release_ci",
         help="Directory where the release zip will be written.",
     )
     parser.add_argument(

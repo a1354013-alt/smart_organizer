@@ -58,7 +58,7 @@ class StorageSearchMixin:
                         f.summary,
                         f.final_path,
                         f.created_at,
-                        snippet(file_content_fts, 3, '<b>', '</b>', '...', 20) as snippet,
+                        snippet(file_content_fts, 3, '', '', '...', 20) as snippet,
                         bm25(file_content_fts) as fts_rank
                     FROM file_content_fts
                     JOIN files f ON file_content_fts.rowid = f.file_id

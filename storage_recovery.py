@@ -14,11 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class StorageRecoveryMixin:
+    def _require_file_info(self: Any, file_id: int, file_info: dict[str, object] | None) -> dict[str, object]:
+        if file_info is None:
+            raise FileNotFoundError(f"file record not found for file_id={file_id}")
+        return file_info
+
     def _recover_moving_file(self: Any, file_id: int, file_info: dict[str, object]):
         if file_info.get("status") != "MOVING" or not file_info.get("moving_target_path"):
             return None
 
-        moving_target = file_info["moving_target_path"]
+        moving_target = str(file_info["moving_target_path"])
         temp_path = file_info.get("temp_path")
         temp_exists = bool(temp_path and self._path_exists(temp_path))
         target_exists = self._path_exists(moving_target)
@@ -27,7 +32,7 @@ class StorageRecoveryMixin:
         conn: sqlite3.Connection | None = None
         try:
             if target_exists and not temp_exists:
-                logger.info("偵測到 Recovery: 檔案已搬移成功但 DB 未更新 (file_id=%s)", file_id)
+                logger.info("Recovery completed move using existing target%s", _log_context(file_id=file_id, target=moving_target))
                 conn = self._get_connection()
                 conn.execute(
                     """
@@ -38,30 +43,24 @@ class StorageRecoveryMixin:
                 )
                 conn.commit()
                 return moving_target
+
             if temp_exists:
+                cleanup_failed = False
                 if target_exists:
-                    logger.warning(
-                        "偵測到異常狀態: 來源與目標同時存在 (file_id=%s)，嘗試清理目標殘留後回退至 PROCESSED 供重新檢查",
-                        file_id,
-                    )
-                    cleanup_failed = False
+                    logger.warning("Recovery found both temp and target; removing leftover target%s", _log_context(file_id=file_id, target=moving_target))
                     try:
                         self._remove_path(moving_target)
-                        logger.warning("Recovery 已清理目標殘留 (file_id=%s): %s", file_id, moving_target)
                     except Exception:
                         cleanup_failed = True
-                        logger.warning(
-                            "Recovery 清理目標殘留失敗 (file_id=%s): %s",
-                            file_id,
-                            moving_target,
-                            exc_info=True,
-                        )
+                        logger.warning("Recovery failed to remove leftover target%s", _log_context(file_id=file_id, target=moving_target), exc_info=True)
                 else:
-                    logger.info("偵測到 Recovery: 搬移中斷且目標不存在，回退狀態 (file_id=%s)", file_id)
+                    logger.info("Recovery reset MOVING file back to PROCESSED%s", _log_context(file_id=file_id))
 
                 conn = self._get_connection()
                 if target_exists and cleanup_failed:
-                    diag = self._recovery_diag(f"目標殘留清理失敗（請人工處理）：{Path(str(moving_target)).name}")
+                    diag = self._recovery_diag(
+                        f"target cleanup failed (清理失敗); remove manually: {Path(moving_target).name}"
+                    )
                     merged = self._merge_last_error(existing_last_error, diag)
                     conn.execute(
                         "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
@@ -73,19 +72,22 @@ class StorageRecoveryMixin:
                         (file_id,),
                     )
                 conn.commit()
-            else:
-                logger.warning("偵測到嚴重異常: 來源與目標皆不存在 (file_id=%s)，強制回退狀態", file_id)
-                conn = self._get_connection()
-                diag = self._recovery_diag("來源與目標皆不存在（可能檔案遺失或被移除），已回退 PROCESSED 供重試/修復")
-                merged = self._merge_last_error(existing_last_error, diag)
-                conn.execute(
-                    "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
-                    (merged, file_id),
-                )
-                conn.commit()
+                return None
+
+            logger.warning("Recovery found MOVING record without source or target%s", _log_context(file_id=file_id))
+            conn = self._get_connection()
+            diag = self._recovery_diag(
+                "source and target are both missing; status reset to PROCESSED for retry"
+            )
+            merged = self._merge_last_error(existing_last_error, diag)
+            conn.execute(
+                "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                (merged, file_id),
+            )
+            conn.commit()
             return None
-        except Exception as e:
-            logger.error("Recovery 執行失敗 (ID: %s): %s", file_id, e)
+        except Exception as exc:
+            logger.error("Recovery failed%s: %s", _log_context(file_id=file_id), exc)
             return None
         finally:
             if conn:
@@ -93,9 +95,7 @@ class StorageRecoveryMixin:
 
     def finalize_organization(self: Any, file_id: int, standard_date: str, main_topic: str, original_name: str):
         try:
-            file_info = self.get_file_by_id(file_id)
-            if not file_info:
-                raise ValueError(f"找不到檔案 ID: {file_id}")
+            file_info = self._require_file_info(file_id, self.get_file_by_id(file_id))
 
             if (
                 file_info.get("status") == "COMPLETED"
@@ -108,8 +108,7 @@ class StorageRecoveryMixin:
             if recovered_path:
                 return recovered_path
 
-            file_info = self.get_file_by_id(file_id)
-
+            file_info = self._require_file_info(file_id, self.get_file_by_id(file_id))
             normalized_date, year, month = FileUtils.get_date_directory_parts(standard_date)
 
             target_dir = self.repo_root / year / month
@@ -139,10 +138,9 @@ class StorageRecoveryMixin:
             else:
                 target_path = str(FileUtils.get_unique_path(target_dir / final_name))
 
-            if not file_info["temp_path"] or not self._path_exists(file_info["temp_path"]):
-                raise FileNotFoundError(f"找不到暫存檔案: {file_info.get('temp_path')}")
-
-            temp_path = file_info["temp_path"]
+            temp_path = file_info.get("temp_path")
+            if not temp_path or not self._path_exists(temp_path):
+                raise FileNotFoundError(f"temporary file missing: {temp_path}")
 
             conn = self._get_connection()
             try:
@@ -153,19 +151,18 @@ class StorageRecoveryMixin:
                 conn.commit()
 
                 try:
-                    self._move_path(temp_path, target_path)
-                except PermissionError as move_err:
-                    logger.warning("搬移權限不足，改用 copy (file_id=%s): %s", file_id, move_err)
+                    self._move_path(str(temp_path), target_path)
+                except PermissionError:
+                    logger.warning("Move failed; using copy fallback%s", _log_context(file_id=file_id, target=target_path))
                     try:
-                        self._copy_path(temp_path, target_path)
+                        self._copy_path(str(temp_path), target_path)
                     except Exception as copy_err:
-                        logger.error("copy fallback 失敗", exc_info=True)
+                        logger.error("Copy fallback failed%s", _log_context(file_id=file_id, target=target_path), exc_info=True)
                         if self._path_exists(target_path):
                             try:
                                 self._remove_path(target_path)
-                                logger.warning("已清理 partial target (file_id=%s): %s", file_id, target_path)
                             except Exception:
-                                logger.warning("清理 partial target 失敗（忽略）", exc_info=True)
+                                logger.warning("Failed to remove partial target%s", _log_context(file_id=file_id, target=target_path), exc_info=True)
 
                         msg = str(copy_err)
                         if len(msg) > 400:
@@ -177,7 +174,7 @@ class StorageRecoveryMixin:
                         conn.commit()
                         raise copy_err
                     with suppress(Exception):
-                        self._remove_path(temp_path)
+                        self._remove_path(str(temp_path))
                 except Exception as move_err:
                     if not self._path_exists(target_path):
                         msg = str(move_err)
@@ -211,12 +208,12 @@ class StorageRecoveryMixin:
                 return target_path
             finally:
                 conn.close()
-        except Exception as e:
-            logger.error("整理檔案失敗 (file_id=%s): %s", file_id, e)
+        except Exception as exc:
+            logger.error("finalize_organization failed%s: %s", _log_context(file_id=file_id), exc)
             try:
                 conn2 = self._get_connection()
                 try:
-                    msg = str(e)
+                    msg = str(exc)
                     if len(msg) > 400:
                         msg = msg[:400] + "..."
                     conn2.execute("UPDATE files SET last_error = ? WHERE file_id = ?", (msg, file_id))
@@ -224,5 +221,5 @@ class StorageRecoveryMixin:
                 finally:
                     conn2.close()
             except Exception:
-                logger.warning("寫入 last_error 失敗（忽略，不影響主流程）", exc_info=True)
+                logger.warning("Failed to persist last_error%s", _log_context(file_id=file_id), exc_info=True)
             raise

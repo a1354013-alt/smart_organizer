@@ -62,10 +62,10 @@ def test_scan_local_folder_reports_permission_denied_without_stopping(monkeypatc
     blocked.write_text("blocked", encoding="utf-8")
     original_stat = Path.stat
 
-    def fake_stat(self: Path):
+    def fake_stat(self: Path, *args, **kwargs):
         if self == blocked:
             raise PermissionError("blocked for test")
-        return original_stat(self)
+        return original_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", fake_stat)
 
@@ -79,10 +79,10 @@ def test_scan_local_folder_reports_permission_denied_without_stopping(monkeypatc
 def test_scan_local_folder_rejects_permission_denied_root(monkeypatch, tmp_path: Path):
     original_stat = Path.stat
 
-    def fake_stat(self: Path):
+    def fake_stat(self: Path, *args, **kwargs):
         if self == tmp_path:
             raise PermissionError("blocked root")
-        return original_stat(self)
+        return original_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", fake_stat)
 

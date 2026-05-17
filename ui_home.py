@@ -343,11 +343,13 @@ def render_home(context: UIContext) -> None:
             stats_obj = scan.get("stats")
             stats = cast(dict[str, object], stats_obj) if isinstance(stats_obj, dict) else {}
             quarantine_items, scan_quarantine_warnings = get_quarantine_items_safe(str(scan.get("path") or ""))
+            records = [item for item in cast(list[object], scan.get("records") or []) if isinstance(item, dict)]
+            candidates = [item for item in records if item.get("candidate_reasons")]
 
             metric_cols = st.columns(6)
             metrics = [
                 (stats.get("scanned_files", 0), "Scanned files"),
-                (len(cast(list[object], scan.get("records") or [])), "Candidate view"),
+                (len(candidates), "Candidates"),
                 (human_bytes(safe_int(stats.get("total_bytes"))), "Total size"),
                 (stats.get("stale_candidates", 0), "Stale candidates"),
                 (stats.get("large_candidates", 0), "Large file candidates"),
@@ -368,8 +370,6 @@ def render_home(context: UIContext) -> None:
                     for message in errors[:50]:
                         st.write(f"- {safe_display_text(message)}")
 
-            records = [item for item in cast(list[object], scan.get("records") or []) if isinstance(item, dict)]
-            candidates = [item for item in records if item.get("candidate_reasons")]
             st.markdown("**Before / after summary**")
             restored_summary_obj = cast(dict[str, object], (st.session_state.get(SESSION_FOLDER_RESTORE_RESULT) or {}).get("summary", {}) if isinstance(st.session_state.get(SESSION_FOLDER_RESTORE_RESULT), dict) else {})
             operation_summary_obj = cast(dict[str, object], (st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT) or {}).get("summary", {}) if isinstance(st.session_state.get(SESSION_FOLDER_LAST_OPERATION_RESULT), dict) else {})

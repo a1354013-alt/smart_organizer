@@ -2,6 +2,7 @@ import hashlib
 import os
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -146,3 +147,83 @@ def test_get_records_page_escapes_like_wildcards():
     assert [item["original_name"] for item in percent_hits["items"]] == ["100%complete.pdf"]
     assert [item["original_name"] for item in underscore_hits["items"]] == ["under_score.pdf"]
     assert [item["original_name"] for item in keyword_hits["items"]] == ["ordinary.pdf"]
+
+
+def test_search_content_returns_plain_text_snippets_without_html_tags():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+
+    payload = _minimal_pdf_bytes()
+    res = storage.create_temp_file("invoice.pdf", payload, _sha256(payload + b"plain"), "document")
+    file_id = res["file_id"]
+
+    storage.update_file_metadata(file_id, {
+        "standard_date": "2026-04-08",
+        "main_topic": "Invoices",
+        "summary": "invoice summary",
+        "content": "alpha invoice beta",
+        "is_scanned": False,
+        "preview_path": None,
+        "classification_reason": "test",
+        "tag_scores": {"Invoices": 1.0},
+    })
+
+    hits = storage.search_content("invoice")
+    assert hits
+    snippet = str(hits[0].get("snippet") or "")
+    assert "<b>" not in snippet
+    assert "</b>" not in snippet
+    assert "<mark>" not in snippet
+
+
+class _FailingInsertCursor:
+    def __init__(self, real_cursor: sqlite3.Cursor) -> None:
+        self._real = real_cursor
+
+    def execute(self, sql: str, params: Iterable[object] = ()) -> sqlite3.Cursor:
+        if "INSERT INTO files" in sql:
+            raise sqlite3.OperationalError("forced insert failure")
+        return self._real.execute(sql, tuple(params))
+
+    def fetchone(self):
+        return self._real.fetchone()
+
+    @property
+    def lastrowid(self) -> int:
+        return int(self._real.lastrowid or 0)
+
+
+class _FailingInsertConnection:
+    def __init__(self, real_conn: sqlite3.Connection) -> None:
+        self._real = real_conn
+
+    def cursor(self) -> _FailingInsertCursor:
+        return _FailingInsertCursor(self._real.cursor())
+
+    def rollback(self) -> None:
+        self._real.rollback()
+
+    def commit(self) -> None:
+        self._real.commit()
+
+    def close(self) -> None:
+        self._real.close()
+
+
+def test_create_temp_file_cleans_orphan_temp_file_when_db_insert_fails(tmp_path: Path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    repo_root = str(tmp_path / "repo")
+    upload_dir = str(tmp_path / "uploads")
+    storage = StorageManager(db_path, repo_root, upload_dir)
+    real_get_connection = storage._get_connection
+
+    def failing_get_connection(*args, **kwargs):
+        return _FailingInsertConnection(real_get_connection(*args, **kwargs))
+
+    monkeypatch.setattr(storage, "_get_connection", failing_get_connection)
+
+    payload = _minimal_pdf_bytes()
+    file_hash = _sha256(payload + b"dbfail")
+    result = storage.create_temp_file("broken.pdf", payload, file_hash, "document")
+
+    assert result["success"] is False
+    assert list(Path(upload_dir).glob("*broken.pdf")) == []

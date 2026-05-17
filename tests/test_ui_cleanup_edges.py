@@ -91,9 +91,40 @@ def test_render_execute_resets_review_state_after_finalize(monkeypatch):
     status = _TextRecorder()
     successes: list[str] = []
     errors: list[str] = []
+    infos: list[str] = []
+    warnings: list[str] = []
     reset_calls: list[bool] = []
     session_state = _SessionState({
-        "confirmed_results": ["placeholder"],
+        "confirmed_results": [
+            AnalysisResult(
+                file_id=1,
+                original_name="a.pdf",
+                file_type="document",
+                standard_date="2026-01-01",
+                main_topic="Docs",
+                suggested_main_topic="Docs",
+                tag_scores={"Docs": 1.0},
+                classification_reason="rule",
+                final_decision_reason="reviewed",
+                metadata={"file_type": "document", "standard_date": "2026-01-01", "extracted_text": "", "is_scanned": False, "preview_path": None, "ocr_error": None, "notes": []},
+                preview_path=None,
+                is_scanned=False,
+            ),
+            AnalysisResult(
+                file_id=2,
+                original_name="b.pdf",
+                file_type="document",
+                standard_date="2026-01-01",
+                main_topic="Docs",
+                suggested_main_topic="Docs",
+                tag_scores={"Docs": 1.0},
+                classification_reason="rule",
+                final_decision_reason="reviewed",
+                metadata={"file_type": "document", "standard_date": "2026-01-01", "extracted_text": "", "is_scanned": False, "preview_path": None, "ocr_error": None, "notes": []},
+                preview_path=None,
+                is_scanned=False,
+            ),
+        ],
         "analysis_results": ["old-analysis"],
     })
     fake_st = SimpleNamespace(
@@ -104,6 +135,8 @@ def test_render_execute_resets_review_state_after_finalize(monkeypatch):
         empty=lambda: status,
         success=lambda value: successes.append(str(value)),
         error=lambda value: errors.append(str(value)),
+        info=lambda value: infos.append(str(value)),
+        warning=lambda value: warnings.append(str(value)),
     )
     monkeypatch.setattr(ui_execute, "st", fake_st)
     monkeypatch.setattr(
@@ -120,13 +153,15 @@ def test_render_execute_resets_review_state_after_finalize(monkeypatch):
     ui_execute.render_execute(SimpleNamespace(storage=object()))
 
     assert progress.values[-1] == 1.0
-    assert status.messages[-1] == "Organization completed."
+    assert status.messages[-1] == "Organization completed with retryable failures."
     assert session_state["analysis_results"] == []
-    assert session_state["confirmed_results"] == []
+    assert [item.file_id for item in session_state["confirmed_results"]] == [2]
     assert session_state["execution_results"][0].status == "SUCCESS"
     assert reset_calls == [True]
     assert any("a.pdf -> /repo/a.pdf" in message for message in successes)
     assert any("b.pdf failed: disk full" in message for message in errors)
+    assert any("Kept 1 failed item" in message for message in warnings)
+    assert any("Retry ready: b.pdf" in message for message in infos)
 
 
 def test_render_search_handles_search_content_error(monkeypatch):

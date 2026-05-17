@@ -1,5 +1,7 @@
 import hashlib
 
+import pytest
+
 from storage import StorageManager
 
 
@@ -20,7 +22,6 @@ def test_recover_double_missing_writes_diagnostic_last_error():
     assert res["success"] is True
     file_id = res["file_id"]
 
-    # 模擬 MOVING 狀態，但來源與目標都不存在（雙失蹤）
     missing_temp = "mem://uploads/missing.pdf"
     missing_target = "mem://repo/2026/04/missing_target.pdf"
 
@@ -43,7 +44,28 @@ def test_recover_double_missing_writes_diagnostic_last_error():
     assert info2["status"] == "PROCESSED"
     assert info2.get("moving_target_path") in (None, "")
 
-    le = info2.get("last_error") or ""
-    assert "previous error" in le
-    assert "Recovery:" in le
-    assert "來源與目標皆不存在" in le
+    last_error = str(info2.get("last_error") or "")
+    assert "previous error" in last_error
+    assert "Recovery:" in last_error
+    assert "missing" in last_error.lower()
+
+
+def test_finalize_organization_raises_clear_error_when_record_disappears(monkeypatch):
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+
+    payload = _minimal_pdf_bytes()
+    created = storage.create_temp_file("x.pdf", payload, "hash-missing-record", "document")
+    file_id = int(created["file_id"])
+    original_get_file_by_id = storage.get_file_by_id
+    calls = {"count": 0}
+
+    def flaky_get_file_by_id(target_file_id: int):
+        calls["count"] += 1
+        if calls["count"] >= 2 and target_file_id == file_id:
+            return None
+        return original_get_file_by_id(target_file_id)
+
+    monkeypatch.setattr(storage, "get_file_by_id", flaky_get_file_by_id)
+
+    with pytest.raises(FileNotFoundError, match=f"file_id={file_id}"):
+        storage.finalize_organization(file_id, "2026-04-08", "Docs", "x.pdf")

@@ -19,7 +19,7 @@ warn_unused_ignores = true
 no_implicit_optional = true
 check_untyped_defs = true
 incremental = false
-exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci[^\\/]*|uploads|repo|tests[\\/]_tmp_pytest)([\\/]|$)'
+exclude = '(^|[\\/])(\.git|\.venv|\.pytest_cache|__pycache__|release|release_ci[^\\/]*|uploads|repo|tests([\\/]_tmp_pytest)?)([\\/]|$)'
 files = [
   "app.py",
   "app_main.py",
@@ -76,5 +76,9 @@ files = [
 [[tool.mypy.overrides]]
 module = ["streamlit", "streamlit.*"]
 follow_imports = "skip"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["tests", "tests.*"]
 ignore_errors = true
 

@@ -50,15 +50,26 @@ def resolve_zip_paths(zip_path_arg: str) -> list[Path]:
     return matches
 
 
+def default_zip_path_arg() -> str:
+    candidates: list[Path] = []
+    for pattern in ("release_ci/*.zip", "dist/*.zip"):
+        candidates.extend(Path(value) for value in glob.glob(str(PROJECT_ROOT / pattern)))
+    if not candidates:
+        raise FileNotFoundError("No release zip found in release_ci/ or dist/.")
+    latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    return str(latest)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify Smart Organizer release zip policy.")
-    parser.add_argument("zip_path", help="Path to release zip.")
+    parser.add_argument("zip_path", nargs="?", default="", help="Path to release zip.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    matched_paths = resolve_zip_paths(args.zip_path)
+    zip_path_arg = str(args.zip_path or "").strip() or default_zip_path_arg()
+    matched_paths = resolve_zip_paths(zip_path_arg)
     for zip_path in matched_paths:
         verify_release_zip(zip_path)
         print(f"Release zip verified: {zip_path.resolve()}")

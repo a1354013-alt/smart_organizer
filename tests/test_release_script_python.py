@@ -14,7 +14,7 @@ from scripts.create_release_zip import (
     zip_contains_forbidden_entries,
 )
 from scripts.validate_release_source import run_step
-from scripts.verify_release_zip import resolve_zip_paths, verify_release_zip
+from scripts.verify_release_zip import default_zip_path_arg, resolve_zip_paths, verify_release_zip
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -88,6 +88,23 @@ def test_verify_release_zip_expands_glob_patterns(tmp_path):
     matches = resolve_zip_paths(str(tmp_path / "*.zip"))
 
     assert matches == [zip_path]
+
+
+def test_verify_release_zip_default_path_picks_latest_release_ci_zip(monkeypatch, tmp_path: Path):
+    release_dir = tmp_path / "release_ci"
+    dist_dir = tmp_path / "dist"
+    release_dir.mkdir()
+    dist_dir.mkdir()
+    older = dist_dir / "older.zip"
+    newer = release_dir / "newer.zip"
+    older.write_bytes(b"old")
+    newer.write_bytes(b"new")
+    os.utime(older, (time.time() - 60, time.time() - 60))
+    os.utime(newer, None)
+
+    monkeypatch.setattr("scripts.verify_release_zip.PROJECT_ROOT", tmp_path)
+
+    assert Path(default_zip_path_arg()) == newer
 
 
 def test_verify_release_zip_rejects_forbidden_and_extra_entries(tmp_path: Path):
@@ -246,15 +263,46 @@ def test_validate_release_run_step_timeout_tail_keeps_flushed_partial_stdout_and
 
 
 def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_path: Path):
-    pid_file = tmp_path / "child.pid"
+    parent_pid_file = tmp_path / "parent.pid"
+    child_pid_file = tmp_path / "child.pid"
+    child_script = tmp_path / "child_sleep.py"
+    child_script.write_text(
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n"
+        "import time\n"
+        "\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8')\n"
+        "time.sleep(10)\n",
+        encoding="utf-8",
+    )
+    parent_script = tmp_path / "parent_spawn.py"
+    parent_script.write_text(
+        "import os\n"
+        "import pathlib\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "\n"
+        "parent_path = pathlib.Path(sys.argv[1])\n"
+        "child_path = pathlib.Path(sys.argv[2])\n"
+        "child_script = pathlib.Path(sys.argv[3])\n"
+        "subprocess.Popen([sys.executable, str(child_script), str(child_path)])\n"
+        "deadline = time.monotonic() + 5\n"
+        "while (not child_path.exists()) and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n"
+        "if not child_path.exists():\n"
+        "    raise RuntimeError('child pid file was not created')\n"
+        "parent_path.write_text(str(os.getpid()), encoding='utf-8')\n"
+        "time.sleep(10)\n",
+        encoding="utf-8",
+    )
     command = [
         sys.executable,
-        "-c",
-        (
-            "import os, pathlib, time; "
-            f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()), encoding='utf-8'); "
-            "time.sleep(10)"
-        ),
+        str(parent_script),
+        str(parent_pid_file),
+        str(child_pid_file),
+        str(child_script),
     ]
 
     returncode = run_step(command, timeout_seconds=1, timeout_tail_lines=5)
@@ -262,8 +310,10 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
     captured = capsys.readouterr()
     assert returncode == 124
     assert "TIMEOUT" in captured.err
-    assert pid_file.exists()
-    assert not _pid_exists(int(pid_file.read_text(encoding="utf-8")))
+    assert parent_pid_file.exists()
+    assert child_pid_file.exists()
+    assert not _pid_exists(int(parent_pid_file.read_text(encoding="utf-8")))
+    assert not _pid_exists(int(child_pid_file.read_text(encoding="utf-8")))
 
 
 def test_validate_release_run_step_collects_success_stdout_and_stderr(capsys):

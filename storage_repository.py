@@ -119,6 +119,7 @@ class StorageRepositoryMixin:
         temp_path: str | Path | None = None
         part_path: Path | None = None
         conn: sqlite3.Connection | None = None
+        temp_created = False
         try:
             original_name, safe_name, payload = self._validate_upload(uploaded_file_name, file_content)
             final_file_type = self._infer_file_type(original_name, file_type)
@@ -150,16 +151,19 @@ class StorageRepositoryMixin:
             if self._mem_files is not None:
                 if temp_path not in self._mem_files:
                     self._mem_files[temp_path] = payload
+                    temp_created = True
             elif isinstance(temp_path, Path) and not temp_path.exists():
                 try:
                     assert part_path is not None
                     with open(part_path, "wb") as file_obj:
                         file_obj.write(payload)
                     os.replace(part_path, temp_path)
+                    temp_created = True
                 except PermissionError as exc:
                     logger.warning("os.replace failed, falling back to direct write: %s", exc)
                     with open(temp_path, "wb") as file_obj:
                         file_obj.write(payload)
+                    temp_created = True
                     if part_path and part_path.exists():
                         with suppress(Exception):
                             os.remove(part_path)
@@ -241,6 +245,9 @@ class StorageRepositoryMixin:
             if part_path and part_path.exists():
                 with suppress(Exception):
                     os.remove(part_path)
+            if temp_created and temp_path and self._path_exists(temp_path):
+                with suppress(Exception):
+                    self._remove_path(str(temp_path))
             return {"success": False, "reason": "ERROR", "message": str(exc)}
         finally:
             if conn:

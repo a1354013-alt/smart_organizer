@@ -6,6 +6,8 @@ The core product promise is simple: scan a folder, explain why files may need re
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
 
+Python support: the project is intended to run on Python 3.11, 3.12, and 3.13, and CI validates all three versions.
+
 Time policy:
 
 - Database records use UTC ISO 8601 timestamps.
