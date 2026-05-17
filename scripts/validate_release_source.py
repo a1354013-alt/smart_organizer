@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 import locale
+import os
 import queue
 import subprocess
 import sys
 import threading
 import time
 from collections import deque
-from io import BufferedReader
 from pathlib import Path
 from typing import Any
 
@@ -144,13 +144,18 @@ def _write_text(target: Any, text: str) -> None:
         buffer.flush()
 
 
-def _reader_thread(stream_name: str, stream: BufferedReader, output_queue: queue.Queue[tuple[str, bytes | None]]) -> None:
+def _reader_thread(stream_name: str, stream: Any, output_queue: queue.Queue[tuple[str, bytes | None]]) -> None:
+    fd = stream.fileno()
     try:
         while True:
-            chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
+            chunk = os.read(fd, 4096)
             if not chunk:
                 break
             output_queue.put((stream_name, chunk))
+    except OSError:
+        # The process may close a pipe while we are timing out and terminating it.
+        # The sentinel below still lets the runner finish deterministically.
+        pass
     finally:
         output_queue.put((stream_name, None))
 
@@ -169,10 +174,14 @@ def _drain_output_queue(
         if chunk is None:
             closed += 1
             continue
-        text = chunk.decode(STREAM_ENCODING, errors="replace")
-        tail.append(stream_name, text)
-        target = sys.stderr if stream_name == "stderr" else sys.stdout
-        _write_text(target, text)
+        _handle_output_chunk(stream_name, chunk, tail)
+
+
+def _handle_output_chunk(stream_name: str, chunk: bytes, tail: OutputTail) -> None:
+    text = chunk.decode(STREAM_ENCODING, errors="replace")
+    tail.append(stream_name, text)
+    target = sys.stderr if stream_name == "stderr" else sys.stdout
+    _write_text(target, text)
 
 
 def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: int = DEFAULT_TIMEOUT_TAIL_LINES) -> int:
@@ -204,6 +213,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
     while closed < 2:
         now = time.perf_counter()
         if now >= deadline:
+            closed = _drain_output_queue(output_queue, tail, closed=closed)
             _terminate_process(proc)
             for thread in threads:
                 thread.join(timeout=1)
@@ -222,10 +232,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
         if chunk is None:
             closed += 1
             continue
-        text = chunk.decode(STREAM_ENCODING, errors="replace")
-        tail.append(stream_name, text)
-        target = sys.stderr if stream_name == "stderr" else sys.stdout
-        _write_text(target, text)
+        _handle_output_chunk(stream_name, chunk, tail)
 
     returncode = int(proc.wait())
     duration = time.perf_counter() - started

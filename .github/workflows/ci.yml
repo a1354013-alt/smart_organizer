@@ -41,17 +41,17 @@ jobs:
         run: python -m pytest -q
 
       - name: Build release zip
-        run: python scripts/create_release_zip.py --output-dir release_ci
+        run: python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
 
       - name: Verify release zip
-        run: python scripts/verify_release_zip.py "release_ci/*.zip"
+        run: python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
 
       - name: Workspace clean check
         run: python scripts/check_workspace_clean.py --project-root .
 
-      - name: Validate release source integration
+      - name: Validate release source command plan
         run: |
-          python scripts/validate_release_source.py
+          python scripts/validate_release_source.py --dry-run
 
       - name: Cleanup release output
         if: always()

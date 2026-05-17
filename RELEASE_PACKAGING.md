@@ -96,6 +96,7 @@ cannot affect the result.
 After unpacking the release zip:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python scripts/create_demo_folder.py
 streamlit run app.py
 ```
