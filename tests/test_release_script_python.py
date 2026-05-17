@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -178,13 +179,19 @@ def test_validate_release_run_step_times_out_with_tail(capsys):
 
 
 def test_validate_release_run_step_times_out_with_partial_line(capsys):
+    if os.name == "nt":
+        command = [
+            "cmd",
+            "/d",
+            "/c",
+            "set /p dummy=partial stdout<nul & set /p dummy=partial stderr<nul 1>&2 & ping -n 11 127.0.0.1 >nul",
+        ]
+    else:
+        command = ["sh", "-c", "printf 'partial stdout'; printf 'partial stderr' >&2; sleep 10"]
+
     started = time.perf_counter()
     returncode = run_step(
-        [
-            sys.executable,
-            "-c",
-            "import sys, time; sys.stdout.write('partial stdout'); sys.stdout.flush(); time.sleep(10)",
-        ],
+        command,
         timeout_seconds=1,
         timeout_tail_lines=5,
     )
@@ -194,5 +201,7 @@ def test_validate_release_run_step_times_out_with_partial_line(capsys):
     assert returncode == 124
     assert duration < 3
     assert "partial stdout" in captured.out
+    assert "partial stderr" in captured.err
     assert "TIMEOUT" in captured.err
     assert "[stdout] partial stdout" in captured.err
+    assert "[stderr] partial stderr" in captured.err

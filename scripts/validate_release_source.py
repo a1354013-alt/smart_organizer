@@ -111,6 +111,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _terminate_process(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if proc.poll() is not None:
+            return
     try:
         proc.terminate()
         proc.wait(timeout=5)
