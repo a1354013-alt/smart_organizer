@@ -17,6 +17,8 @@ from scripts.create_release_zip import (
 from scripts.release_policy import SOURCE_ONLY_RELEASE_FILES
 from scripts.validate_release_source import (
     OutputTail,
+    StepTimeoutResult,
+    _build_timeout_result,
     _format_timeout_message,
     _tail_lines,
     run_step,
@@ -523,12 +525,32 @@ def test_timeout_tail_lines_limit_keeps_latest_entries():
 
 def test_format_timeout_message_includes_command_timeout_and_returncode():
     message = _format_timeout_message(
-        [sys.executable, "-m", "pytest", "-q"],
-        timeout_seconds=20,
-        returncode=-9,
-        duration=20.5,
+        StepTimeoutResult(
+            command=[sys.executable, "-m", "pytest", "-q"],
+            timeout_seconds=20,
+            returncode=-9,
+            duration=20.5,
+            tail_lines=[],
+        )
     )
 
     assert "python -m pytest -q" in message
     assert "timeout=20s" in message
     assert "returncode=-9" in message
+
+
+def test_build_timeout_result_captures_limited_tail():
+    tail = OutputTail(10)
+    tail.append("stdout", "alpha\n")
+    tail.append("stderr", "beta")
+
+    result = _build_timeout_result(
+        [sys.executable, "-m", "pytest", "-q"],
+        timeout_seconds=20,
+        duration=20.5,
+        returncode=-9,
+        tail=tail,
+        tail_lines=2,
+    )
+
+    assert result.tail_lines == ["[stdout] alpha", "[stderr] beta"]

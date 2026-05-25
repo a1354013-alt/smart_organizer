@@ -64,6 +64,11 @@ _REASON_LABEL_KEYS = {
     "temp_cache_log": "home.candidates.reason_temp_cache_log",
     "low_confidence": "home.candidates.reason_low_confidence",
 }
+_DUPLICATE_TYPE_LABEL_KEYS = {
+    "same_content_duplicate": "home.candidates.duplicate_type.same_content_duplicate",
+    "same_name_candidate": "home.candidates.duplicate_type.same_name_candidate",
+    "similar_name_candidate": "home.candidates.duplicate_type.similar_name_candidate",
+}
 
 
 def _coerce_message_list(value: object) -> list[str]:
@@ -78,6 +83,38 @@ def _localized_reason_list(item: dict[str, object]) -> list[str]:
         return [t(_REASON_LABEL_KEYS.get(code, ""), lang=get_current_language()) if code in _REASON_LABEL_KEYS else code for code in codes]
     reasons = [str(reason) for reason in cast(list[object], item.get("candidate_reasons") or []) if str(reason)]
     return reasons or [t("home.candidates.reason_selected_manually")]
+
+
+def _duplicate_type_label(value: object) -> str:
+    duplicate_type = str(value or "").strip()
+    label_key = _DUPLICATE_TYPE_LABEL_KEYS.get(duplicate_type)
+    if label_key:
+        return t(label_key)
+    return duplicate_type or t("home.candidates.duplicate_type.none")
+
+
+def _candidate_reason_text(item: dict[str, object]) -> str:
+    return "; ".join(_localized_reason_list(item))
+
+
+def _candidate_duplicate_reason_text(item: dict[str, object]) -> str:
+    duplicate_reason = str(item.get("duplicate_reason") or "").strip()
+    return duplicate_reason or t("home.candidates.duplicate_reason.none")
+
+
+def _candidate_row(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "select": False,
+        "name": item.get("name"),
+        "recommendation": recommendation_display_label(item.get("recommendation")),
+        "risk_level": risk_display_label(item.get("risk_level")),
+        "duplicate_type": _duplicate_type_label(item.get("duplicate_type")),
+        "duplicate_reason": _candidate_duplicate_reason_text(item),
+        "reasons": _candidate_reason_text(item),
+        "size": human_bytes(safe_int(item.get("size_bytes"))),
+        "last_modified": format_timestamp_for_display(item.get("mtime")),
+        "path": item.get("path"),
+    }
 
 
 def summarize_recommendations(
@@ -230,20 +267,7 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
     if st.button(t("home.candidates.clear_selection"), key="clear_candidate_selection"):
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
 
-    rows: list[dict[str, object]] = []
-    for item in candidates:
-        rows.append(
-            {
-                "select": False,
-                "name": item.get("name"),
-                "recommendation": recommendation_display_label(item.get("recommendation")),
-                "risk_level": risk_display_label(item.get("risk_level")),
-                "reasons": "、".join(_localized_reason_list(item)),
-                "size": human_bytes(int(cast(int, item.get("size_bytes") or 0))),
-                "last_modified": format_timestamp_for_display(item.get("mtime")),
-                "path": item.get("path"),
-            }
-        )
+    rows = [_candidate_row(item) for item in candidates]
 
     selected_paths = [str(path) for path in cast(list[object], st.session_state.get(SESSION_FOLDER_SELECTED_PATHS, []))]
     if context.pandas is not None:
@@ -259,6 +283,10 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
                 "name": st.column_config.TextColumn(t("home.candidates.table.name"), width="medium"),
                 "recommendation": st.column_config.TextColumn(t("home.candidates.table.recommendation"), width="small"),
                 "risk_level": st.column_config.TextColumn(t("home.candidates.table.risk_level"), width="small"),
+                "duplicate_type": st.column_config.TextColumn(t("home.candidates.table.duplicate_type"), width="medium"),
+                "duplicate_reason": st.column_config.TextColumn(
+                    t("home.candidates.table.duplicate_reason"), width="large"
+                ),
                 "reasons": st.column_config.TextColumn(t("home.candidates.table.reasons"), width="large"),
                 "size": st.column_config.TextColumn(t("home.candidates.table.size"), width="small"),
                 "last_modified": st.column_config.TextColumn(t("home.candidates.table.last_modified"), width="medium"),

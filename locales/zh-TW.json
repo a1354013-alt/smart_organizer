@@ -107,6 +107,15 @@
       "reason_temp_cache_log": "暫存 / 快取 / 記錄檔",
       "reason_low_confidence": "建議先人工確認",
       "reason_selected_manually": "手動選取",
+      "duplicate_type": {
+        "same_content_duplicate": "相同內容重複檔",
+        "same_name_candidate": "同名候選檔",
+        "similar_name_candidate": "相似名稱候選檔",
+        "none": "無重複訊號"
+      },
+      "duplicate_reason": {
+        "none": "沒有記錄重複原因"
+      },
       "select_all_preview": "全選候選檔案",
       "select_safe_review": "全選可複查項目",
       "clear_selection": "清除選取",
@@ -118,6 +127,8 @@
         "name": "檔名",
         "recommendation": "建議",
         "risk_level": "風險等級",
+        "duplicate_type": "重複分類",
+        "duplicate_reason": "重複原因",
         "reasons": "原因",
         "size": "大小",
         "last_modified": "最後修改時間",

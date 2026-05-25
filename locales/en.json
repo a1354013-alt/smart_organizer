@@ -107,6 +107,15 @@
       "reason_temp_cache_log": "Temp / cache / log file",
       "reason_low_confidence": "Review manually first",
       "reason_selected_manually": "Selected manually",
+      "duplicate_type": {
+        "same_content_duplicate": "Same Content Duplicate",
+        "same_name_candidate": "Same Name Candidate",
+        "similar_name_candidate": "Similar Name Candidate",
+        "none": "No duplicate signal"
+      },
+      "duplicate_reason": {
+        "none": "No duplicate reason recorded"
+      },
       "select_all_preview": "Select all candidates",
       "select_safe_review": "Select reviewable items",
       "clear_selection": "Clear selection",
@@ -118,6 +127,8 @@
         "name": "File Name",
         "recommendation": "Recommendation",
         "risk_level": "Risk Level",
+        "duplicate_type": "Duplicate Type",
+        "duplicate_reason": "Duplicate Reason",
         "reasons": "Reason",
         "size": "Size",
         "last_modified": "Last Modified",

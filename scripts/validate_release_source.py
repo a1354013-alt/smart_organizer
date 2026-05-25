@@ -11,6 +11,7 @@ import threading
 import time
 from collections import deque
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,15 @@ class OutputTail:
             if partial:
                 lines.append(f"[{stream_name}] {partial}")
         return lines
+
+
+@dataclass(slots=True)
+class StepTimeoutResult:
+    command: list[str]
+    timeout_seconds: int
+    duration: float
+    returncode: int | None
+    tail_lines: list[str]
 
 
 def _tail_lines(lines: deque[str], *, limit: int) -> list[str]:
@@ -257,8 +267,30 @@ def _popen_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
-def _print_timeout_tail(tail: OutputTail, *, tail_lines: int) -> None:
-    lines = _tail_lines(tail.snapshot(), limit=tail_lines)
+def _format_timeout_tail(tail: OutputTail, *, tail_lines: int) -> list[str]:
+    return _tail_lines(tail.snapshot(), limit=tail_lines)
+
+
+def _build_timeout_result(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    duration: float,
+    returncode: int | None,
+    tail: OutputTail,
+    tail_lines: int,
+) -> StepTimeoutResult:
+    return StepTimeoutResult(
+        command=list(command),
+        timeout_seconds=timeout_seconds,
+        duration=duration,
+        returncode=returncode,
+        tail_lines=_format_timeout_tail(tail, tail_lines=tail_lines),
+    )
+
+
+def _print_timeout_tail(result: StepTimeoutResult) -> None:
+    lines = result.tail_lines
     if not lines:
         print("No output captured before timeout.", file=sys.stderr, flush=True)
         return
@@ -315,19 +347,13 @@ def _drain_output_queue(
         _handle_output_chunk(stream_name, chunk, tail)
 
 
-def _format_timeout_message(
-    command: list[str],
-    *,
-    timeout_seconds: int,
-    returncode: int | None,
-    duration: float,
-) -> str:
-    display = _display_command(command)
-    result = f"<== TIMEOUT {display} after {duration:.2f}s (timeout={timeout_seconds}s"
-    if returncode is not None:
-        result += f", returncode={returncode}"
-    result += ")"
-    return result
+def _format_timeout_message(result: StepTimeoutResult) -> str:
+    display = _display_command(result.command)
+    message = f"<== TIMEOUT {display} after {result.duration:.2f}s (timeout={result.timeout_seconds}s"
+    if result.returncode is not None:
+        message += f", returncode={result.returncode}"
+    message += ")"
+    return message
 
 
 def _handle_output_chunk(stream_name: str, chunk: bytes, tail: OutputTail) -> None:
@@ -376,17 +402,20 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
                     continue
                 _handle_output_chunk(stream_name, chunk, tail)
             duration = time.perf_counter() - started
+            timeout_result = _build_timeout_result(
+                command,
+                timeout_seconds=timeout_seconds,
+                duration=duration,
+                returncode=proc.poll(),
+                tail=tail,
+                tail_lines=max(1, int(timeout_tail_lines)),
+            )
             print(
-                _format_timeout_message(
-                    command,
-                    timeout_seconds=timeout_seconds,
-                    returncode=proc.poll(),
-                    duration=duration,
-                ),
+                _format_timeout_message(timeout_result),
                 file=sys.stderr,
                 flush=True,
             )
-            _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
+            _print_timeout_tail(timeout_result)
             return 124
         try:
             stream_name, chunk = output_queue.get(timeout=min(0.05, max(0.0, deadline - now)))
