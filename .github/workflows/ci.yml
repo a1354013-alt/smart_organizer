@@ -57,6 +57,10 @@ jobs:
         run: |
           python scripts/validate_release_source.py --dry-run
 
+      - name: Validate release source execution
+        run: |
+          python scripts/validate_release_source.py --timeout-tail-lines 20
+
       - name: Cleanup release output
         if: always()
         run: rm -rf release_ci

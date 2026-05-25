@@ -99,6 +99,8 @@ class FolderScanRecord:
     candidate_reasons: list[str]
     recommendation: str
     category: str = "general"
+    duplicate_type: str | None = None
+    duplicate_reason: str | None = None
     confidence: float = 0.0
     risk_level: str = RiskLevel.DO_NOT_TOUCH.value
     reason_codes: list[str] | None = None
@@ -161,6 +163,8 @@ class FolderOperationRow:
     new_path: str | None
     status: FolderActionStatus
     reason: str | None
+    duplicate_type: str | None
+    duplicate_reason: str | None
     file_size: int
     last_modified: str | None
     processed_at: str
@@ -210,6 +214,8 @@ class ManifestItem(TypedDict, total=False):
     restored_at: str
     restored_path: str
     last_error: str
+    duplicate_type: str
+    duplicate_reason: str
 
 
 def human_bytes(num_bytes: int | None) -> str:
@@ -341,6 +347,8 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
                 "restored_at": str(item.get("restored_at") or ""),
                 "restored_path": str(item.get("restored_path") or ""),
                 "last_error": str(item.get("last_error") or ""),
+                "duplicate_type": str(item.get("duplicate_type") or ""),
+                "duplicate_reason": str(item.get("duplicate_reason") or ""),
             }
         )
     return normalized

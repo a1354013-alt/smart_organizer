@@ -19,6 +19,14 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "core_utils.py",
         "core_classification.py",
         "core_processor.py",
+        "processors/__init__.py",
+        "processors/dependency_status.py",
+        "processors/image_processor.py",
+        "processors/llm_summary.py",
+        "processors/metadata_contract.py",
+        "processors/optional_deps.py",
+        "processors/pdf_processor.py",
+        "processors/video_processor.py",
         "supported_formats.py",
     ),
     "service_modules": (
@@ -32,6 +40,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "frontend_safety.py",
         "logging_config.py",
         "version.py",
+        "i18n.py",
     ),
     "storage_modules": (
         "storage.py",
@@ -66,11 +75,14 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
     "runtime_docs_and_helpers": (
         "requirements.txt",
         "README.md",
+        "README.zh-TW.md",
         "RELEASE_PACKAGING.md",
         "RUN_RELEASE.md",
         "scripts/create_demo_folder.py",
         "docs/KNOWN_LIMITATIONS.md",
         "docs/PORTFOLIO_CASE_STUDY.md",
+        "locales/zh-TW.json",
+        "locales/en.json",
     ),
 }
 

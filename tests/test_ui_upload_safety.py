@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from i18n import t
 from ui_common import safe_css_class_name, safe_display_text
 from ui_upload import validate_upload_batch_limits
 
@@ -37,8 +38,7 @@ def test_upload_batch_limit_reports_clear_error_with_escaped_filename():
     )
 
     assert len(errors) == 1
-    assert "Batch size" in errors[0]
-    assert "upload batch limit" in errors[0]
+    assert t("upload.limit_batch", size="15 B", max_size="12 B") == errors[0]
 
 
 def test_upload_per_file_limit_escapes_filename_in_error():
@@ -50,4 +50,4 @@ def test_upload_per_file_limit_escapes_filename_in_error():
 
     assert len(errors) == 1
     assert "&lt;b&gt;bad.pdf" in errors[0]
-    assert "per-file limit" in errors[0]
+    assert t("upload.limit_file", name="&lt;b&gt;bad.pdf", size="11 B", max_size="10 B") == errors[0]

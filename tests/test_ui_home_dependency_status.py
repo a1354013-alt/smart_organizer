@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import core_processor
 from core import FileProcessor
 from folder_models import Recommendation
+from i18n import t
 from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     cache_dependency_status,
@@ -93,9 +94,11 @@ def test_summarize_recommendations_uses_shared_contract_labels():
 
 
 def test_recommendation_display_label_keeps_data_contract_and_localizes_ui_text():
-    assert recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value) == "可安全複查"
-    assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == "需要人工確認"
-    assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == "不要操作"
+    assert recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value) == t("labels.recommendation.safe_to_review")
+    assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == t(
+        "labels.recommendation.needs_manual_check"
+    )
+    assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == t("labels.recommendation.do_not_touch")
     assert recommendation_display_label("Custom label") == "Custom label"
 
 
@@ -143,7 +146,6 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
         code=lambda *args, **kwargs: None,
         dataframe=lambda *args, **kwargs: None,
         multiselect=lambda *args, **kwargs: [],
-        divider=lambda: None,
         caption=lambda *args, **kwargs: None,
     )
 

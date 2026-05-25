@@ -9,12 +9,17 @@ from streamlit.testing.v1 import AppTest
 
 import app_main
 from folder_models import QUARANTINE_DIRNAME
+from i18n import t
 
 
 def _make_old_file(path: Path) -> None:
     path.write_text("demo cleanup candidate", encoding="utf-8")
     timestamp = time.time() - (500 * 24 * 60 * 60)
     os.utime(path, (timestamp, timestamp))
+
+
+def _find_button(app: AppTest, label: str):
+    return next(button for button in app.button if button.label == label)
 
 
 def test_streamlit_folder_quarantine_restore_report_flow(tmp_path: Path):
@@ -29,26 +34,26 @@ def test_streamlit_folder_quarantine_restore_report_flow(tmp_path: Path):
 
     assert not app.exception
     assert len(app.tabs) == 5
-    assert app.text_input[0].label == "Folder to scan"
+    assert app.text_input[0].label == t("home.scan.input_label")
 
     app.text_input[0].set_value(str(demo_dir))
-    app.button[0].click().run()
+    _find_button(app, t("home.scan.button")).click().run()
 
     scan = app.session_state["folder_scan_current"]
     assert scan["stats"]["scanned_files"] == 1
     assert scan["records"][0]["name"] == "old_invoice_2022.txt"
     assert scan["records"][0]["candidate_reasons"]
 
-    app.button[1].click().run()
+    _find_button(app, t("home.candidates.select_all_preview")).click().run()
     assert app.session_state["folder_selected_paths"] == [str(candidate)]
 
-    app.button[4].click().run()
+    _find_button(app, t("home.candidates.preview_button")).click().run()
     preview = app.session_state["folder_last_operation_result"]
     assert preview["summary"]["skipped"] == 1
     assert candidate.exists()
 
     app.checkbox[0].set_value(True)
-    app.button[5].click().run()
+    _find_button(app, t("home.candidates.quarantine_button")).click().run()
 
     moved = app.session_state["folder_last_operation_result"]
     quarantine_path = Path(moved["results"][0]["new_path"])
@@ -61,7 +66,7 @@ def test_streamlit_folder_quarantine_restore_report_flow(tmp_path: Path):
     assert manifest["items"][0]["status"] == "QUARANTINED"
 
     app.multiselect[0].set_value([str(quarantine_path)])
-    app.button[6].click().run()
+    _find_button(app, t("home.quarantine.restore_button")).click().run()
 
     restored = app.session_state["folder_restore_result"]
     assert restored["summary"]["success"] == 1
@@ -79,5 +84,5 @@ def test_streamlit_records_and_search_pages_load(tmp_path: Path):
     app.run()
 
     assert not app.exception
-    assert any(text_input.label in {"輸入關鍵字", "Search filename or summary"} for text_input in app.text_input)
-    assert any(button.label == "Refresh file locations" for button in app.button)
+    assert any(text_input.label == t("search_records.records_filters.search") for text_input in app.text_input)
+    assert any(button.label == t("search_records.maintenance_refresh") for button in app.button)

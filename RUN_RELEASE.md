@@ -147,6 +147,18 @@ For this integrated validation run, the script writes and verifies
 `release_ci/smart_organizer-release-validation.zip` so stale local release zips
 do not influence the result.
 
+Helpful variants:
+
+- `python scripts/validate_release_source.py --dry-run`
+  Prints the full validation command plan without executing it.
+- `python scripts/validate_release_source.py --timeout-tail-lines 20`
+  Prints the last 20 stdout/stderr tail lines when a subprocess times out. The tail keeps flushed partial output and labels each line as `[stdout]` or `[stderr]`.
+
+CI keeps both levels of coverage:
+
+- a `--dry-run` step to catch command-plan drift
+- a real execution step to ensure the script itself still matches the actual release workflow
+
 Equivalent explicit commands:
 
 ```bash

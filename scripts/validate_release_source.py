@@ -37,6 +37,7 @@ STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
 PROCESS_TERMINATE_GRACE_SECONDS = 1.0
 PROCESS_KILL_GRACE_SECONDS = 1.0
 READER_JOIN_GRACE_SECONDS = 1.0
+DRAIN_AFTER_TERMINATE_GRACE_SECONDS = 0.25
 
 
 class OutputTail:
@@ -63,6 +64,12 @@ class OutputTail:
             if partial:
                 lines.append(f"[{stream_name}] {partial}")
         return lines
+
+
+def _tail_lines(lines: deque[str], *, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
+    return list(lines)[-limit:]
 
 
 def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> list[list[str]]:
@@ -130,6 +137,18 @@ def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
     return True
 
 
+def _start_process(command: list[str]) -> subprocess.Popen[Any]:
+    return subprocess.Popen(
+        command,
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        **_popen_kwargs(),
+    )
+
+
 def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
@@ -153,6 +172,10 @@ def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
 def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
+    with suppress(Exception):
+        proc.send_signal(signal.CTRL_BREAK_EVENT)
+    with suppress(Exception):
+        proc.terminate()
     subprocess.run(
         ["taskkill", "/T", "/PID", str(proc.pid)],
         stdout=subprocess.DEVNULL,
@@ -190,6 +213,17 @@ def _join_reader_threads(threads: list[threading.Thread], *, deadline: float) ->
         thread.join(timeout=min(READER_JOIN_GRACE_SECONDS, remaining))
 
 
+def _drain_output_queue_once(
+    output_queue: queue.Queue[tuple[str, bytes | None]],
+) -> list[tuple[str, bytes | None]]:
+    items: list[tuple[str, bytes | None]] = []
+    while True:
+        try:
+            items.append(output_queue.get_nowait())
+        except queue.Empty:
+            return items
+
+
 def _drain_until_closed(
     output_queue: queue.Queue[tuple[str, bytes | None]],
     tail: OutputTail,
@@ -213,6 +247,7 @@ def _drain_until_closed(
             closed += 1
             continue
         _handle_output_chunk(stream_name, chunk, tail)
+    time.sleep(DRAIN_AFTER_TERMINATE_GRACE_SECONDS)
     return _drain_output_queue(output_queue, tail, closed=closed)
 
 
@@ -223,11 +258,11 @@ def _popen_kwargs() -> dict[str, Any]:
 
 
 def _print_timeout_tail(tail: OutputTail, *, tail_lines: int) -> None:
-    lines = tail.snapshot()
+    lines = _tail_lines(tail.snapshot(), limit=tail_lines)
     if not lines:
         print("No output captured before timeout.", file=sys.stderr, flush=True)
         return
-    print(f"Last {min(len(lines), tail_lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
+    print(f"Last {len(lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
     for line in lines:
         _write_text(sys.stderr, line + "\n")
 
@@ -280,6 +315,21 @@ def _drain_output_queue(
         _handle_output_chunk(stream_name, chunk, tail)
 
 
+def _format_timeout_message(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    returncode: int | None,
+    duration: float,
+) -> str:
+    display = _display_command(command)
+    result = f"<== TIMEOUT {display} after {duration:.2f}s (timeout={timeout_seconds}s"
+    if returncode is not None:
+        result += f", returncode={returncode}"
+    result += ")"
+    return result
+
+
 def _handle_output_chunk(stream_name: str, chunk: bytes, tail: OutputTail) -> None:
     text = chunk.decode(STREAM_ENCODING, errors="replace")
     tail.append(stream_name, text)
@@ -292,15 +342,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
     started = time.perf_counter()
     print(f"==> START {display}", flush=True)
     print(f"    timeout={timeout_seconds}s", flush=True)
-    proc = subprocess.Popen(
-        command,
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        **_popen_kwargs(),
-    )
+    proc = _start_process(command)
     assert proc.stdout is not None
     assert proc.stderr is not None
 
@@ -329,8 +371,21 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
                 closed=closed,
                 deadline=cleanup_deadline + READER_JOIN_GRACE_SECONDS,
             )
+            for stream_name, chunk in _drain_output_queue_once(output_queue):
+                if chunk is None:
+                    continue
+                _handle_output_chunk(stream_name, chunk, tail)
             duration = time.perf_counter() - started
-            print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
+            print(
+                _format_timeout_message(
+                    command,
+                    timeout_seconds=timeout_seconds,
+                    returncode=proc.poll(),
+                    duration=duration,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
             return 124
         try:

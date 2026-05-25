@@ -9,6 +9,7 @@ import streamlit as st
 from config import DB_PATH, PROJECT_ROOT, REPO_ROOT, UPLOAD_DIR
 from core import FileProcessor
 from frontend_safety import inject_browser_storage_sanitizer
+from i18n import DEFAULT_LANGUAGE, t
 from logging_config import setup_logging
 from storage import MAX_UPLOAD_BYTES, StorageManager
 from ui_common import UIContext, inject_global_css
@@ -19,7 +20,6 @@ from ui_review import render_review
 from ui_search import render_search
 from ui_state import init_session_state
 from ui_upload import render_upload
-from version import APP_NAME
 
 _REGISTERED_STORAGE_CLOSE_IDS: set[int] = set()
 
@@ -33,7 +33,7 @@ def _optional_import(module_name: str) -> Any:
 
 
 def _configure_page() -> None:
-    st.set_page_config(page_title=APP_NAME, layout="wide")
+    st.set_page_config(page_title=t("app.page_title", lang=DEFAULT_LANGUAGE), layout="wide")
     inject_browser_storage_sanitizer(enabled=True)
     setup_logging()
 
@@ -69,33 +69,38 @@ def _build_context() -> UIContext:
     )
 
 
+def get_main_tab_labels() -> list[str]:
+    return [
+        t("app.tabs.folder_scan"),
+        t("app.tabs.upload_analysis"),
+        t("app.tabs.review_results"),
+        t("app.tabs.execute_organization"),
+        t("app.tabs.search_records"),
+    ]
+
+
 def main() -> None:
     _configure_page()
     context = _build_context()
     inject_global_css()
     init_session_state()
     render_sidebar(context)
-    render_home(context)
 
-    tab_upload, tab_review, tab_execute, tab_search, tab_records = st.tabs(
-        [
-            "Advanced Upload",
-            "Review Uploads",
-            "Execute Upload Organizer",
-            "Search Records",
-            "Records",
-        ]
-    )
+    tab_folder_scan, tab_upload, tab_review, tab_execute, tab_search_records = st.tabs(get_main_tab_labels())
+    with tab_folder_scan:
+        render_home(context)
     with tab_upload:
         render_upload(context)
     with tab_review:
         render_review(context)
     with tab_execute:
         render_execute(context)
-    with tab_search:
-        render_search(context)
-    with tab_records:
-        render_records(context)
+    with tab_search_records:
+        st.header(t("search_records.title"))
+        st.markdown(t("search_records.description"))
+        render_search(context, show_header=False)
+        st.divider()
+        render_records(context, show_header=False)
 
 
 if __name__ == "__main__":

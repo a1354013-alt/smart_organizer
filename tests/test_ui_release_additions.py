@@ -9,6 +9,7 @@ import app_main
 import ui_records
 import ui_renderers
 import ui_review
+from i18n import t
 from services import AnalysisResult
 from ui_common import UIContext
 
@@ -77,7 +78,7 @@ def test_render_review_confirms_selected_topics_and_saved_summaries(monkeypatch)
         json=_noop,
         write=_noop,
         selectbox=lambda label, options, index=0, key=None: "Archive",
-        button=lambda label, **kwargs: label == "Confirm reviewed files",
+        button=lambda label, **kwargs: label == t("review.confirm_button"),
         code=_noop,
         success=lambda value: successes.append(str(value)),
     )
@@ -113,12 +114,20 @@ def test_render_review_confirms_selected_topics_and_saved_summaries(monkeypatch)
 
     assert build_calls == [{"selected_topics": {7: "Archive"}, "summaries": {7: "approved summary"}}]
     assert session_state.confirmed_results == ["confirmed"]
-    assert successes == ["Reviewed files are ready for the Execute tab."]
+    assert successes == [t("review.confirm_success")]
 
 
 def test_render_records_reclassify_missing_file_surfaces_specific_error(monkeypatch):
     errors: list[str] = []
-    select_values = iter(["All", "All", "All", 25, 3])
+    select_values = iter(
+        [
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            25,
+            3,
+        ]
+    )
     button_values = iter([False, False, True])
     fake_st = SimpleNamespace(
         session_state={},
@@ -155,13 +164,21 @@ def test_render_records_reclassify_missing_file_surfaces_specific_error(monkeypa
 
     ui_records.render_records(cast(UIContext, SimpleNamespace(storage=storage, pandas=None, processor=object())))
 
-    assert errors == ["The file is no longer available on disk. Refresh locations first."]
+    assert errors == [t("search_records.reclassify_missing_file")]
 
 
 def test_render_records_normal_state_shows_exports_and_page_caption(monkeypatch):
     captions: list[str] = []
     downloads: list[str] = []
-    select_values = iter(["All", "All", "All", 25, 9])
+    select_values = iter(
+        [
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            25,
+            9,
+        ]
+    )
     fake_st = SimpleNamespace(
         session_state={},
         header=_noop,
@@ -205,8 +222,8 @@ def test_render_records_normal_state_shows_exports_and_page_caption(monkeypatch)
 
     ui_records.render_records(cast(UIContext, SimpleNamespace(storage=storage, pandas=None, processor=object())))
 
-    assert any("Showing page 1 of 1 (1 records)" in caption for caption in captions)
-    assert downloads == ["Export current page as CSV", "Export current page as Markdown"]
+    assert any(t("search_records.records_showing_page", current_page=1, page_count=1, total=1) in caption for caption in captions)
+    assert downloads == [t("search_records.records_export_csv"), t("search_records.records_export_md")]
 
 
 def test_render_dependency_status_empty_sections_show_captions(monkeypatch):

@@ -16,6 +16,8 @@ FOLDER_REPORT_FIELDNAMES = [
     "last_modified",
     "reason",
     "status",
+    "duplicate_type",
+    "duplicate_reason",
     "error_message",
     "operation_id",
 ]
@@ -75,8 +77,8 @@ def export_folder_report_markdown(
         f"- Quarantine destination: `{quarantine_destination}`",
         f"- Generated at: {format_timestamp_for_export(rows[-1].get('processed_at') if rows else scan_result.get('scanned_at'))}",
         "",
-        "| Original path | New path | Size | Last modified | Status | Failure reason |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Original path | New path | Size | Last modified | Status | Duplicate type | Duplicate reason | Failure reason |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
@@ -88,6 +90,8 @@ def export_folder_report_markdown(
                     human_bytes(safe_int(row.get("file_size"))),
                     escape_markdown_table_cell(format_timestamp_for_export(row.get("last_modified"))),
                     escape_markdown_table_cell(row.get("status")),
+                    escape_markdown_table_cell(row.get("duplicate_type")),
+                    escape_markdown_table_cell(row.get("duplicate_reason")),
                     escape_markdown_table_cell(row.get("error_message")),
                 ]
             )
@@ -116,6 +120,8 @@ def export_folder_report_csv(
                 "last_modified": format_timestamp_for_export(row.get("last_modified")),
                 "reason": row.get("reason"),
                 "status": row.get("status"),
+                "duplicate_type": row.get("duplicate_type"),
+                "duplicate_reason": row.get("duplicate_reason"),
                 "error_message": row.get("error_message"),
                 "operation_id": row.get("operation_id") or (operation_result or {}).get("operation_id"),
             }

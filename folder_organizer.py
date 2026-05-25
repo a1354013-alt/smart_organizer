@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import re
 import shutil
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from folder_models import (
@@ -42,6 +45,9 @@ from folder_models import (
 LOW_RISK_SUFFIXES = {".txt", ".log", ".tmp", ".cache", ".bak", ".old", ".fake"}
 MANUAL_REVIEW_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 DO_NOT_TOUCH_NAMES = {"readme", "license", "copying", "important", "keep"}
+SAME_CONTENT_DUPLICATE = "same_content_duplicate"
+SAME_NAME_CANDIDATE = "same_name_candidate"
+SIMILAR_NAME_CANDIDATE = "similar_name_candidate"
 
 
 def _resolve_path(path_value: Path | str) -> Path:
@@ -248,6 +254,89 @@ def _reason_codes(reasons: list[str]) -> list[str]:
     return codes or ["low_confidence"]
 
 
+def _normalize_duplicate_name(path_value: str) -> str:
+    path_obj = Path(path_value)
+    stem = path_obj.stem.lower()
+    return re.sub(r"([_-](copy|\d+|[a-z]))+$", "", stem)
+
+
+def _hash_file(path_obj: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str | None, str | None]:
+    digest = hashlib.sha256()
+    try:
+        stat_result = path_obj.stat()
+        with path_obj.open("rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        with suppress(OSError):
+            os.utime(path_obj, (stat_result.st_atime, stat_result.st_mtime))
+    except OSError as exc:
+        return None, f"hash unavailable: {exc}"
+    return digest.hexdigest(), None
+
+
+def _classify_duplicates(records: list[FolderScanRecord]) -> None:
+    by_hash: dict[tuple[int, str], list[FolderScanRecord]] = {}
+    by_name: dict[str, list[FolderScanRecord]] = {}
+    for record in records:
+        normalized_name = _normalize_duplicate_name(record.path)
+        by_name.setdefault(normalized_name, []).append(record)
+        file_hash, hash_error = _hash_file(Path(record.path))
+        if hash_error:
+            if not record.duplicate_reason:
+                record.duplicate_reason = hash_error
+            continue
+        if file_hash is not None:
+            by_hash.setdefault((record.size_bytes, file_hash), []).append(record)
+
+    for grouped_records in by_hash.values():
+        if len(grouped_records) < 2:
+            continue
+        for record in grouped_records:
+            record.duplicate_type = SAME_CONTENT_DUPLICATE
+            reason = "duplicate candidate: same content hash and size match another file"
+            record.duplicate_reason = reason
+            if reason not in record.candidate_reasons:
+                record.candidate_reasons.append(reason)
+
+    normalized_names = list(by_name.items())
+    for normalized_name, grouped_records in normalized_names:
+        if len(grouped_records) > 1:
+            for record in grouped_records:
+                if record.duplicate_type == SAME_CONTENT_DUPLICATE:
+                    continue
+                record.duplicate_type = SAME_NAME_CANDIDATE
+                reason = "duplicate candidate: same filename appears more than once"
+                record.duplicate_reason = reason
+                if reason not in record.candidate_reasons:
+                    record.candidate_reasons.append(reason)
+
+        for other_name, other_records in normalized_names:
+            if normalized_name >= other_name:
+                continue
+            similarity = SequenceMatcher(None, normalized_name, other_name).ratio()
+            if similarity < 0.7 and normalized_name not in other_name and other_name not in normalized_name:
+                continue
+            for record in grouped_records:
+                if record.duplicate_type in {SAME_CONTENT_DUPLICATE, SAME_NAME_CANDIDATE}:
+                    continue
+                record.duplicate_type = SIMILAR_NAME_CANDIDATE
+                reason = "duplicate candidate: filename is similar to another file"
+                record.duplicate_reason = reason
+                if reason not in record.candidate_reasons:
+                    record.candidate_reasons.append(reason)
+            for record in other_records:
+                if record.duplicate_type in {SAME_CONTENT_DUPLICATE, SAME_NAME_CANDIDATE}:
+                    continue
+                record.duplicate_type = SIMILAR_NAME_CANDIDATE
+                reason = "duplicate candidate: filename is similar to another file"
+                record.duplicate_reason = reason
+                if reason not in record.candidate_reasons:
+                    record.candidate_reasons.append(reason)
+
+
 def _extension_risk_score(suffix: str) -> float:
     if suffix in LOW_RISK_SUFFIXES:
         return 0.85
@@ -305,17 +394,28 @@ def _recommendation(reasons: list[str], risk_level: str) -> str:
     return Recommendation.DO_NOT_TOUCH.value
 
 
+def _operation_reason_text(record: dict[str, object]) -> str:
+    reasons = string_list(record.get("candidate_reasons"))
+    duplicate_type = str(record.get("duplicate_type") or "").strip()
+    duplicate_reason = str(record.get("duplicate_reason") or "").strip()
+    parts = reasons or ["Selected manually"]
+    if duplicate_type:
+        parts.append(f"duplicate type: {duplicate_type}")
+    if duplicate_reason and duplicate_reason not in parts:
+        parts.append(duplicate_reason)
+    return ", ".join(parts)
+
+
 def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: int, large_file_bytes: int) -> None:
+    _classify_duplicates(records)
     name_counts: dict[str, int] = {}
     for record in records:
-        duplicate_key = re.sub(r"([_-](copy|\d+|[a-z]))+$", "", record.path.rsplit(".", 1)[0].lower())
+        duplicate_key = _normalize_duplicate_name(record.path)
         name_counts[duplicate_key] = name_counts.get(duplicate_key, 0) + 1
 
     for record in records:
-        duplicate_key = re.sub(r"([_-](copy|\d+|[a-z]))+$", "", record.path.rsplit(".", 1)[0].lower())
+        duplicate_key = _normalize_duplicate_name(record.path)
         duplicate_count = name_counts.get(duplicate_key, 0)
-        if duplicate_count > 1 and "duplicate candidate: same filename appears more than once" not in record.candidate_reasons:
-            record.candidate_reasons.append("duplicate candidate: same filename appears more than once")
         (
             record.confidence,
             record.risk_level,
@@ -334,7 +434,7 @@ def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: i
             reasons=record.candidate_reasons,
         )
         record.reason_codes = _reason_codes(record.candidate_reasons)
-        record.category = "cleanup_candidate" if record.candidate_reasons else "keep"
+        record.category = record.duplicate_type or ("cleanup_candidate" if record.candidate_reasons else "keep")
         record.recommendation = _recommendation(record.candidate_reasons, record.risk_level)
 
 
@@ -487,6 +587,8 @@ def run_folder_organizer(
                         new_path=None,
                         status="FAILED",
                         reason="Not found in current scan result",
+                        duplicate_type=None,
+                        duplicate_reason=None,
                         file_size=0,
                         last_modified=None,
                         processed_at=iso_now(),
@@ -497,7 +599,7 @@ def run_folder_organizer(
                 continue
 
             original_path = Path(selected_path)
-            reasons = ", ".join(string_list(record.get("candidate_reasons"))) or "Selected manually"
+            reasons = _operation_reason_text(record)
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
             if dry_run:
@@ -516,6 +618,8 @@ def run_folder_organizer(
                             new_path=str(preview_destination),
                             status="SKIPPED",
                             reason=reasons,
+                            duplicate_type=str(record.get("duplicate_type") or "") or None,
+                            duplicate_reason=str(record.get("duplicate_reason") or "") or None,
                             file_size=file_size,
                             last_modified=str(last_modified) if last_modified is not None else None,
                             processed_at=iso_now(),
@@ -530,6 +634,8 @@ def run_folder_organizer(
                             new_path=None,
                             status="FAILED",
                             reason=reasons,
+                            duplicate_type=str(record.get("duplicate_type") or "") or None,
+                            duplicate_reason=str(record.get("duplicate_reason") or "") or None,
                             file_size=file_size,
                             last_modified=str(last_modified) if last_modified is not None else None,
                             processed_at=iso_now(),
@@ -564,6 +670,8 @@ def run_folder_organizer(
                     "last_modified": last_modified,
                     "status": QuarantineStatus.MOVING.value,
                     "last_error": "",
+                    "duplicate_type": str(record.get("duplicate_type") or ""),
+                    "duplicate_reason": str(record.get("duplicate_reason") or ""),
                 }
                 manifest_items.append(manifest_item)
                 manifest["items"] = manifest_items
@@ -579,6 +687,8 @@ def run_folder_organizer(
                         new_path=str(destination),
                         status="SUCCESS",
                         reason=reasons,
+                        duplicate_type=str(record.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(record.get("duplicate_reason") or "") or None,
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
@@ -600,6 +710,8 @@ def run_folder_organizer(
                         new_path=None,
                         status="FAILED",
                         reason=reasons,
+                        duplicate_type=str(record.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(record.get("duplicate_reason") or "") or None,
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
@@ -650,6 +762,8 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         new_path=None,
                         status="FAILED",
                         reason="Manifest entry not found",
+                        duplicate_type=None,
+                        duplicate_reason=None,
                         file_size=0,
                         last_modified=None,
                         processed_at=iso_now(),
@@ -678,6 +792,8 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         new_path=str(destination),
                         status="SUCCESS",
                         reason=str(item.get("reason") or ""),
+                        duplicate_type=str(item.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(item.get("duplicate_reason") or "") or None,
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),
@@ -692,6 +808,8 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         new_path=None,
                         status="FAILED",
                         reason=str(item.get("reason") or ""),
+                        duplicate_type=str(item.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(item.get("duplicate_reason") or "") or None,
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),

@@ -85,58 +85,81 @@ def inject_global_css() -> None:
         """
         <style>
           :root {
-            --so-bg: #f7faf8;
-            --so-surface: rgba(255, 255, 255, 0.92);
-            --so-border: rgba(15, 23, 42, 0.10);
+            --so-bg: #f4f8fb;
+            --so-surface: rgba(255, 255, 255, 0.96);
+            --so-border: rgba(15, 23, 42, 0.08);
             --so-text: #0f172a;
             --so-muted: rgba(15, 23, 42, 0.65);
-            --so-accent: #10b981;
-            --so-accent-2: #3b82f6;
-            --so-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
-            --so-radius: 20px;
-            --so-primary-border: rgba(16, 185, 129, 0.25);
-            --so-secondary-border: rgba(59, 130, 246, 0.22);
+            --so-accent: #0f766e;
+            --so-accent-2: #2563eb;
+            --so-warning: #fef3c7;
+            --so-danger: #dc2626;
+            --so-success: #15803d;
+            --so-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+            --so-radius: 18px;
+            --so-primary-border: rgba(37, 99, 235, 0.16);
+            --so-secondary-border: rgba(15, 118, 110, 0.16);
           }
 
           .stApp {
-            background: radial-gradient(1200px 600px at 20% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
-                        radial-gradient(900px 500px at 90% 0%, rgba(59, 130, 246, 0.10), transparent 55%),
+            background: radial-gradient(900px 460px at 10% -10%, rgba(15, 118, 110, 0.10), transparent 58%),
+                        radial-gradient(780px 420px at 95% 0%, rgba(37, 99, 235, 0.10), transparent 52%),
                         var(--so-bg);
             color: var(--so-text);
           }
 
+          .block-container {
+            padding-top: 1.35rem;
+            padding-bottom: 2rem;
+          }
+
           section[data-testid="stSidebar"] {
-            background: rgba(255, 255, 255, 0.70);
+            background: rgba(255, 255, 255, 0.86);
             border-right: 1px solid rgba(15, 23, 42, 0.06);
+          }
+
+          section[data-testid="stSidebar"] .stMarkdown,
+          section[data-testid="stSidebar"] .stCaption,
+          section[data-testid="stSidebar"] label {
+            line-height: 1.45;
           }
 
           .hero-card,
           .primary-action-card,
           .secondary-action-card,
-          .status-card {
+          .status-card,
+          .workflow-step-card {
             background: var(--so-surface);
             border: 1px solid var(--so-border);
             border-radius: var(--so-radius);
             box-shadow: var(--so-shadow);
-            padding: 18px 18px;
-            margin: 6px 0 14px 0;
+            padding: 16px 18px;
+            margin: 4px 0 14px 0;
           }
 
           .primary-action-card {
-            background: linear-gradient(135deg, rgba(236, 253, 245, 0.98), rgba(255, 251, 235, 0.92));
+            background: linear-gradient(135deg, rgba(239, 246, 255, 0.98), rgba(248, 250, 252, 0.95));
             border-color: var(--so-primary-border);
           }
 
           .secondary-action-card {
-            background: linear-gradient(135deg, rgba(239, 246, 255, 0.98), rgba(248, 250, 252, 0.92));
+            background: linear-gradient(135deg, rgba(240, 253, 250, 0.98), rgba(248, 250, 252, 0.95));
             border-color: var(--so-secondary-border);
           }
 
-          .hero-title {
+          .workflow-step-card {
+            min-height: 116px;
+          }
+
+          .hero-row {
             display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 26px;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+          }
+
+          .hero-title {
+            font-size: 28px;
             font-weight: 800;
             letter-spacing: -0.02em;
             margin: 0;
@@ -146,37 +169,38 @@ def inject_global_css() -> None:
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 5px 10px;
+            padding: 4px 10px;
             border-radius: 999px;
-            background: rgba(16, 185, 129, 0.12);
-            border: 1px solid rgba(16, 185, 129, 0.30);
+            background: rgba(37, 99, 235, 0.08);
+            border: 1px solid rgba(37, 99, 235, 0.18);
             color: rgba(15, 23, 42, 0.85);
             font-weight: 700;
-            font-size: 13px;
+            font-size: 12px;
             white-space: nowrap;
           }
 
           .hero-subtitle {
-            margin: 8px 0 0 0;
+            margin: 6px 0 0 0;
             color: var(--so-muted);
             font-size: 14px;
             line-height: 1.55;
+            max-width: 760px;
           }
 
           .feature-chips {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            margin-top: 12px;
+            margin-top: 10px;
           }
 
           .feature-chip {
             display: inline-flex;
             align-items: center;
-            padding: 6px 10px;
+            padding: 5px 10px;
             border-radius: 999px;
-            background: rgba(2, 132, 199, 0.08);
-            border: 1px solid rgba(2, 132, 199, 0.20);
+            background: rgba(15, 118, 110, 0.08);
+            border: 1px solid rgba(15, 118, 110, 0.16);
             color: rgba(15, 23, 42, 0.85);
             font-weight: 650;
             font-size: 12.5px;
@@ -186,14 +210,14 @@ def inject_global_css() -> None:
           .card-title {
             font-size: 16px;
             font-weight: 800;
-            margin: 0 0 8px 0;
+            margin: 0 0 6px 0;
           }
 
           .card-muted {
             color: var(--so-muted);
             font-size: 13px;
             line-height: 1.55;
-            margin: 0 0 8px 0;
+            margin: 0;
           }
 
           .status-metric {
@@ -206,6 +230,11 @@ def inject_global_css() -> None:
             color: var(--so-muted);
             font-size: 12.5px;
             margin-top: 4px;
+          }
+
+          .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, var(--so-accent-2), #1d4ed8);
+            border: 1px solid rgba(37, 99, 235, 0.22);
           }
         </style>
         """,

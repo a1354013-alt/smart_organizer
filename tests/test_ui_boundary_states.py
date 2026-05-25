@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import ui_records
 import ui_search
 import ui_upload
+from i18n import t
 
 
 def _noop(*args, **kwargs):  # noqa: ANN001, ANN002
@@ -127,7 +128,14 @@ def test_render_search_no_results_shows_info(monkeypatch):
 def test_render_records_empty_results_show_reset_hint(monkeypatch):
     infos: list[str] = []
     captions: list[str] = []
-    select_values = iter(["All", "All", "All", 25])
+    select_values = iter(
+        [
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            25,
+        ]
+    )
     fake_st = SimpleNamespace(
         header=_noop,
         columns=lambda sizes: _columns(sizes if isinstance(sizes, int) else len(sizes)),
@@ -151,13 +159,20 @@ def test_render_records_empty_results_show_reset_hint(monkeypatch):
 
     ui_records.render_records(SimpleNamespace(storage=storage, pandas=None, processor=object()))
 
-    assert infos == ["No records match the current filters."]
-    assert "Reset filters or clear search to bring records back into view." in captions
+    assert infos == [t("search_records.records_empty")]
+    assert t("search_records.records_reset_hint") in captions
 
 
 def test_render_records_refresh_failure_uses_ui_error_handler(monkeypatch):
     handled: list[tuple[str, str]] = []
-    select_values = iter(["All", "All", "All", 25])
+    select_values = iter(
+        [
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            t("search_records.records_filters.all"),
+            25,
+        ]
+    )
     button_values = iter([True, False, False])
     fake_st = SimpleNamespace(
         header=_noop,
@@ -188,4 +203,4 @@ def test_render_records_refresh_failure_uses_ui_error_handler(monkeypatch):
 
     ui_records.render_records(SimpleNamespace(storage=storage, pandas=None, processor=object()))
 
-    assert handled == [("Failed to refresh file locations.", "refresh failed")]
+    assert handled == [(t("search_records.refresh_failed"), "refresh failed")]

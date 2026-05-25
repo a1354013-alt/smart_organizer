@@ -8,8 +8,8 @@ from typing import cast
 import app_main
 import ui_home
 import ui_state
+from i18n import DEFAULT_LANGUAGE, t
 from ui_common import UIContext
-from version import APP_NAME
 
 
 def _noop(*args, **kwargs):  # noqa: ANN001, ANN002
@@ -44,6 +44,14 @@ class _Sidebar:
         self.parent.calls.append(("sidebar.expander", args[0] if args else ""))
         return nullcontext()
 
+    def selectbox(self, label: str, options, index=0, format_func=None, key=None):  # noqa: ANN001, ANN003
+        del format_func
+        self.parent.calls.append(("sidebar.selectbox", label))
+        value = options[index]
+        if key:
+            self.parent.session_state[key] = value
+        return value
+
 
 class _FakeStreamlit:
     def __init__(self) -> None:
@@ -64,7 +72,7 @@ class _FakeStreamlit:
 
     def button(self, label: str, **kwargs) -> bool:  # noqa: ANN003
         self.calls.append(("button", label))
-        return label == "Check dependencies"
+        return label == t("sidebar.check_dependencies")
 
     def checkbox(self, label: str, value: bool = False, **kwargs) -> bool:  # noqa: ANN003
         self.calls.append(("checkbox", label))
@@ -92,6 +100,12 @@ class _FakeStreamlit:
     def json(self, value: object) -> None:
         self.calls.append(("json", value))
 
+    def header(self, value: str) -> None:
+        self.calls.append(("header", value))
+
+    def divider(self) -> None:
+        self.calls.append(("divider", None))
+
 
 def test_app_entrypoints_are_importable():
     assert callable(app_main.main)
@@ -105,7 +119,7 @@ def test_page_config_smoke(monkeypatch):
 
     app_main._configure_page()
 
-    assert ("set_page_config", {"page_title": APP_NAME, "layout": "wide"}) in fake_st.calls
+    assert ("set_page_config", {"page_title": t("app.page_title", lang=DEFAULT_LANGUAGE), "layout": "wide"}) in fake_st.calls
 
 
 def test_session_state_defaults_are_initialized_without_existing_keys(monkeypatch):
@@ -144,18 +158,12 @@ def test_app_main_renders_tabs_with_mocked_sections(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(app_main, "render_upload", lambda _ctx: rendered.append("upload"))
     monkeypatch.setattr(app_main, "render_review", lambda _ctx: rendered.append("review"))
     monkeypatch.setattr(app_main, "render_execute", lambda _ctx: rendered.append("execute"))
-    monkeypatch.setattr(app_main, "render_search", lambda _ctx: rendered.append("search"))
-    monkeypatch.setattr(app_main, "render_records", lambda _ctx: rendered.append("records"))
+    monkeypatch.setattr(app_main, "render_search", lambda _ctx, show_header=False: rendered.append("search"))
+    monkeypatch.setattr(app_main, "render_records", lambda _ctx, show_header=False: rendered.append("records"))
 
     app_main.main()
 
-    assert ("tabs", (
-        "Advanced Upload",
-        "Review Uploads",
-        "Execute Upload Organizer",
-        "Search Records",
-        "Records",
-    )) in fake_st.calls
+    assert ("tabs", tuple(app_main.get_main_tab_labels())) in fake_st.calls
     assert rendered == ["css", "state", "sidebar", "home", "upload", "review", "execute", "search", "records"]
 
 
@@ -185,7 +193,7 @@ def test_sidebar_dependency_fallback_smoke(monkeypatch, tmp_path: Path):
 
     ui_home.render_sidebar(context)
 
-    assert ("success", "Dependency check completed.") in fake_st.calls
+    assert ("success", t("sidebar.dependency_check_success")) in fake_st.calls
     assert any(
         call[0] == "deps"
         and isinstance(call[1], dict)
