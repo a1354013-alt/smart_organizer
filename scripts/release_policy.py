@@ -88,6 +88,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
 
 SOURCE_ONLY_RELEASE_FILES: tuple[str, ...] = (
     "scripts/__init__.py",
+    "scripts/build_release_zip.py",
     "scripts/check_workspace_clean.py",
     "scripts/create_release_zip.py",
     "scripts/release_policy.py",

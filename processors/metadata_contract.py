@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from contracts import ExtractedMetadata, FileType, VideoMetadata, validate_extracted_metadata
+from contracts import (
+    ExtractedMetadata,
+    FileType,
+    OCRStatus,
+    VideoMetadata,
+    validate_extracted_metadata,
+)
 from core_utils import FileUtils
 
 
@@ -11,6 +17,7 @@ def build_metadata_payload(
     extracted_text: str,
     is_scanned: bool,
     preview_path: str | None,
+    ocr_status: OCRStatus | None = None,
     ocr_error: str | None,
     notes: list[str],
     video: VideoMetadata | None = None,
@@ -21,6 +28,7 @@ def build_metadata_payload(
         "extracted_text": extracted_text or "",
         "is_scanned": bool(is_scanned),
         "preview_path": preview_path,
+        "ocr_status": ocr_status,
         "ocr_error": ocr_error,
         "notes": notes,
     }
@@ -36,6 +44,7 @@ def build_invalid_video_metadata(
     extracted_text: str,
     is_scanned: bool,
     preview_path: str | None,
+    ocr_status: OCRStatus | None = None,
     ocr_error: str | None,
     notes: list[str],
     video: VideoMetadata,
@@ -46,6 +55,7 @@ def build_invalid_video_metadata(
         extracted_text=extracted_text,
         is_scanned=is_scanned,
         preview_path=preview_path,
+        ocr_status=ocr_status,
         ocr_error=ocr_error,
         notes=notes,
         video=video,

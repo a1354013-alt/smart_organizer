@@ -80,3 +80,32 @@ def test_build_invalid_video_metadata_keeps_duplicate_safe_contract():
     assert metadata["file_type"] == "video"
     assert metadata["video"]["media_type"] == "video"
     assert metadata["notes"] == ["partial: invalid container"]
+
+
+def test_build_metadata_payload_keeps_ocr_status_and_sanitizes_invalid_video_numbers():
+    metadata = build_metadata_payload(
+        file_type="video",
+        standard_date="2026-05-25",
+        extracted_text="clip",
+        is_scanned=False,
+        preview_path=None,
+        ocr_status="timeout",
+        ocr_error="OCR timed out.",
+        notes=["degraded: ocr timeout"],
+        video={
+            "media_type": "video",
+            "duration_seconds": "-1",
+            "width": "not-a-number",
+            "height": "1080",
+            "fps": "29.97",
+            "file_size": "nan",
+        },
+    )
+
+    assert metadata["ocr_status"] == "timeout"
+    assert metadata["ocr_error"] == "OCR timed out."
+    assert metadata["video"]["duration_seconds"] is None
+    assert metadata["video"]["width"] is None
+    assert metadata["video"]["height"] == 1080
+    assert metadata["video"]["fps"] == 29.97
+    assert metadata["video"]["file_size"] is None

@@ -10,12 +10,12 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
-from contracts import ExtractedMetadata, FileType, VideoMetadata
+from contracts import ExtractedMetadata, FileType, OCRStatus, VideoMetadata
 from core_classification import classify_multi_tag as _classify_multi_tag
 from core_classification import sync_manual_topic as _sync_manual_topic
 from core_utils import FileUtils
 from processors.dependency_status import build_dependency_status
-from processors.image_processor import get_photo_date, ocr_image
+from processors.image_processor import OCRImageResult, get_photo_date, ocr_image
 from processors.llm_summary import generate_llm_summary
 from processors.metadata_contract import build_invalid_video_metadata, build_metadata_payload
 from processors.optional_deps import (
@@ -170,6 +170,7 @@ class FileProcessor:
         extracted_text = ""
         is_scanned = False
         preview_path: str | None = None
+        ocr_status: OCRStatus | None = None
         ocr_error: str | None = None
         notes: list[str] = []
         video: VideoMetadata | None = None
@@ -215,6 +216,7 @@ class FileProcessor:
                         extracted_text=extracted_text,
                         is_scanned=is_scanned,
                         preview_path=preview_path,
+                        ocr_status=ocr_status,
                         ocr_error=ocr_error,
                         notes=notes,
                         video=video,
@@ -293,22 +295,32 @@ class FileProcessor:
                     if ocr_text and len(ocr_text.strip()) > 10:
                         is_scanned = True
                         extracted_text = (extracted_text + "\n" + ocr_text).strip()
+                        ocr_status = "success"
                     elif ocr_err:
+                        ocr_status = self._pdf_ocr_status_from_error(ocr_err)
                         ocr_error = ocr_err
                         notes.append(_warning_note("degraded", f"PDF OCR failed: {ocr_err}"))
+                    else:
+                        ocr_status = "empty_text"
                 else:
                     notes.append("OCR is disabled.")
+                    ocr_status = "disabled"
                     ocr_error = "OCR is disabled."
                     if not extracted_text.strip():
                         is_scanned = True
 
         if file_type == "photo" and bool(options.get("enable_ocr", False)):
-            try:
-                extracted_text = self._ocr_image(file_path) or extracted_text
-            except (OSError, RuntimeError, ValueError) as exc:
-                ocr_error = str(exc)
+            ocr_result = self._ocr_image(file_path)
+            ocr_status = ocr_result.status
+            if ocr_result.text:
+                extracted_text = ocr_result.text
+            if ocr_result.error:
+                ocr_error = ocr_result.error
+                notes.append(_warning_note("degraded", f"Image OCR {ocr_result.status}: {ocr_result.error}"))
         elif file_type == "photo":
             notes.append("OCR is disabled.")
+            ocr_status = "disabled"
+            ocr_error = "OCR is disabled."
 
         return build_metadata_payload(
             file_type=file_type,
@@ -316,13 +328,22 @@ class FileProcessor:
             extracted_text=extracted_text,
             is_scanned=is_scanned,
             preview_path=preview_path,
+            ocr_status=ocr_status,
             ocr_error=ocr_error,
             notes=notes,
             video=video,
         )
 
-    def _ocr_image(self, file_path: str) -> str:
+    def _ocr_image(self, file_path: str) -> OCRImageResult:
         return ocr_image(file_path, image_module=Image, pytesseract_module=pytesseract)
+
+    def _pdf_ocr_status_from_error(self, error: str | None) -> OCRStatus:
+        message = str(error or "").strip().lower()
+        if "timeout" in message:
+            return "timeout"
+        if "dependencies_missing" in message or "unavailable" in message:
+            return "unavailable"
+        return "failed"
 
     def _generate_pdf_preview(
         self,

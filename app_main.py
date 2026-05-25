@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import importlib
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -47,9 +48,16 @@ def _register_storage_close(storage: StorageManager) -> None:
 
 
 @st.cache_resource
-def _bootstrap_services() -> tuple[FileProcessor, StorageManager]:
+def _bootstrap_services(
+    db_path: str | Path | None = None,
+    repo_root: str | Path | None = None,
+    upload_dir: str | Path | None = None,
+) -> tuple[FileProcessor, StorageManager]:
+    resolved_db_path = Path(db_path) if db_path is not None else DB_PATH
+    resolved_repo_root = Path(repo_root) if repo_root is not None else REPO_ROOT
+    resolved_upload_dir = Path(upload_dir) if upload_dir is not None else UPLOAD_DIR
     processor = FileProcessor()
-    storage = StorageManager(str(DB_PATH), str(REPO_ROOT), str(UPLOAD_DIR))
+    storage = StorageManager(str(resolved_db_path), str(resolved_repo_root), str(resolved_upload_dir))
     _register_storage_close(storage)
     return processor, storage
 

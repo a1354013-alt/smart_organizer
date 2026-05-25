@@ -13,6 +13,12 @@ powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1
 Or:
 
 ```bash
+python scripts/build_release_zip.py
+```
+
+Compatibility alias:
+
+```bash
 python scripts/create_release_zip.py
 ```
 
@@ -54,6 +60,7 @@ Not included:
 
 Source-only scripts stay in the source repository and are not shipped in the runtime zip:
 
+- `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
 - `scripts/create_release_zip.py`
 - `scripts/release_policy.py`
@@ -82,6 +89,7 @@ The release zip is intended for:
 These commands belong to the source repository, not the runtime package, because the source-only scripts stay in the source repository:
 
 - `python scripts/create_release_zip.py`
+- `python scripts/build_release_zip.py`
 - `powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1`
 - `python -m pytest`
 - `python -m mypy`

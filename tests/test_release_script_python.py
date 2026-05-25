@@ -139,6 +139,25 @@ def test_python_release_script_builds_clean_zip(tmp_path):
         assert source_only_path not in names
 
 
+def test_build_release_zip_wrapper_script_creates_release_zip(tmp_path: Path):
+    zip_path = tmp_path / "wrapper-package.zip"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "build_release_zip.py"),
+            "--output-dir",
+            str(tmp_path),
+            "--zip-name",
+            zip_path.name,
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+
+    assert zip_path.exists()
+
+
 def test_get_version_uses_static_parsing(monkeypatch):
     import scripts.create_release_zip as release_script
 

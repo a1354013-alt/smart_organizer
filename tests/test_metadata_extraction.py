@@ -38,6 +38,7 @@ def test_extract_metadata_image_ocr_disabled_note(tmp_path: Path):
     metadata = processor.extract_metadata(str(image_path), {"enable_ocr": False})
     assert metadata["file_type"] == "photo"
     assert metadata["preview_path"] == str(image_path)
+    assert metadata["ocr_status"] == "disabled"
     assert any("OCR is disabled." in note for note in metadata.get("notes", []))
 
 
@@ -52,3 +53,40 @@ def test_extract_metadata_video_reports_degraded_dependency_warning(monkeypatch,
     assert metadata["file_type"] == "video"
     assert any("degraded:" in note.lower() for note in metadata.get("notes", []))
     assert metadata["video"]["ffprobe_error"] is not None
+
+
+def test_extract_metadata_photo_ocr_unavailable_sets_status(monkeypatch, tmp_path: Path):
+    image_path = tmp_path / "a.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+    monkeypatch.setattr(core_processor, "Image", None)
+    monkeypatch.setattr(core_processor, "pytesseract", None)
+
+    metadata = FileProcessor().extract_metadata(str(image_path), {"enable_ocr": True})
+
+    assert metadata["ocr_status"] == "unavailable"
+    assert metadata["ocr_error"] == "OCR dependencies are unavailable."
+    assert any("Image OCR unavailable" in note for note in metadata.get("notes", []))
+
+
+def test_extract_metadata_photo_ocr_empty_text_sets_status(monkeypatch, tmp_path: Path):
+    image_path = tmp_path / "a.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+    class FakeImageModule:
+        @staticmethod
+        def open(_path: str) -> object:
+            return object()
+
+    class FakeTesseract:
+        @staticmethod
+        def image_to_string(_image: object, **_kwargs) -> str:
+            return "   "
+
+    monkeypatch.setattr(core_processor, "Image", FakeImageModule)
+    monkeypatch.setattr(core_processor, "pytesseract", FakeTesseract)
+
+    metadata = FileProcessor().extract_metadata(str(image_path), {"enable_ocr": True})
+
+    assert metadata["ocr_status"] == "empty_text"
+    assert metadata["ocr_error"] is None
