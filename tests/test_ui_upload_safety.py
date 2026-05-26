@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from i18n import t
-from ui_common import safe_css_class_name, safe_display_text
-from ui_upload import validate_upload_batch_limits
+from ui_common import UIContext, safe_css_class_name, safe_display_text
+from ui_upload import resolve_upload_limits, validate_upload_batch_limits
 
 
 @dataclass
@@ -51,3 +52,44 @@ def test_upload_per_file_limit_escapes_filename_in_error():
     assert len(errors) == 1
     assert "&lt;b&gt;bad.pdf" in errors[0]
     assert t("upload.limit_file", name="&lt;b&gt;bad.pdf", size="11 B", max_size="10 B") == errors[0]
+
+
+def test_upload_batch_limit_reports_when_total_exceeds_even_if_each_file_is_individually_valid():
+    errors = validate_upload_batch_limits(
+        [
+            FakeUpload(name="first.pdf", size=9),
+            FakeUpload(name="second.pdf", size=9),
+        ],
+        max_file_bytes=10,
+        max_batch_bytes=16,
+    )
+
+    assert errors == [t("upload.limit_batch", size="18 B", max_size="16 B")]
+
+
+def test_upload_batch_limits_allow_valid_multi_file_selection():
+    errors = validate_upload_batch_limits(
+        [
+            FakeUpload(name="first.pdf", size=4),
+            FakeUpload(name="second.pdf", size=5),
+        ],
+        max_file_bytes=10,
+        max_batch_bytes=12,
+    )
+
+    assert errors == []
+
+
+def test_resolve_upload_limits_uses_explicit_batch_limit():
+    context = UIContext(
+        processor=object(),
+        storage=object(),
+        project_root=Path("."),
+        upload_dir=Path("uploads"),
+        repo_root=Path("repo"),
+        db_path=Path("app.db"),
+        max_upload_bytes=10,
+        max_upload_batch_bytes=30,
+    )
+
+    assert resolve_upload_limits(context) == (10, 30)

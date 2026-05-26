@@ -10,7 +10,7 @@ from typing import Any
 from contracts import validate_extracted_metadata
 from core import FileProcessor
 from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo, UploadedFileData
-from storage import StorageManager
+from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES, StorageManager
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 logger = logging.getLogger(__name__)
@@ -189,8 +189,20 @@ def analyze_upload_batch(
     results: list[AnalysisResult] = []
     duplicates: list[DuplicateInfo] = []
     errors: list[str] = []
+    batch_size = sum(len(upload.content) for upload in upload_list)
+
+    if batch_size > MAX_UPLOAD_BATCH_BYTES:
+        errors.append(
+            f"Batch size {batch_size} bytes exceeds the upload batch limit of {MAX_UPLOAD_BATCH_BYTES} bytes."
+        )
+        return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)
 
     for index, uploaded in enumerate(upload_list, start=1):
+        if len(uploaded.content) > MAX_UPLOAD_BYTES:
+            errors.append(
+                f"{uploaded.name}: file size {len(uploaded.content)} bytes exceeds the per-file limit of {MAX_UPLOAD_BYTES} bytes."
+            )
+            continue
         if progress_callback is not None:
             progress_callback(index, total, uploaded)
         analyzed, dup, err = analyze_one_upload(

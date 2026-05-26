@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 
 from core import FileProcessor
-from services import UploadedFileData, analyze_one_upload, finalize_one_file
+from services import UploadedFileData, analyze_one_upload, analyze_upload_batch, finalize_one_file
 from storage import StorageManager
-from storage_base import MAX_UPLOAD_BYTES
+from storage_base import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES
 
 
 def test_analyze_and_finalize_in_mem_mode():
@@ -84,3 +84,24 @@ def test_analyze_one_upload_preserves_large_file_message():
     assert duplicate is None
     assert error is not None
     assert "File exceeds upload limit" in error
+
+
+def test_analyze_upload_batch_rejects_total_batch_limit():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    processor = FileProcessor()
+    chunk = (MAX_UPLOAD_BATCH_BYTES // 2) + 1
+    uploads = [
+        UploadedFileData(name="first.pdf", content=b"%PDF-" + (b"0" * (chunk - 5)), mime_type="application/pdf"),
+        UploadedFileData(name="second.pdf", content=b"%PDF-" + (b"1" * (chunk - 5)), mime_type="application/pdf"),
+    ]
+
+    outcome = analyze_upload_batch(
+        uploads,
+        processor=processor,
+        storage=storage,
+        processing_options={"enable_ocr": False, "enable_pdf_preview": False},
+    )
+
+    assert outcome.results == []
+    assert len(outcome.errors) == 1
+    assert "upload batch limit" in outcome.errors[0]

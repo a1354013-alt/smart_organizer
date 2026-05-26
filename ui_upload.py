@@ -7,7 +7,7 @@ import streamlit as st
 
 from i18n import t
 from services import UploadedFileData, analyze_upload_batch
-from storage import MAX_UPLOAD_BYTES
+from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES
 from supported_formats import SUPPORTED_UPLOAD_EXTENSIONS, supported_upload_extensions_label
 from ui_common import (
     UIContext,
@@ -58,13 +58,25 @@ def validate_upload_batch_limits(
     return errors
 
 
+def resolve_upload_limits(context: UIContext) -> tuple[int, int]:
+    max_file_bytes = int(getattr(context, "max_upload_bytes", MAX_UPLOAD_BYTES))
+    max_batch_bytes = int(getattr(context, "max_upload_batch_bytes", MAX_UPLOAD_BATCH_BYTES))
+    return max_file_bytes, max(max_file_bytes, max_batch_bytes)
+
+
 def render_upload(context: UIContext) -> None:
     st.header(t("upload.title"))
     st.markdown(t("upload.description"))
     st.caption(t("upload.supported_formats", formats=get_supported_upload_caption()))
 
-    max_upload_bytes = int(getattr(context, "max_upload_bytes", MAX_UPLOAD_BYTES))
-    batch_limit_bytes = max(max_upload_bytes, max_upload_bytes * 2)
+    max_upload_bytes, batch_limit_bytes = resolve_upload_limits(context)
+    st.caption(
+        t(
+            "upload.limit_summary",
+            file_size=format_bytes(max_upload_bytes),
+            batch_size=format_bytes(batch_limit_bytes),
+        )
+    )
     st.caption(t("upload.batch_guidance", size=format_bytes(batch_limit_bytes)))
 
     uploaded_files = st.file_uploader(

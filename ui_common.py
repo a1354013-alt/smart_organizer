@@ -22,6 +22,7 @@ class UIContext:
     repo_root: Path
     db_path: Path
     max_upload_bytes: int
+    max_upload_batch_bytes: int = 0
     pandas: Any = None
     plt: Any = None
 

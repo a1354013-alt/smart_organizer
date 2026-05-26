@@ -13,7 +13,7 @@ from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -39,6 +39,15 @@ PROCESS_TERMINATE_GRACE_SECONDS = 1.0
 PROCESS_KILL_GRACE_SECONDS = 1.0
 READER_JOIN_GRACE_SECONDS = 1.0
 DRAIN_AFTER_TERMINATE_GRACE_SECONDS = 0.25
+
+
+class SupportsWriteFlush(Protocol):
+    encoding: str | None
+    buffer: Any
+
+    def write(self, text: str) -> object: ...
+
+    def flush(self) -> object: ...
 
 
 class OutputTail:
@@ -163,49 +172,62 @@ def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        killpg = getattr(os, "killpg", None)
-        sigkill = getattr(signal, "SIGKILL", None)
-        if killpg is not None and sigkill is not None:
-            with suppress(ProcessLookupError):
-                killpg(proc.pid, sigkill)
-        with suppress(ProcessLookupError):
+        _taskkill_process_tree(proc.pid, force=True)
+        with suppress(ProcessLookupError, OSError):
             proc.kill()
-
-
-def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
-    if proc.poll() is not None:
         return
-    with suppress(Exception):
-        proc.send_signal(signal.CTRL_BREAK_EVENT)
-    with suppress(Exception):
-        proc.terminate()
+
+    killpg = getattr(os, "killpg", None)
+    sigkill = getattr(signal, "SIGKILL", None)
+    if killpg is not None and sigkill is not None:
+        with suppress(ProcessLookupError):
+            killpg(proc.pid, sigkill)
+    with suppress(ProcessLookupError, OSError):
+        proc.kill()
+
+
+def _taskkill_process_tree(pid: int, *, force: bool) -> None:
+    command = ["taskkill", "/T", "/PID", str(pid)]
+    if force:
+        command.insert(1, "/F")
     subprocess.run(
-        ["taskkill", "/T", "/PID", str(proc.pid)],
+        command,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
 
 
+def _windows_ctrl_break_event() -> int | None:
+    if os.name != "nt":
+        return None
+    value = getattr(signal, "CTRL_BREAK_EVENT", None)
+    return int(value) if isinstance(value, int) else None
+
+
+def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
+    if proc.poll() is not None:
+        return
+    ctrl_break_event = _windows_ctrl_break_event()
+    if ctrl_break_event is not None:
+        with suppress(OSError, ValueError):
+            proc.send_signal(ctrl_break_event)
+    with suppress(ProcessLookupError, OSError):
+        proc.terminate()
+    _taskkill_process_tree(proc.pid, force=False)
+
+
 def _terminate_process(proc: subprocess.Popen[Any], *, deadline: float) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
-        with suppress(Exception):
-            _terminate_process_tree_windows(proc)
+        _terminate_process_tree_windows(proc)
     else:
         killpg = getattr(os, "killpg", None)
         if killpg is not None:
             with suppress(ProcessLookupError):
                 killpg(proc.pid, signal.SIGTERM)
-        with suppress(ProcessLookupError):
+        with suppress(ProcessLookupError, OSError):
             proc.terminate()
     terminate_deadline = min(deadline, time.perf_counter() + PROCESS_TERMINATE_GRACE_SECONDS)
     if _wait_until(proc, terminate_deadline):
@@ -296,10 +318,10 @@ def _print_timeout_tail(result: StepTimeoutResult) -> None:
         return
     print(f"Last {len(lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
     for line in lines:
-        _write_text(sys.stderr, line + "\n")
+        _write_text(cast(SupportsWriteFlush, sys.stderr), line + "\n")
 
 
-def _write_text(target: Any, text: str) -> None:
+def _write_text(target: SupportsWriteFlush, text: str) -> None:
     try:
         target.write(text)
         target.flush()
@@ -359,7 +381,7 @@ def _format_timeout_message(result: StepTimeoutResult) -> str:
 def _handle_output_chunk(stream_name: str, chunk: bytes, tail: OutputTail) -> None:
     text = chunk.decode(STREAM_ENCODING, errors="replace")
     tail.append(stream_name, text)
-    target = sys.stderr if stream_name == "stderr" else sys.stdout
+    target = cast(SupportsWriteFlush, sys.stderr if stream_name == "stderr" else sys.stdout)
     _write_text(target, text)
 
 

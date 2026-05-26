@@ -109,13 +109,10 @@ def test_search_content_fts_and_fallback():
 
 def test_migration_failure_aborts_startup(tmp_path: Path):
     db_path = os.path.join(str(tmp_path), "bad.db")
-    conn = sqlite3.connect(db_path)
-    try:
+    with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute('INSERT INTO sys_config(key, value) VALUES ("schema_version", "not-an-int")')
         conn.commit()
-    finally:
-        conn.close()
 
     with pytest.raises(RuntimeError):
         StorageManager(db_path, ":memory:", ":memory:")
@@ -126,6 +123,15 @@ def test_close_is_idempotent():
 
     storage.close()
     storage.close()
+
+
+def test_storage_manager_context_manager_closes_keepalive_connection():
+    with StorageManager(":memory:", ":memory:", ":memory:") as storage:
+        record = storage.create_temp_file("invoice.pdf", _minimal_pdf_bytes(), "hash-context", "document")
+        assert record["success"] is True
+
+    with pytest.raises(RuntimeError, match="closed"):
+        storage.get_file_by_id(1)
 
 
 def test_get_records_page_escapes_like_wildcards():

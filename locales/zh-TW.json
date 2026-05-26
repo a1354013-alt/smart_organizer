@@ -37,6 +37,7 @@
     "pdf_text_pages": "PDF 文字擷取頁數",
     "pdf_ocr_pages": "PDF OCR 頁數",
     "upload_limit": "單檔上傳上限：{size}",
+    "upload_limits": "上傳限制：單檔 {file_size}，單次批次 {batch_size}",
     "development_info_title": "開發資訊",
     "workspace": {
       "project_root": "project root",
@@ -170,6 +171,7 @@
     "title": "上傳檔案分析",
     "description": "上傳 PDF、圖片或影片，系統會嘗試擷取文字、預覽圖與分類建議。",
     "supported_formats": "支援格式：{formats}",
+    "limit_summary": "上傳限制：單檔 {file_size}，單次批次 {batch_size}。",
     "batch_guidance": "批次建議：分析時會暫存到記憶體，建議分批上傳。當前批次上限：{size}。",
     "uploader_label": "選擇要分析的檔案",
     "empty": "還沒有上傳檔案：請先上傳 PDF、圖片或影片進行分析。",

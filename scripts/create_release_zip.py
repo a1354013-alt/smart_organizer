@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,9 @@ RELEASE_ALLOWLIST_GROUPS = {
 RELEASE_ALLOWLIST = list(RUNTIME_RELEASE_ALLOWLIST)
 FORBIDDEN_PATTERNS = list(FORBIDDEN_RELEASE_PATTERNS)
 
+STAGING_CLEANUP_RETRIES = 20
+STAGING_CLEANUP_DELAY_SECONDS = 0.1
+
 
 def get_version() -> str:
     version_path = PROJECT_ROOT / "version.py"
@@ -37,6 +41,24 @@ def get_version() -> str:
     if not match:
         raise RuntimeError(f"Could not parse __version__ from {version_path}")
     return match.group(1)
+
+
+def _remove_tree_with_retries(path: Path) -> None:
+    if not path.exists():
+        return
+    last_error: OSError | None = None
+    for attempt in range(STAGING_CLEANUP_RETRIES):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt + 1 >= STAGING_CLEANUP_RETRIES:
+                break
+            time.sleep(STAGING_CLEANUP_DELAY_SECONDS)
+    raise OSError(f"Failed to remove staging directory {path}: {last_error}") from last_error
 
 
 def build_zip(output_dir: Path, zip_name: str | None = None) -> Path:
@@ -52,7 +74,7 @@ def build_zip(output_dir: Path, zip_name: str | None = None) -> Path:
     staging_dir = output_dir / f"_staging_{timestamp}"
 
     if staging_dir.exists():
-        shutil.rmtree(staging_dir)
+        _remove_tree_with_retries(staging_dir)
 
     staging_dir.mkdir(parents=True)
 
@@ -82,7 +104,7 @@ def build_zip(output_dir: Path, zip_name: str | None = None) -> Path:
                     arcname=relative.replace(os.sep, "/"),
                 )
     finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        _remove_tree_with_retries(staging_dir)
 
     return zip_path
 

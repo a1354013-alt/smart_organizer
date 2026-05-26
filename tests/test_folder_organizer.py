@@ -470,7 +470,9 @@ def test_same_content_duplicate_detects_empty_files(tmp_path: Path):
 
 def test_duplicate_hash_failure_does_not_crash(monkeypatch, tmp_path: Path):
     target = tmp_path / "locked.txt"
+    peer = tmp_path / "peer.txt"
     target.write_text("locked", encoding="utf-8")
+    peer.write_text("peer!!", encoding="utf-8")
 
     import folder_organizer as organizer_module
 
@@ -478,4 +480,52 @@ def test_duplicate_hash_failure_does_not_crash(monkeypatch, tmp_path: Path):
 
     scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
 
-    assert scan["records"][0]["duplicate_reason"] == "hash unavailable: blocked"
+    assert all(row["duplicate_reason"] == "hash unavailable: blocked" for row in scan["records"])
+
+
+def test_duplicate_hashing_skips_unique_file_sizes(monkeypatch, tmp_path: Path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two-two", encoding="utf-8")
+
+    import folder_organizer as organizer_module
+
+    hashed_paths: list[str] = []
+    original_hash = organizer_module._hash_file
+
+    def tracking_hash(path: Path):
+        hashed_paths.append(str(path))
+        return original_hash(path)
+
+    monkeypatch.setattr(organizer_module, "_hash_file", tracking_hash)
+
+    scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+
+    assert hashed_paths == []
+
+
+def test_duplicate_hashing_only_hashes_same_size_groups(monkeypatch, tmp_path: Path):
+    first = tmp_path / "a" / "first.txt"
+    second = tmp_path / "b" / "second.txt"
+    third = tmp_path / "c" / "third.txt"
+    for path in (first, second, third):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    first.write_text("same-size-a", encoding="utf-8")
+    second.write_text("same-size-b", encoding="utf-8")
+    third.write_text("different", encoding="utf-8")
+
+    import folder_organizer as organizer_module
+
+    hashed_paths: list[str] = []
+    original_hash = organizer_module._hash_file
+
+    def tracking_hash(path: Path):
+        hashed_paths.append(str(path))
+        return original_hash(path)
+
+    monkeypatch.setattr(organizer_module, "_hash_file", tracking_hash)
+
+    scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+
+    assert sorted(hashed_paths) == sorted([str(first), str(second)])

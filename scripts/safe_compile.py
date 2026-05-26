@@ -12,8 +12,26 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.safe_compileall import main
 
+
+def _snapshot_pycache_dirs(root: Path) -> set[Path]:
+    return {path.resolve() for path in root.rglob("__pycache__")}
+
+
+def _cleanup_new_pycache_dirs(root: Path, before: set[Path]) -> None:
+    for path in sorted(_snapshot_pycache_dirs(root) - before, reverse=True):
+        if not path.is_dir():
+            continue
+        for child in path.iterdir():
+            if child.is_file():
+                child.unlink(missing_ok=True)
+        path.rmdir()
+
 if __name__ == "__main__":
     has_target = any(not token.startswith("-") for token in sys.argv[1:])
     if not has_target:
         sys.argv.append(str(PROJECT_ROOT))
-    main()
+    pycache_before = _snapshot_pycache_dirs(PROJECT_ROOT)
+    try:
+        main()
+    finally:
+        _cleanup_new_pycache_dirs(PROJECT_ROOT, pycache_before)

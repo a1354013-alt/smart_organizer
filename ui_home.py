@@ -205,7 +205,15 @@ def render_sidebar(context: UIContext) -> None:
             max(1, min(5, int(getattr(context.processor, "pdf_ocr_max_pages", 3)))),
             key="pdf_ocr_max_pages",
         )
-        st.caption(t("sidebar.upload_limit", size=f"{int(context.max_upload_bytes / (1024 * 1024))} MB"))
+        batch_upload_bytes = int(getattr(context, "max_upload_batch_bytes", context.max_upload_bytes))
+        batch_limit_mb = int(max(batch_upload_bytes, context.max_upload_bytes) / (1024 * 1024))
+        st.caption(
+            t(
+                "sidebar.upload_limits",
+                file_size=f"{int(context.max_upload_bytes / (1024 * 1024))} MB",
+                batch_size=f"{batch_limit_mb} MB",
+            )
+        )
 
         st.session_state[SESSION_AI_ENABLED] = bool(ai_enabled)
         st.session_state[SESSION_PROCESSING_OPTIONS] = {

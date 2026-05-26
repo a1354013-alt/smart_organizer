@@ -37,6 +37,7 @@
     "pdf_text_pages": "PDF text extraction pages",
     "pdf_ocr_pages": "PDF OCR pages",
     "upload_limit": "Single-file upload limit: {size}",
+    "upload_limits": "Upload limits: per file {file_size}, per batch {batch_size}",
     "development_info_title": "Development Info",
     "workspace": {
       "project_root": "project root",
@@ -170,6 +171,7 @@
     "title": "Upload Analysis",
     "description": "Upload PDFs, images, or videos and the app will try to extract text, previews, and classification suggestions.",
     "supported_formats": "Supported formats: {formats}",
+    "limit_summary": "Upload limits: per file {file_size}, per batch {batch_size}.",
     "batch_guidance": "Batch guidance: analysis keeps uploads in memory, so smaller batches are easier to review. Current batch limit: {size}.",
     "uploader_label": "Choose files to analyze",
     "empty": "No files uploaded yet. Upload a PDF, image, or video to begin analysis.",

@@ -253,6 +253,7 @@ def test_build_context_handles_missing_optional_dependencies(monkeypatch, tmp_pa
     monkeypatch.setattr(app_main, "REPO_ROOT", tmp_path / "repo")
     monkeypatch.setattr(app_main, "DB_PATH", tmp_path / "app.db")
     monkeypatch.setattr(app_main, "MAX_UPLOAD_BYTES", 1234)
+    monkeypatch.setattr(app_main, "MAX_UPLOAD_BATCH_BYTES", 4321)
     monkeypatch.setattr(app_main, "_optional_import", lambda module_name: None)
 
     context = app_main._build_context()
@@ -261,3 +262,4 @@ def test_build_context_handles_missing_optional_dependencies(monkeypatch, tmp_pa
     assert context.plt is None
     assert context.project_root == tmp_path
     assert context.max_upload_bytes == 1234
+    assert context.max_upload_batch_bytes == 4321

@@ -8,11 +8,15 @@ import sqlite3
 import uuid
 from contextlib import suppress
 from pathlib import Path
+from typing import Self
+
+from config import UPLOAD_MAX_BATCH_BYTES, UPLOAD_MAX_FILE_BYTES
 
 logger = logging.getLogger(__name__)
 
 CURRENT_SCHEMA_VERSION = 14
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_BYTES = UPLOAD_MAX_FILE_BYTES
+MAX_UPLOAD_BATCH_BYTES = UPLOAD_MAX_BATCH_BYTES
 
 
 class SearchContentError(RuntimeError):
@@ -73,6 +77,15 @@ class StorageBase:
             keepalive.close()
         except sqlite3.Error:
             logger.debug("keepalive close failed", exc_info=True)
+
+    def __enter__(self) -> Self:
+        if self._closed:
+            raise RuntimeError("StorageManager is closed. Create a new instance before continuing.")
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        del exc_type, exc, traceback
+        self.close()
 
     def _get_connection(self, timeout: int = 30000) -> sqlite3.Connection:
         if self._closed:

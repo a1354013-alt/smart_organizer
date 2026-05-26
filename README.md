@@ -19,6 +19,11 @@ Messy download folders and mixed personal archives are hard to review safely. Sm
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
 
+Upload limits:
+
+- single file: `25 MB`
+- per batch: `50 MB`
+
 ## Recommended Python Version
 
 - Recommended: Python `3.11`

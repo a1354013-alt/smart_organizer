@@ -278,18 +278,25 @@ def _hash_file(path_obj: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str | 
 
 
 def _classify_duplicates(records: list[FolderScanRecord]) -> None:
-    by_hash: dict[tuple[int, str], list[FolderScanRecord]] = {}
     by_name: dict[str, list[FolderScanRecord]] = {}
+    by_size: dict[int, list[FolderScanRecord]] = {}
     for record in records:
         normalized_name = _normalize_duplicate_name(record.path)
         by_name.setdefault(normalized_name, []).append(record)
-        file_hash, hash_error = _hash_file(Path(record.path))
-        if hash_error:
-            if not record.duplicate_reason:
-                record.duplicate_reason = hash_error
+        by_size.setdefault(record.size_bytes, []).append(record)
+
+    by_hash: dict[tuple[int, str], list[FolderScanRecord]] = {}
+    for size_bytes, grouped_records in by_size.items():
+        if len(grouped_records) < 2:
             continue
-        if file_hash is not None:
-            by_hash.setdefault((record.size_bytes, file_hash), []).append(record)
+        for record in grouped_records:
+            file_hash, hash_error = _hash_file(Path(record.path))
+            if hash_error:
+                if not record.duplicate_reason:
+                    record.duplicate_reason = hash_error
+                continue
+            if file_hash is not None:
+                by_hash.setdefault((size_bytes, file_hash), []).append(record)
 
     for grouped_records in by_hash.values():
         if len(grouped_records) < 2:
