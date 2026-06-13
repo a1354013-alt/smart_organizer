@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 import uuid
+from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -42,6 +43,9 @@ from folder_models import (
 LOW_RISK_SUFFIXES = {".txt", ".log", ".tmp", ".cache", ".bak", ".old", ".fake"}
 MANUAL_REVIEW_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 DO_NOT_TOUCH_NAMES = {"readme", "license", "copying", "important", "keep"}
+SIMILAR_NAME_BUCKET_LIMIT = 80
+SIMILAR_NAME_COMPARISON_LIMIT = 1500
+SIMILAR_NAME_NEIGHBOR_LIMIT = 8
 
 
 def _resolve_path(path_value: Path | str) -> Path:
@@ -338,6 +342,72 @@ def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: i
         record.recommendation = _recommendation(record.candidate_reasons, record.risk_level)
 
 
+def _normalized_name_token(value: str) -> str:
+    stem = Path(value or "").stem.lower()
+    normalized = re.sub(r"(?i)(copy|副本)$", "", stem)
+    normalized = re.sub(r"[_\-\s]?\d+$", "", normalized)
+    normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", normalized)
+    return normalized or stem or "file"
+
+
+def _similar_name_bucket_key(record: FolderScanRecord) -> tuple[str, str, int, str, int]:
+    normalized = _normalized_name_token(record.name)
+    prefix = normalized[:12]
+    length_bucket = len(normalized) // 5
+    parent_dir = Path(record.path).parent.name.lower()
+    size_bucket = record.size_bytes // max(1, 256 * 1024)
+    return (record.ext, prefix, length_bucket, parent_dir, size_bucket)
+
+
+def _looks_similar_name(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    common_prefix = os.path.commonprefix([left, right])
+    min_len = max(3, min(len(left), len(right)))
+    return len(common_prefix) >= min_len - 1
+
+
+def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
+    notes: list[str] = []
+    buckets: dict[tuple[str, str, int, str, int], list[FolderScanRecord]] = defaultdict(list)
+    for record in records:
+        buckets[_similar_name_bucket_key(record)].append(record)
+
+    comparisons = 0
+    skipped_buckets = 0
+    for bucket_records in buckets.values():
+        if len(bucket_records) < 2:
+            continue
+        if len(bucket_records) > SIMILAR_NAME_BUCKET_LIMIT:
+            skipped_buckets += 1
+            bucket_records = bucket_records[:SIMILAR_NAME_BUCKET_LIMIT]
+        ordered = sorted(bucket_records, key=lambda item: _normalized_name_token(item.name))
+        for index, record in enumerate(ordered):
+            base_name = _normalized_name_token(record.name)
+            for candidate in ordered[index + 1 : index + 1 + SIMILAR_NAME_NEIGHBOR_LIMIT]:
+                if comparisons >= SIMILAR_NAME_COMPARISON_LIMIT:
+                    notes.append(
+                        "Similar-name detection reached its comparison limit and skipped some expensive checks."
+                    )
+                    return notes
+                comparisons += 1
+                candidate_name = _normalized_name_token(candidate.name)
+                if _looks_similar_name(base_name, candidate_name):
+                    message = f"similar name candidate: resembles {candidate.name}"
+                    reverse_message = f"similar name candidate: resembles {record.name}"
+                    if message not in record.candidate_reasons:
+                        record.candidate_reasons.append(message)
+                    if reverse_message not in candidate.candidate_reasons:
+                        candidate.candidate_reasons.append(reverse_message)
+    if skipped_buckets:
+        notes.append(
+            f"Similar-name detection skipped {skipped_buckets} oversized bucket(s) to keep large scans responsive."
+        )
+    return notes
+
+
 def scan_local_folder(
     folder_path: str,
     *,
@@ -351,6 +421,7 @@ def scan_local_folder(
     root = validate_scan_root_path(folder_path)
     records: list[FolderScanRecord] = []
     errors: list[str] = []
+    notes: list[str] = []
     now = datetime.datetime.now(datetime.UTC)
     stale_delta = datetime.timedelta(days=max(0, int(stale_days)))
     scanned = 0
@@ -436,6 +507,8 @@ def scan_local_folder(
             errors.append(f"Failed to scan {root}: {exc}")
 
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
+    notes.extend(_apply_similar_name_detection(records))
+    _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
     errors.extend(manifest_warnings)
     stats = FolderScanStats(
@@ -456,6 +529,7 @@ def scan_local_folder(
         elapsed_seconds=round(time.perf_counter() - started, 3),
         records=records,
         errors=errors[:50],
+        notes=notes[:20],
         stats=stats,
     ).to_dict()
 

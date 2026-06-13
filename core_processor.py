@@ -11,7 +11,6 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import suppress
-from functools import lru_cache
 from types import ModuleType
 from typing import Any
 
@@ -145,9 +144,16 @@ def get_ffmpeg_available(*, refresh: bool = False) -> bool:
         FFMPEG_AVAILABLE = _detect_ffmpeg_available()
     return bool(FFMPEG_AVAILABLE)
 
-@lru_cache(maxsize=1)
 def is_ffmpeg_available() -> bool:
-    return _detect_ffmpeg_available()
+    return get_ffmpeg_available()
+
+
+def _clear_ffmpeg_cache() -> None:
+    global FFMPEG_AVAILABLE
+    FFMPEG_AVAILABLE = None
+
+
+is_ffmpeg_available.cache_clear = _clear_ffmpeg_cache  # type: ignore[attr-defined]
 
 
 class FileProcessor:
@@ -173,7 +179,7 @@ class FileProcessor:
     ) -> int:
         return _read_int_env(key, int(default), min_value=min_value, max_value=max_value)
 
-    def get_dependency_status(self) -> dict[str, dict[str, bool]]:
+    def get_dependency_status(self, *, refresh: bool = False) -> dict[str, dict[str, bool]]:
         python_deps = {
             "PIL": Image is not None,
             "exifread": exifread_module is not None,
@@ -183,7 +189,7 @@ class FileProcessor:
             "openai": OpenAI is not None,
         }
         system_deps = {
-            "ffmpeg": get_ffmpeg_available(),
+            "ffmpeg": get_ffmpeg_available(refresh=refresh),
         }
         config = {
             "poppler_path": bool(self.poppler_path),

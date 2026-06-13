@@ -61,3 +61,49 @@ def test_migration_creates_repeatable_query_indexes(tmp_path: Path):
             conn.close()
             storage.close()
         assert expected_indexes.issubset(index_names)
+
+
+def test_fresh_and_migrated_files_schema_match(tmp_path: Path):
+    fresh_db = tmp_path / "fresh.db"
+    legacy_db = tmp_path / "legacy.db"
+
+    fresh = StorageManager(str(fresh_db), str(tmp_path / "fresh-repo"), str(tmp_path / "fresh-uploads"))
+    fresh_conn = fresh._get_connection()
+    try:
+        fresh_cursor = fresh_conn.cursor()
+        fresh_cursor.execute("PRAGMA table_info(files)")
+        fresh_columns = {str(row[1]) for row in fresh_cursor.fetchall()}
+    finally:
+        fresh_conn.close()
+        fresh.close()
+
+    conn = sqlite3.connect(legacy_db)
+    try:
+        conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO sys_config(key, value) VALUES ('schema_version', '1')")
+        conn.execute(
+            """
+            CREATE TABLE files (
+                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_name TEXT,
+                file_hash TEXT UNIQUE,
+                created_at TEXT,
+                status TEXT DEFAULT 'PENDING'
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    migrated = StorageManager(str(legacy_db), str(tmp_path / "legacy-repo"), str(tmp_path / "legacy-uploads"))
+    migrated_conn = migrated._get_connection()
+    try:
+        migrated_cursor = migrated_conn.cursor()
+        migrated_cursor.execute("PRAGMA table_info(files)")
+        migrated_columns = {str(row[1]) for row in migrated_cursor.fetchall()}
+    finally:
+        migrated_conn.close()
+        migrated.close()
+
+    assert fresh_columns == migrated_columns

@@ -138,6 +138,7 @@ class FolderScanResult:
     elapsed_seconds: float
     records: list[FolderScanRecord]
     errors: list[str]
+    notes: list[str]
     stats: FolderScanStats
 
     def to_dict(self) -> dict[str, object]:
@@ -151,6 +152,7 @@ class FolderScanResult:
             "elapsed_seconds": self.elapsed_seconds,
             "records": [record.to_dict() for record in self.records],
             "errors": list(self.errors),
+            "notes": list(self.notes),
             "stats": self.stats.to_dict(),
         }
 

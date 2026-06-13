@@ -10,11 +10,12 @@ from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     cache_dependency_status,
     get_cached_dependency_status,
+    limit_candidate_rows,
     refresh_dependency_status,
     render_home,
     summarize_recommendations,
 )
-from ui_labels import recommendation_display_label
+from ui_labels import recommendation_display_label, topic_display_label
 
 
 class _Column:
@@ -75,6 +76,38 @@ def test_file_processor_dependency_status_checks_ffmpeg_lazily(monkeypatch):
     assert status["system"]["ffmpeg"] is True
 
 
+def test_ffmpeg_refresh_updates_ui_and_processing_from_unavailable_to_available(monkeypatch):
+    session_state: dict[str, object] = {}
+    states = iter([False, True])
+    processor = FileProcessor()
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", None)
+    monkeypatch.setattr(core_processor, "_detect_ffmpeg_available", lambda: next(states))
+
+    assert core_processor.get_ffmpeg_available() is False
+    status = refresh_dependency_status(SimpleNamespace(processor=processor))
+
+    assert status["system"]["ffmpeg"] is True
+    assert core_processor.is_ffmpeg_available() is True
+
+
+def test_ffmpeg_refresh_updates_ui_and_processing_from_available_to_unavailable(monkeypatch):
+    session_state: dict[str, object] = {}
+    states = iter([True, False])
+    processor = FileProcessor()
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+    monkeypatch.setattr(core_processor, "FFMPEG_AVAILABLE", None)
+    monkeypatch.setattr(core_processor, "_detect_ffmpeg_available", lambda: next(states))
+
+    assert core_processor.get_ffmpeg_available() is True
+    status = refresh_dependency_status(SimpleNamespace(processor=processor))
+
+    assert status["system"]["ffmpeg"] is False
+    assert core_processor.is_ffmpeg_available() is False
+
+
 def test_summarize_recommendations_uses_shared_contract_labels():
     records = [
         {"recommendation": Recommendation.SAFE_TO_REVIEW.value},
@@ -97,6 +130,13 @@ def test_recommendation_display_label_keeps_data_contract_and_localizes_ui_text(
     assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == "需要人工確認"
     assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == "不要操作"
     assert recommendation_display_label("Custom label") == "Custom label"
+
+
+def test_topic_display_label_supports_locale_mapping_and_legacy_values():
+    assert topic_display_label("document.invoice", locale="zh-TW") == "發票"
+    assert topic_display_label("document.invoice", locale="en") == "Invoice"
+    assert topic_display_label("發票", locale="en") == "Invoice"
+    assert topic_display_label("Meeting", locale="zh-TW") == "會議錄影"
 
 
 def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
@@ -166,3 +206,12 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
 
     candidate_metrics = [value for css_class, value in metric_values if css_class == "status-metric"]
     assert 2 in candidate_metrics
+
+
+def test_limit_candidate_rows_caps_large_result_sets():
+    candidates = [{"path": f"C:/scan/{index}.txt"} for index in range(620)]
+
+    visible, hidden = limit_candidate_rows(candidates, limit=500)
+
+    assert len(visible) == 500
+    assert hidden == 120

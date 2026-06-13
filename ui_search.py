@@ -9,6 +9,7 @@ import streamlit as st
 
 from storage import SearchContentError
 from ui_common import UIContext, handle_ui_exception, safe_display_text
+from ui_labels import topic_display_label
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def render_search(context: UIContext) -> None:
                 original_name = safe_display_text(result.get("original_name"))
                 standard_date = safe_display_text(result.get("standard_date"))
                 with st.expander(f"{original_name} ({standard_date})"):
-                    st.write(f"**Topic**: {safe_display_text(result.get('main_topic'))}")
+                    st.write(f"**Topic**: {safe_display_text(topic_display_label(result.get('main_topic')))}")
                     st.write(f"**Path**: {safe_display_text(result.get('final_path'))}")
                     if result.get("all_tags"):
                         st.write(f"**Tags**: {safe_display_text(result.get('all_tags'))}")

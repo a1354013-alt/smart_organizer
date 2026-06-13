@@ -49,6 +49,7 @@ from ui_state import (
 from version import APP_NAME, APP_TITLE, __version__
 
 DEPENDENCY_STATUS_SESSION_KEY = "dependency_status"
+MAX_RENDERED_CANDIDATES = 500
 
 
 def _coerce_message_list(value: object) -> list[str]:
@@ -85,7 +86,22 @@ def cache_dependency_status(session_state: Any, status: dict[str, Any]) -> dict[
 
 
 def refresh_dependency_status(context: UIContext) -> dict[str, Any]:
-    return cache_dependency_status(st.session_state, context.processor.get_dependency_status())
+    try:
+        status = context.processor.get_dependency_status(refresh=True)
+    except TypeError:
+        status = context.processor.get_dependency_status()
+    return cache_dependency_status(st.session_state, status)
+
+
+def limit_candidate_rows(
+    candidates: list[dict[str, object]],
+    *,
+    limit: int = MAX_RENDERED_CANDIDATES,
+) -> tuple[list[dict[str, object]], int]:
+    normalized_limit = max(1, int(limit))
+    visible = list(candidates[:normalized_limit])
+    hidden = max(0, len(candidates) - len(visible))
+    return visible, hidden
 
 
 def render_sidebar(context: UIContext) -> None:
@@ -194,8 +210,14 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
     if st.button("Clear candidate selection", key="clear_candidate_selection"):
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
 
+    visible_candidates, hidden_count = limit_candidate_rows(candidates)
+    if hidden_count:
+        st.warning(
+            f"Showing the first {len(visible_candidates)} candidates out of {len(candidates)}. Narrow the scan or review in batches for smoother UI performance."
+        )
+
     rows = []
-    for item in candidates:
+    for item in visible_candidates:
         rows.append(
             {
                 "select": False,
@@ -363,11 +385,13 @@ def render_home(context: UIContext) -> None:
                     card_close()
 
             errors = _coerce_message_list(scan.get("errors"))
+            notes = _coerce_message_list(scan.get("notes"))
             if scan_quarantine_warnings:
                 errors.extend(scan_quarantine_warnings)
-            if errors:
+            warning_messages = [*notes, *errors]
+            if warning_messages:
                 with st.expander("Scan warnings", expanded=False):
-                    for message in errors[:50]:
+                    for message in warning_messages[:50]:
                         st.write(f"- {safe_display_text(message)}")
 
             st.markdown("**Before / after summary**")

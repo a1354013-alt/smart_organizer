@@ -109,6 +109,28 @@ class StorageRepositoryMixin:
             return str(provided)
         return "document"
 
+    def _build_unique_temp_name(self, file_hash: str, safe_name: str) -> str:
+        normalized_hash = (str(file_hash or "").strip().lower() or uuid.uuid4().hex)
+        unique_suffix = uuid.uuid4().hex
+        return f"{normalized_hash}_{unique_suffix}_{Path(safe_name).name}"
+
+    def _resolve_preview_path_for_update(
+        self,
+        cursor: sqlite3.Cursor,
+        file_id: int,
+        requested_preview_path: object,
+    ) -> str | None:
+        normalized_preview = str(requested_preview_path).strip() if requested_preview_path not in (None, "") else ""
+        if normalized_preview:
+            return normalized_preview
+
+        cursor.execute("SELECT preview_path FROM files WHERE file_id = ?", (int(file_id),))
+        existing_row = cursor.fetchone()
+        existing_preview = str(existing_row[0]).strip() if existing_row and existing_row[0] else ""
+        if existing_preview and self.path_exists(existing_preview):
+            return existing_preview
+        return None
+
     def create_temp_file(
         self: Any,
         uploaded_file_name: str,
@@ -140,7 +162,7 @@ class StorageRepositoryMixin:
                     "final_path": str(row[2]) if row[2] else None,
                 }
 
-            unique_temp_name = f"{file_hash[:8]}_{safe_name}"
+            unique_temp_name = self._build_unique_temp_name(file_hash, safe_name)
             if self._mem_files is not None:
                 temp_path = f"mem://uploads/{unique_temp_name}"
                 part_path = None
@@ -295,7 +317,8 @@ class StorageRepositoryMixin:
             cursor = conn.cursor()
             normalized_date = FileUtils.normalize_standard_date(metadata.get("standard_date"))
             main_topic = str(metadata.get("main_topic", "") or "")
-            preview_path = metadata.get("preview_path")
+            self_file_id = int(file_id)
+            preview_path = self._resolve_preview_path_for_update(cursor, self_file_id, metadata.get("preview_path"))
             tag_scores = self._merge_main_topic_into_tags(main_topic, metadata.get("tag_scores"))
             manual_override = metadata.get("manual_override")
             manual_override_val = None if manual_override is None else (1 if manual_override else 0)
@@ -345,15 +368,15 @@ class StorageRepositoryMixin:
                     last_manual_topic,
                     last_manual_reason,
                     1 if metadata.get("is_scanned") else 0,
-                    file_id,
+                    self_file_id,
                 ),
             )
 
-            cursor.execute("SELECT content FROM file_content_fts WHERE rowid = ?", (file_id,))
+            cursor.execute("SELECT content FROM file_content_fts WHERE rowid = ?", (self_file_id,))
             fts_row = cursor.fetchone()
             old_content = fts_row[0] if fts_row else ""
 
-            cursor.execute("SELECT original_name FROM files WHERE file_id = ?", (file_id,))
+            cursor.execute("SELECT original_name FROM files WHERE file_id = ?", (self_file_id,))
             file_row = cursor.fetchone()
             original_name = file_row[0] if file_row else ""
 
@@ -366,18 +389,18 @@ class StorageRepositoryMixin:
                 INSERT OR REPLACE INTO file_content_fts (rowid, original_filename, title, summary, content)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (file_id, original_name, title, summary, content),
+                (self_file_id, original_name, title, summary, content),
             )
             if tag_scores:
-                self._replace_file_tags(cursor, file_id, tag_scores)
+                self._replace_file_tags(cursor, self_file_id, tag_scores)
             conn.commit()
-            cursor.execute("SELECT status FROM files WHERE file_id = ?", (file_id,))
+            cursor.execute("SELECT status FROM files WHERE file_id = ?", (self_file_id,))
             status_row = cursor.fetchone()
             current_status = status_row[0] if status_row else None
             logger.info(
                 "update_file_metadata success%s",
                 _log_context(
-                    file_id=file_id,
+                    file_id=self_file_id,
                     status=current_status,
                     main_topic=main_topic,
                     decision_source=decision_source,

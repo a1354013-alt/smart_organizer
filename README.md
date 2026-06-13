@@ -33,6 +33,13 @@ flowchart LR
     Restore --> Report["Report"]
 ```
 
+## Project Highlights
+
+- Local-first safety model: review signals before any move, quarantine instead of delete, and keep restore available.
+- Explainable organization: stale-file heuristics, duplicate-name detection, topic classification, and audit-friendly reports.
+- Resilient degraded fallback: missing `ffmpeg`, `poppler`, or `tesseract` should reduce optional capabilities, not crash the app.
+- Portfolio-ready engineering hygiene: typed Python, targeted tests, release validation, and CI coverage across Python `3.11`, `3.12`, and `3.13`.
+
 ## Safe Organization Flow
 
 Smart Organizer is designed around preview-first, reversible cleanup. It does not directly permanently delete selected user files.
@@ -58,6 +65,14 @@ Safety rules:
 - Interrupted move recovery is handled on the next quarantine, restore, or list operation.
 - Release packaging uses an explicit allowlist and rejects user data, caches, DB files, and temp folders.
 
+Workflow summary:
+
+- `scan`: inspect a local folder or uploaded file metadata first
+- `dry-run`: preview the exact quarantine path and operation summary
+- `execute`: move only selected candidates into quarantine after confirmation
+- `quarantine`: hold moved files in a reversible safety area with manifest tracking
+- `restore`: return files to the original path or a collision-safe renamed path
+
 ## Repository, Quarantine, And Restore Logic
 
 - `uploads/`: temporary upload staging area used before a record is finalized
@@ -66,6 +81,8 @@ Safety rules:
 - `restore`: returns quarantined files to the original path when possible, or a safe renamed path when a collision exists
 
 This means Smart Organizer preserves a review trail and a recovery path instead of silently removing data.
+
+This project is intentionally a safe organization assistant, not a direct file deletion utility.
 
 ## Quick Start
 
@@ -125,6 +142,20 @@ streamlit run app.py
 - Missing `ffmpeg` or `ffprobe` falls back to partial video metadata with clear warnings.
 - Missing PDF preview / OCR dependencies falls back to notes instead of aborting analysis.
 - Corrupt image OCR or metadata reads return a conservative fallback result.
+
+## Quality Gates
+
+Run the same core checks used for local release confidence:
+
+```bash
+python -m compileall -q .
+python -m ruff check --no-cache .
+python -m mypy --cache-dir=/dev/null .
+python -m pytest -q
+```
+
+GitHub Actions already validates the repository on Python `3.11`, `3.12`, and `3.13`.
+Release validation is a source-repository step; run the repository validation script before packaging an official release.
 
 ## Source Repository Release Validation
 

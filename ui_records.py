@@ -13,6 +13,7 @@ from ui_common import (
     handle_ui_exception,
     safe_display_text,
 )
+from ui_labels import topic_display_label
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,17 @@ def render_records(context: UIContext) -> None:
     st.header("Organization Records")
 
     filter_values = context.storage.get_record_filter_values()
+    display_topics = {value: topic_display_label(value) for value in filter_values.get("main_topic", [])}
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         status = st.selectbox("Status", ["All", *filter_values.get("status", [])], index=0)
     with col2:
-        topic = st.selectbox("Topic", ["All", *filter_values.get("main_topic", [])], index=0)
+        topic = st.selectbox(
+            "Topic",
+            ["All", *filter_values.get("main_topic", [])],
+            index=0,
+            format_func=lambda value: "All" if value == "All" else display_topics.get(str(value), str(value)),
+        )
     with col3:
         file_type = st.selectbox("File type", ["All", *filter_values.get("file_type", [])], index=0)
     with col4:
@@ -64,6 +71,7 @@ def render_records(context: UIContext) -> None:
     display_records = [dict(record) for record in records]
     for record in display_records:
         record["created_at"] = format_timestamp_for_display(record.get("created_at"))
+        record["main_topic"] = topic_display_label(record.get("main_topic"))
     total = int(page.get("total") or 0)
     file_id_options = [record.get("file_id") for record in records if record.get("file_id") is not None]
 

@@ -17,6 +17,17 @@ def _log_context(**fields: object) -> str:
     return f" [{', '.join(parts)}]" if parts else ""
 
 
+def _resolved_preview_path(storage: StorageManager, current_preview: object, new_preview: object) -> str | None:
+    normalized_new = str(new_preview).strip() if new_preview not in (None, "") else ""
+    if normalized_new:
+        return normalized_new
+
+    normalized_current = str(current_preview).strip() if current_preview not in (None, "") else ""
+    if normalized_current and storage.path_exists(normalized_current):
+        return normalized_current
+    return None
+
+
 def persist_confirmed_metadata(result: AnalysisResult, *, storage: StorageManager) -> None:
     if result.manual_override:
         decision_source = "MANUAL_OVERRIDE"
@@ -151,7 +162,7 @@ def reclassify_record(
             "summary": info.get("summary") or "",
             "content": metadata.get("extracted_text") or "",
             "is_scanned": metadata.get("is_scanned") or False,
-            "preview_path": metadata.get("preview_path"),
+            "preview_path": _resolved_preview_path(storage, info.get("preview_path"), metadata.get("preview_path")),
             "classification_reason": reason,
             "final_decision_reason": "Reclassified from current file contents and metadata.",
             "manual_override": False,

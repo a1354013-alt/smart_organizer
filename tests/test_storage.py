@@ -54,6 +54,44 @@ def test_create_temp_file_and_duplicate_detection():
     assert res2["reason"] == "DUPLICATE"
 
 
+def test_create_temp_file_uses_unique_temp_paths_for_different_hashes(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    first_payload = _minimal_pdf_bytes() + b"first"
+    second_payload = _minimal_pdf_bytes() + b"second"
+
+    first = storage.create_temp_file("shared.pdf", first_payload, _sha256(first_payload), "document")
+    second = storage.create_temp_file("shared.pdf", second_payload, _sha256(second_payload), "document")
+
+    first_info = _require_record(storage.get_file_by_id(first["file_id"]))
+    second_info = _require_record(storage.get_file_by_id(second["file_id"]))
+    assert first_info["temp_path"] != second_info["temp_path"]
+
+
+def test_create_temp_file_does_not_collide_when_hash_prefix_matches(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    payload = _minimal_pdf_bytes()
+    first_hash = "deadbeef" + ("1" * 56)
+    second_hash = "deadbeef" + ("2" * 56)
+
+    first = storage.create_temp_file("shared.pdf", payload + b"1", first_hash, "document")
+    second = storage.create_temp_file("shared.pdf", payload + b"2", second_hash, "document")
+
+    first_info = _require_record(storage.get_file_by_id(first["file_id"]))
+    second_info = _require_record(storage.get_file_by_id(second["file_id"]))
+    assert first_info["temp_path"] != second_info["temp_path"]
+
+
+def test_create_temp_file_keeps_temp_path_inside_upload_dir(tmp_path: Path):
+    upload_dir = tmp_path / "uploads"
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(upload_dir))
+    payload = _minimal_pdf_bytes()
+    created = storage.create_temp_file("../unsafe/../name.pdf", payload, _sha256(payload + b"path"), "document")
+
+    info = _require_record(storage.get_file_by_id(created["file_id"]))
+    temp_path = Path(str(info["temp_path"])).resolve()
+    assert temp_path.parent == upload_dir.resolve()
+
+
 def test_finalize_organization_uses_safe_name():
     storage = StorageManager(":memory:", ":memory:", ":memory:")
 

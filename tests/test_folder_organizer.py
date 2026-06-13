@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 from typing import cast
 
+import folder_organizer
 from folder_models import QUARANTINE_DIRNAME, ScanPathError
 from folder_organizer import (
+    SIMILAR_NAME_COMPARISON_LIMIT,
     list_quarantine_items,
     restore_quarantined_items,
     run_folder_organizer,
@@ -404,3 +406,34 @@ def test_restore_quarantined_items_rejects_tampered_manifest_paths(tmp_path: Pat
     assert "manifest quarantine_path escapes quarantine root" in str(rows[1]["error_message"])
     assert valid_quarantined.exists()
     assert outside_quarantined.exists()
+
+
+def test_scan_local_folder_limits_similar_name_comparisons(monkeypatch, tmp_path: Path):
+    for index in range(120):
+        (tmp_path / f"report-copy-{index}.txt").write_text("payload", encoding="utf-8")
+
+    comparisons: list[tuple[str, str]] = []
+    original = folder_organizer._looks_similar_name
+
+    def tracking_similarity(left: str, right: str) -> bool:
+        comparisons.append((left, right))
+        return original(left, right)
+
+    monkeypatch.setattr(folder_organizer, "_looks_similar_name", tracking_similarity)
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=500, stale_days=0, large_file_bytes=1024 * 1024)
+
+    assert len(comparisons) <= SIMILAR_NAME_COMPARISON_LIMIT
+    notes = [str(item) for item in scan.get("notes", [])]
+    assert any("Similar-name detection skipped" in note for note in notes)
+
+
+def test_scan_local_folder_surfaces_similar_name_notes(tmp_path: Path):
+    (tmp_path / "invoice-2024.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "invoice-2025.txt").write_text("b", encoding="utf-8")
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=50, stale_days=0, large_file_bytes=1024 * 1024)
+
+    records = cast(list[dict[str, object]], scan["records"])
+    similar_candidates = [record for record in records if any("similar name candidate" in str(reason) for reason in record["candidate_reasons"])]
+    assert len(similar_candidates) == 2
