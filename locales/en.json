@@ -101,7 +101,8 @@
     "candidates": {
       "title": "Candidate Files",
       "empty": "This folder currently has no stale or oversized files matching your scan settings.",
-      "limit_warning": "Showing the first {shown} candidates out of {total} to keep the table responsive.",
+      "limit_warning": "Showing the first {shown} candidates out of {total} to keep the table responsive. Selection is preserved for hidden candidates.",
+      "hidden_selection_summary": "{selected} hidden candidate(s) remain selected outside the visible table (hidden total: {hidden}).",
       "risk_labels": "Risk labels: {labels}",
       "reason_long_unused": "Long unused",
       "reason_large_file": "Large file",

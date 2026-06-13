@@ -205,6 +205,37 @@ def test_get_records_page_escapes_like_wildcards():
     assert [item["original_name"] for item in _page_items(keyword_hits)] == ["ordinary.pdf"]
 
 
+def test_get_records_page_searches_by_tag_and_preserves_all_tags():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    payload = _minimal_pdf_bytes()
+
+    result = storage.create_temp_file("bill.pdf", payload, _sha256(payload + b"bill"), "document")
+    file_id = result["file_id"]
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-05-07",
+            "main_topic": "Finance",
+            "summary": "monthly payment",
+            "content": "statement",
+            "is_scanned": False,
+            "preview_path": None,
+            "classification_reason": "test",
+            "tag_scores": {"Bills": 0.9, "Utilities": 0.8},
+        },
+    )
+
+    hits = storage.get_records_page(search="Bills")
+
+    total = hits.get("total")
+    assert isinstance(total, int)
+    assert total >= 1
+    items = _page_items(hits)
+    assert [item["original_name"] for item in items] == ["bill.pdf"]
+    assert "Bills" in str(items[0]["all_tags"])
+    assert "Utilities" in str(items[0]["all_tags"])
+
+
 def test_search_content_returns_plain_text_snippets_without_html_tags():
     storage = StorageManager(":memory:", ":memory:", ":memory:")
 

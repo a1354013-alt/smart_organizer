@@ -33,12 +33,22 @@ def get_photo_date(file_path: str, *, exifread_module: Any) -> str | None:
     return None
 
 
-def ocr_image(file_path: str, *, image_module: Any, pytesseract_module: Any) -> OCRImageResult:
+def ocr_image(
+    file_path: str,
+    *,
+    image_module: Any,
+    pytesseract_module: Any,
+    timeout_seconds: int | None = None,
+) -> OCRImageResult:
     if pytesseract_module is None or image_module is None:
         return OCRImageResult(text="", status="unavailable", error="OCR dependencies are unavailable.")
     try:
         image = image_module.open(file_path)
-        text = pytesseract_module.image_to_string(image, lang=os.getenv("TESSERACT_LANG", "chi_tra+eng")) or ""
+        text = pytesseract_module.image_to_string(
+            image,
+            lang=os.getenv("TESSERACT_LANG", "chi_tra+eng"),
+            timeout=max(1, int(timeout_seconds or 15)),
+        ) or ""
         if text.strip():
             return OCRImageResult(text=text, status="success", error=None)
         return OCRImageResult(text="", status="empty_text", error=None)

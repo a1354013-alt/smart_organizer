@@ -11,7 +11,7 @@
 - Video uploads are accepted into the analysis flow, but a fake `.mp4` or other invalid video container is reported as degraded or unsupported instead of being treated as a healthy video.
 - Image classification is rule-based and metadata-oriented rather than a deep learning image understanding pipeline.
 - PDF OCR is disabled by default to reduce latency and avoid large-document UI stalls.
-- PDF preview, OCR, and video helpers use timeouts and best-effort fallbacks. A timeout may still leave a single worker thread or subprocess finishing in the background before cleanup completes.
+- PDF text extraction, PDF preview, OCR, and video helpers use timeouts and best-effort fallbacks. A timeout may still leave a single worker thread or subprocess finishing in the background before cleanup completes.
 - If `ffmpeg` or `ffprobe` is unavailable or times out, the app falls back to partial video metadata with no guaranteed thumbnail.
 - Record timestamps are stored in UTC ISO 8601. The UI may render them in local time, while exported reports keep UTC labels.
 - AI summary features require a valid OpenAI API key. Core review and organization flows should still work without one.

@@ -101,7 +101,8 @@
     "candidates": {
       "title": "候選檔案",
       "empty": "這個資料夾目前沒有符合條件的大檔案或久未使用檔案。",
-      "limit_warning": "為了保持表格順暢，目前只顯示前 {shown} 筆候選檔案，共 {total} 筆。",
+      "limit_warning": "為了保持表格順暢，目前只顯示前 {shown} 筆候選檔案，共 {total} 筆；隱藏列的選取狀態會保留。",
+      "hidden_selection_summary": "目前有 {selected} 筆已選取候選檔案不在可見表格中（隱藏總數：{hidden}）。",
       "risk_labels": "風險對照：{labels}",
       "reason_long_unused": "長時間未使用",
       "reason_large_file": "檔案偏大",

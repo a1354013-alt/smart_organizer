@@ -165,6 +165,26 @@ def limit_candidate_rows(
     return visible, hidden
 
 
+def merge_visible_selection(
+    current_selected_paths: set[str],
+    visible_rows: list[dict[str, object]],
+    edited_rows: list[dict[str, object]],
+) -> set[str]:
+    visible_paths = {
+        str(row.get("path"))
+        for row in visible_rows
+        if str(row.get("path") or "").strip()
+    }
+    merged = {path for path in current_selected_paths if path not in visible_paths}
+    for row in edited_rows:
+        path = str(row.get("path") or "").strip()
+        if not path:
+            continue
+        if bool(row.get("select")):
+            merged.add(path)
+    return merged
+
+
 def render_sidebar(context: UIContext) -> None:
     st.sidebar.header(t("sidebar.title"))
     language_options = get_language_options()
@@ -302,6 +322,8 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
         )
 
     rows = [_candidate_row(item) for item in visible_candidates]
+    visible_paths = {str(row.get("path")) for row in rows}
+    candidate_paths = [str(item.get("path")) for item in candidates if str(item.get("path") or "").strip()]
 
     selected_paths = [str(path) for path in cast(list[object], st.session_state.get(SESSION_FOLDER_SELECTED_PATHS, []))]
     if context.pandas is not None:
@@ -328,16 +350,39 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
             },
             key="folder_candidate_editor",
         )
-        selected_paths = [str(row["path"]) for _, row in edited.iterrows() if bool(row.get("select"))]
+        edited_rows = cast(list[dict[str, object]], edited.to_dict("records"))
+        merged_selected = merge_visible_selection(set(selected_paths), rows, edited_rows)
+        selected_paths = [path for path in candidate_paths if path in merged_selected]
+        hidden_selected_count = sum(1 for path in selected_paths if path not in visible_paths)
+        if hidden_selected_count:
+            st.caption(
+                t(
+                    "home.candidates.hidden_selection_summary",
+                    selected=hidden_selected_count,
+                    hidden=hidden_count,
+                )
+            )
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = selected_paths
         return selected_paths
 
-    selected = st.multiselect(
+    selected_visible = st.multiselect(
         t("home.candidates.table.select"),
         [str(row["path"]) for row in rows],
-        default=[path for path in selected_paths if path in {str(row["path"]) for row in rows}],
+        default=[path for path in selected_paths if path in visible_paths],
     )
     st.dataframe(rows, use_container_width=True)
+    fallback_rows = [dict(row, select=str(row["path"]) in selected_visible) for row in rows]
+    merged_selected = merge_visible_selection(set(selected_paths), rows, fallback_rows)
+    selected = [path for path in candidate_paths if path in merged_selected]
+    hidden_selected_count = sum(1 for path in selected if path not in visible_paths)
+    if hidden_selected_count:
+        st.caption(
+            t(
+                "home.candidates.hidden_selection_summary",
+                selected=hidden_selected_count,
+                hidden=hidden_count,
+            )
+        )
     st.session_state[SESSION_FOLDER_SELECTED_PATHS] = selected
     return selected
 

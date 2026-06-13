@@ -504,10 +504,17 @@ class StorageRepositoryMixin:
                     "("
                     "f.original_name LIKE ? ESCAPE '\\' "
                     "OR COALESCE(f.main_topic, '') LIKE ? ESCAPE '\\' "
-                    "OR COALESCE(f.summary, '') LIKE ? ESCAPE '\\'"
+                    "OR COALESCE(f.summary, '') LIKE ? ESCAPE '\\' "
+                    "OR EXISTS ("
+                    "SELECT 1 "
+                    "FROM file_tags sft "
+                    "JOIN tags st ON sft.tag_id = st.tag_id "
+                    "WHERE sft.file_id = f.file_id "
+                    "AND COALESCE(st.tag_name, '') LIKE ? ESCAPE '\\'"
+                    ")"
                     ")"
                 )
-                params.extend([like, like, like])
+                params.extend([like, like, like, like])
             if date_from:
                 where_parts.append("date(f.created_at) >= date(?)")
                 params.append(date_from)
@@ -519,14 +526,9 @@ class StorageRepositoryMixin:
 
             cursor.execute(
                 f"""
-                SELECT COUNT(*) FROM (
-                    SELECT f.file_id
-                    FROM files f
-                    LEFT JOIN file_tags ft ON f.file_id = ft.file_id
-                    LEFT JOIN tags t ON ft.tag_id = t.tag_id
-                    {where_sql}
-                    GROUP BY f.file_id
-                )
+                SELECT COUNT(*)
+                FROM files f
+                {where_sql}
                 """,
                 tuple(params),
             )
@@ -535,7 +537,7 @@ class StorageRepositoryMixin:
             query_params = [*params, int(limit), int(offset)]
             cursor.execute(
                 f"""
-                SELECT f.*, GROUP_CONCAT(t.tag_name) AS all_tags
+                SELECT f.*, GROUP_CONCAT(DISTINCT t.tag_name) AS all_tags
                 FROM files f
                 LEFT JOIN file_tags ft ON f.file_id = ft.file_id
                 LEFT JOIN tags t ON ft.tag_id = t.tag_id

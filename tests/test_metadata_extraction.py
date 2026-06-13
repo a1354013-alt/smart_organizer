@@ -90,3 +90,52 @@ def test_extract_metadata_photo_ocr_empty_text_sets_status(monkeypatch, tmp_path
 
     assert metadata["ocr_status"] == "empty_text"
     assert metadata["ocr_error"] is None
+
+
+def test_extract_metadata_photo_ocr_passes_timeout_option(monkeypatch, tmp_path: Path):
+    image_path = tmp_path / "a.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")
+    captured: dict[str, object] = {}
+
+    class FakeImageModule:
+        @staticmethod
+        def open(_path: str) -> object:
+            return object()
+
+    class FakeTesseract:
+        @staticmethod
+        def image_to_string(_image: object, **kwargs: object) -> str:
+            captured.update(kwargs)
+            return "recognized text"
+
+    monkeypatch.setattr(core_processor, "Image", FakeImageModule)
+    monkeypatch.setattr(core_processor, "pytesseract", FakeTesseract)
+
+    metadata = FileProcessor().extract_metadata(str(image_path), {"enable_ocr": True, "ocr_timeout_seconds": 7})
+
+    assert metadata["ocr_status"] == "success"
+    assert captured["timeout"] == 7
+
+
+def test_extract_metadata_photo_ocr_timeout_returns_fallback(monkeypatch, tmp_path: Path):
+    image_path = tmp_path / "a.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+    class FakeImageModule:
+        @staticmethod
+        def open(_path: str) -> object:
+            return object()
+
+    class FakeTesseract:
+        @staticmethod
+        def image_to_string(_image: object, **_kwargs: object) -> str:
+            raise core_processor.subprocess.TimeoutExpired(cmd=["tesseract"], timeout=5)
+
+    monkeypatch.setattr(core_processor, "Image", FakeImageModule)
+    monkeypatch.setattr(core_processor, "pytesseract", FakeTesseract)
+
+    metadata = FileProcessor().extract_metadata(str(image_path), {"enable_ocr": True, "ocr_timeout_seconds": 5})
+
+    assert metadata["ocr_status"] == "timeout"
+    assert metadata["ocr_error"] == "OCR timed out."
+    assert any("Image OCR timeout" in note for note in metadata.get("notes", []))

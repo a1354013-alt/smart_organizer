@@ -14,6 +14,7 @@ from ui_home import (
     cache_dependency_status,
     get_cached_dependency_status,
     limit_candidate_rows,
+    merge_visible_selection,
     refresh_dependency_status,
     render_home,
     summarize_recommendations,
@@ -247,3 +248,29 @@ def test_limit_candidate_rows_caps_large_result_sets():
 
     assert len(visible) == 500
     assert hidden == 120
+
+
+def test_merge_visible_selection_preserves_hidden_rows():
+    merged = merge_visible_selection(
+        {"C:/scan/hidden.txt", "C:/scan/visible-old.txt"},
+        [
+            {"path": "C:/scan/visible-old.txt", "select": True},
+            {"path": "C:/scan/visible-new.txt", "select": False},
+        ],
+        [
+            {"path": "C:/scan/visible-old.txt", "select": False},
+            {"path": "C:/scan/visible-new.txt", "select": True},
+        ],
+    )
+
+    assert merged == {"C:/scan/hidden.txt", "C:/scan/visible-new.txt"}
+
+
+def test_merge_visible_selection_clears_only_visible_rows():
+    merged = merge_visible_selection(
+        {"C:/scan/hidden.txt", "C:/scan/visible.txt"},
+        [{"path": "C:/scan/visible.txt", "select": True}],
+        [{"path": "C:/scan/visible.txt", "select": False}],
+    )
+
+    assert merged == {"C:/scan/hidden.txt"}

@@ -61,6 +61,7 @@ def _read_int_env(key: str, default: int, *, min_value: int | None = None, max_v
     return _parse_int_env(os.getenv(key, ""), default, min_value=min_value, max_value=max_value)
 
 
+DEFAULT_OCR_TIMEOUT_SECONDS = _read_int_env("OCR_TIMEOUT_SECONDS", 15, min_value=1, max_value=120)
 VIDEO_TOOL_TIMEOUT_SECONDS = _read_int_env("VIDEO_TOOL_TIMEOUT_SECONDS", 10, min_value=1)
 
 
@@ -108,6 +109,12 @@ class FileProcessor:
         self.poppler_path = (os.getenv("POPPLER_PATH") or "").strip() or None
         self.pdf_preview_max_pages = self._read_int_env("PDF_PREVIEW_MAX_PAGES", 1, min_value=1, max_value=10)
         self.pdf_ocr_max_pages = self._read_int_env("PDF_OCR_MAX_PAGES", 3, min_value=1, max_value=10)
+        self.ocr_timeout_seconds = self._read_int_env(
+            "OCR_TIMEOUT_SECONDS",
+            DEFAULT_OCR_TIMEOUT_SECONDS,
+            min_value=1,
+            max_value=120,
+        )
         self.video_tool_timeout_seconds = self._read_int_env(
             "VIDEO_TOOL_TIMEOUT_SECONDS",
             VIDEO_TOOL_TIMEOUT_SECONDS,
@@ -316,7 +323,10 @@ class FileProcessor:
                         is_scanned = True
 
         if file_type == "photo" and bool(options.get("enable_ocr", False)):
-            ocr_result = self._ocr_image(file_path)
+            ocr_result = self._ocr_image(
+                file_path,
+                timeout_seconds=int(options.get("ocr_timeout_seconds") or self.ocr_timeout_seconds),
+            )
             ocr_status = ocr_result.status
             if ocr_result.text:
                 extracted_text = ocr_result.text
@@ -340,8 +350,13 @@ class FileProcessor:
             video=video,
         )
 
-    def _ocr_image(self, file_path: str) -> OCRImageResult:
-        return ocr_image(file_path, image_module=Image, pytesseract_module=pytesseract)
+    def _ocr_image(self, file_path: str, *, timeout_seconds: int | None = None) -> OCRImageResult:
+        return ocr_image(
+            file_path,
+            image_module=Image,
+            pytesseract_module=pytesseract,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _pdf_ocr_status_from_error(self, error: str | None) -> OCRStatus:
         message = str(error or "").strip().lower()

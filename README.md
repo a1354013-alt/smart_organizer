@@ -112,6 +112,23 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Run In VS Code
+
+In the source repository, VS Code can launch the Streamlit app directly:
+
+1. Open the project folder in VS Code.
+2. Select a Python interpreter with the required dependencies installed.
+3. Install dependencies if needed:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+4. Press `F5` and choose `Smart Organizer: Streamlit App`.
+5. Open `http://localhost:8501` if the browser does not open automatically.
+
+The `.vscode/launch.json`, `.vscode/tasks.json`, and `.vscode/extensions.json` files are source-repository helpers and are not included in the runtime release zip.
+
 ## Demo Dataset
 
 ```bash
@@ -169,14 +186,13 @@ streamlit run app.py
 Run the same core checks used for local release confidence:
 
 ```bash
-python -m compileall -q .
 python -m ruff check --no-cache .
-python -m mypy --cache-dir=/dev/null .
+python -m mypy --cache-dir=/dev/null
 python -m pytest -q
 ```
 
 GitHub Actions already validates the repository on Python `3.11`, `3.12`, and `3.13`.
-Release validation is a source-repository step; run the repository validation script before packaging an official release.
+For the full source-repository validation flow, including cache-safe compilation and release packaging, follow `RUN_RELEASE.md` from the source repository before packaging an official release.
 
 ## Source Repository Release Validation
 

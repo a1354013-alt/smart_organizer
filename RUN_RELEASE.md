@@ -131,6 +131,12 @@ Recommended smoke test after extraction:
 3. Confirm the app opens successfully.
 4. Confirm a basic upload flow or folder-cleanup UI flow works.
 
+## 7a. VS Code source-repository helpers
+
+The source repository includes `.vscode/launch.json`, `.vscode/tasks.json`, and `.vscode/extensions.json` so developers can press `F5` and launch `python -m streamlit run app.py --server.address localhost --server.port 8501`.
+
+Those `.vscode` helpers are intentionally source-repository only and are not included in the extracted runtime release zip.
+
 ## 8. Source repository release validation
 
 Source repository only, not included in runtime release zip.

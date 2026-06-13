@@ -110,6 +110,23 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## 在 VS Code 用 F5 啟動
+
+在 source repository 中，VS Code 可以直接啟動 Streamlit app：
+
+1. 用 VS Code 開啟整個專案資料夾。
+2. 選擇已安裝必要依賴的 Python interpreter。
+3. 如果需要，先安裝依賴：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+4. 按 `F5`，並選擇 `Smart Organizer: Streamlit App`。
+5. 若瀏覽器沒有自動開啟，請手動前往 `http://localhost:8501`。
+
+`.vscode/launch.json`、`.vscode/tasks.json`、`.vscode/extensions.json` 只存在於 source repository，不會放進 runtime release zip。
+
 ## Demo 資料集
 
 ```bash
@@ -139,13 +156,12 @@ python scripts/create_demo_folder.py --dry-run
 本機開發時可先執行核心檢查：
 
 ```bash
-python -m compileall -q .
 python -m ruff check --no-cache .
-python -m mypy --cache-dir=/dev/null .
+python -m mypy --cache-dir=/dev/null
 python -m pytest -q
 ```
 
-完整 source-repository release validation、打包與驗證流程請依照 `RUN_RELEASE.md` 執行。
+完整 source-repository release validation、cache-safe compile、打包與驗證流程請依照 source repository 中的 `RUN_RELEASE.md` 執行。
 
 ## Upload 與多媒體 fallback 合約
 

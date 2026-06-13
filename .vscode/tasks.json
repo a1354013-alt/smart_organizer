@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Smart Organizer: Install runtime dependencies",
+      "type": "shell",
+      "command": "python -m pip install -r requirements.txt",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Smart Organizer: Install dev dependencies",
+      "type": "shell",
+      "command": "python -m pip install -r requirements.txt -r requirements-dev.txt",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Smart Organizer: Run tests",
+      "type": "shell",
+      "command": "python -m pytest -q",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Smart Organizer: Validate source repository",
+      "type": "shell",
+      "command": "python scripts/validate_release_source.py --timeout-tail-lines 20",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Smart Organizer: Build release zip",
+      "type": "shell",
+      "command": "python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Smart Organizer: Verify release zip",
+      "type": "shell",
+      "command": "python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
