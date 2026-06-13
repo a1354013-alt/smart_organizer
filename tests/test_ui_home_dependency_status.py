@@ -6,8 +6,11 @@ from types import SimpleNamespace
 import core_processor
 from core import FileProcessor
 from folder_models import Recommendation
+from i18n import t
 from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
+    _candidate_row,
+    _duplicate_type_label,
     cache_dependency_status,
     get_cached_dependency_status,
     limit_candidate_rows,
@@ -126,9 +129,11 @@ def test_summarize_recommendations_uses_shared_contract_labels():
 
 
 def test_recommendation_display_label_keeps_data_contract_and_localizes_ui_text():
-    assert recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value) == "可安全複查"
-    assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == "需要人工確認"
-    assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == "不要操作"
+    assert recommendation_display_label(Recommendation.SAFE_TO_REVIEW.value) == t("labels.recommendation.safe_to_review")
+    assert recommendation_display_label(Recommendation.NEEDS_MANUAL_CHECK.value) == t(
+        "labels.recommendation.needs_manual_check"
+    )
+    assert recommendation_display_label(Recommendation.DO_NOT_TOUCH.value) == t("labels.recommendation.do_not_touch")
     assert recommendation_display_label("Custom label") == "Custom label"
 
 
@@ -137,6 +142,34 @@ def test_topic_display_label_supports_locale_mapping_and_legacy_values():
     assert topic_display_label("document.invoice", locale="en") == "Invoice"
     assert topic_display_label("發票", locale="en") == "Invoice"
     assert topic_display_label("Meeting", locale="zh-TW") == "會議錄影"
+
+
+def test_duplicate_type_label_uses_localized_labels_and_fallback():
+    assert _duplicate_type_label("same_content_duplicate") == t(
+        "home.candidates.duplicate_type.same_content_duplicate"
+    )
+    assert _duplicate_type_label("") == t("home.candidates.duplicate_type.none")
+    assert _duplicate_type_label("custom") == "custom"
+
+
+def test_candidate_row_surfaces_duplicate_type_and_reason():
+    row = _candidate_row(
+        {
+            "name": "report.txt",
+            "recommendation": Recommendation.NEEDS_MANUAL_CHECK.value,
+            "risk_level": "needs_manual_check",
+            "duplicate_type": "same_name_candidate",
+            "duplicate_reason": "same filename appears more than once",
+            "candidate_reasons": ["duplicate candidate: same filename appears more than once"],
+            "size_bytes": 42,
+            "mtime": "2026-05-25T00:00:00+00:00",
+            "path": "C:/scan/report.txt",
+        }
+    )
+
+    assert row["duplicate_type"] == t("home.candidates.duplicate_type.same_name_candidate")
+    assert row["duplicate_reason"] == "same filename appears more than once"
+    assert "duplicate" in str(row["reasons"]).lower()
 
 
 def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
@@ -183,7 +216,6 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
         code=lambda *args, **kwargs: None,
         dataframe=lambda *args, **kwargs: None,
         multiselect=lambda *args, **kwargs: [],
-        divider=lambda: None,
         caption=lambda *args, **kwargs: None,
     )
 

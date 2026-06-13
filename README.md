@@ -2,6 +2,8 @@
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
+The Streamlit UI now includes centralized i18n support for `zh-TW` and `en`, with `zh-TW` as the default interface language.
+
 It is not an auto-delete tool, background cleanup daemon, chatbot, RAG app, or document QA system.
 
 ## What Problem It Solves
@@ -16,6 +18,11 @@ Messy download folders and mixed personal archives are hard to review safely. Sm
 - export a report for audit or portfolio review
 
 Supported upload formats: `pdf, jpg, jpeg, png, mp4, mov, mkv, avi, webm, m4v`.
+
+Upload limits:
+
+- single file: `25 MB`
+- per batch: `50 MB`
 
 ## Recommended Python Version
 
@@ -72,6 +79,20 @@ Workflow summary:
 - `execute`: move only selected candidates into quarantine after confirmation
 - `quarantine`: hold moved files in a reversible safety area with manifest tracking
 - `restore`: return files to the original path or a collision-safe renamed path
+
+## Duplicate Classification
+
+Folder scan duplicate detection is intentionally conservative. Smart Organizer separates duplicate signals into three buckets:
+
+- `same_content_duplicate`: same size and same hash. This is the highest-confidence duplicate signal.
+- `same_name_candidate`: same filename appears in multiple folders, but content may differ.
+- `similar_name_candidate`: filename is only similar. This is a review hint, not proof of duplication.
+
+Important safety note:
+
+- Similar names do not trigger automatic deletion.
+- Duplicate classification is only used to improve dry-run review, quarantine explanations, and reports.
+- Users still review the dry-run before any quarantine move.
 
 ## Repository, Quarantine, And Restore Logic
 
@@ -165,6 +186,14 @@ Source repository only, not included in runtime release zip. The extracted runti
 
 Release packaging and verification are source-repository workflows. Follow `RUN_RELEASE.md` when building or validating an official runtime zip.
 
+## CI And Validation Commands
+
+CI and local release validation cover compile, cache-safe compile, lint, type checking, tests, release packaging, release verification, command-plan validation, and full release-validation execution.
+
+The extracted runtime package is not the place to run those source-repository commands. Use `RUN_RELEASE.md` from the source repository for the exact command sequence and release-validation workflow.
+
+The source release-validation wrapper keeps the command plan aligned with CI. Its `--timeout-tail-lines` option controls how many recent stdout/stderr lines are shown when a validation subprocess times out, including flushed partial lines when available.
+
 ## Portfolio Highlights
 
 - Safe folder organization workflow
@@ -188,3 +217,4 @@ Release packaging and verification are source-repository workflows. Follow `RUN_
 - Known limitations: `docs/KNOWN_LIMITATIONS.md`
 - Release packaging notes: `RELEASE_PACKAGING.md`
 - Release runbook: `RUN_RELEASE.md`
+- Traditional Chinese quick start: `README.zh-TW.md`

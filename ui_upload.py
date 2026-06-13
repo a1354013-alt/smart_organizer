@@ -5,8 +5,9 @@ from typing import Any
 
 import streamlit as st
 
+from i18n import t
 from services import UploadedFileData, analyze_upload_batch
-from storage import MAX_UPLOAD_BYTES
+from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES
 from supported_formats import SUPPORTED_UPLOAD_EXTENSIONS, supported_upload_extensions_label
 from ui_common import (
     UIContext,
@@ -51,41 +52,40 @@ def validate_upload_batch_limits(
         total += size
         name = safe_display_text(getattr(uploaded_file, "name", "uploaded file"))
         if size > max_file_bytes:
-            errors.append(
-                f"{name}: file size {format_bytes(size)} exceeds the per-file limit "
-                f"of {format_bytes(max_file_bytes)}."
-            )
+            errors.append(t("upload.limit_file", name=name, size=format_bytes(size), max_size=format_bytes(max_file_bytes)))
     if total > max_batch_bytes:
-        errors.append(
-            f"Batch size {format_bytes(total)} exceeds the upload batch limit "
-            f"of {format_bytes(max_batch_bytes)}. Upload fewer or smaller files at once."
-        )
+        errors.append(t("upload.limit_batch", size=format_bytes(total), max_size=format_bytes(max_batch_bytes)))
     return errors
 
 
-def render_upload(context: UIContext) -> None:
-    st.header("Advanced upload analysis")
-    st.markdown(
-        "Upload analysis is an advanced workflow for classifying individual files, "
-        "searching records, and keeping an audit trail. The main cleanup workflow remains "
-        "the local folder scan, quarantine, restore, and report flow above."
-    )
-    st.caption(f"Supported formats: {get_supported_upload_caption()}")
+def resolve_upload_limits(context: UIContext) -> tuple[int, int]:
+    max_file_bytes = int(getattr(context, "max_upload_bytes", MAX_UPLOAD_BYTES))
+    max_batch_bytes = int(getattr(context, "max_upload_batch_bytes", MAX_UPLOAD_BATCH_BYTES))
+    return max_file_bytes, max(max_file_bytes, max_batch_bytes)
 
-    max_upload_bytes = int(getattr(context, "max_upload_bytes", MAX_UPLOAD_BYTES))
-    batch_limit_bytes = max(max_upload_bytes, max_upload_bytes * 2)
+
+def render_upload(context: UIContext) -> None:
+    st.header(t("upload.title"))
+    st.markdown(t("upload.description"))
+    st.caption(t("upload.supported_formats", formats=get_supported_upload_caption()))
+
+    max_upload_bytes, batch_limit_bytes = resolve_upload_limits(context)
     st.caption(
-        "Batch guidance: large batches are held in memory during analysis. "
-        f"Current batch limit: {format_bytes(batch_limit_bytes)}."
+        t(
+            "upload.limit_summary",
+            file_size=format_bytes(max_upload_bytes),
+            batch_size=format_bytes(batch_limit_bytes),
+        )
     )
+    st.caption(t("upload.batch_guidance", size=format_bytes(batch_limit_bytes)))
 
     uploaded_files = st.file_uploader(
-        "Choose files for advanced analysis",
+        t("upload.uploader_label"),
         type=get_supported_upload_types(),
         accept_multiple_files=True,
     )
     if not uploaded_files:
-        st.info("Choose PDF, image, or video files to start the advanced upload flow.")
+        st.info(t("upload.empty"))
         return
 
     uploaded_list = list(uploaded_files)
@@ -100,10 +100,10 @@ def render_upload(context: UIContext) -> None:
         return
 
     total_size = sum(_uploaded_file_size(uploaded_file) for uploaded_file in uploaded_list)
-    st.success(f"Ready to analyze {len(uploaded_list)} file(s), total {format_bytes(total_size)}.")
+    st.success(t("upload.ready", count=len(uploaded_list), size=format_bytes(total_size)))
     if total_size > max_upload_bytes:
-        st.warning("This batch may take a while because multiple large files are queued together.")
-    if not st.button("Analyze uploaded files", key="analyze_button"):
+        st.warning(t("upload.large_batch_warning"))
+    if not st.button(t("upload.start_button"), key="analyze_button"):
         return
 
     reset_review_state()
@@ -114,7 +114,7 @@ def render_upload(context: UIContext) -> None:
     def on_progress(index: int, total: int, uploaded: UploadedFileData) -> None:
         progress_bar.progress(index / total)
         safe_name = safe_display_text(uploaded.name)
-        status_text.text(f"Analyzing {index}/{total}: {safe_name}")
+        status_text.text(t("upload.progress", index=index, total=total, name=safe_name))
         st.session_state.current_processing_file = uploaded.name
 
     try:
@@ -126,19 +126,19 @@ def render_upload(context: UIContext) -> None:
             progress_callback=on_progress,
         )
         progress_bar.progress(1.0)
-        status_text.text("Analysis complete.")
+        status_text.text(t("upload.complete"))
         st.session_state.analysis_results = outcome.results
 
         for error in outcome.errors:
             st.error(safe_display_text(error))
         if outcome.duplicates:
-            st.warning(f"{len(outcome.duplicates)} duplicate file(s) were skipped.")
+            st.warning(t("upload.duplicates_skipped", count=len(outcome.duplicates)))
             for duplicate in outcome.duplicates:
                 st.info(safe_display_text(duplicate.display))
         if outcome.results:
-            st.success(f"Analyzed {len(outcome.results)} file(s). Continue to the Review tab.")
+            st.success(t("upload.continue_to_review", count=len(outcome.results)))
         else:
-            st.warning("No files were analyzed. Check the errors above for details.")
+            st.warning(t("upload.no_results"))
     except Exception as exc:
         logger.exception("render_upload failed")
-        handle_ui_exception("Upload analysis failed.", exc)
+        handle_ui_exception(t("upload.failed"), exc)

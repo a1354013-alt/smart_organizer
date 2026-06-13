@@ -8,6 +8,7 @@ import ui_execute
 import ui_renderers
 import ui_review
 import ui_search
+from i18n import t
 from services import AnalysisResult, ExecutionResult
 from storage import SearchContentError, StorageManager
 
@@ -83,7 +84,7 @@ def test_render_execute_requires_confirmed_results(monkeypatch):
 
     ui_execute.render_execute(SimpleNamespace(storage=None))
 
-    assert any("Confirm reviewed items first" in message for message in messages)
+    assert any(t("execute.empty") in message for message in messages)
 
 
 def test_render_execute_resets_review_state_after_finalize(monkeypatch):
@@ -153,15 +154,15 @@ def test_render_execute_resets_review_state_after_finalize(monkeypatch):
     ui_execute.render_execute(SimpleNamespace(storage=object()))
 
     assert progress.values[-1] == 1.0
-    assert status.messages[-1] == "Organization completed with retryable failures."
+    assert status.messages[-1] == t("execute.complete_with_retryable_failures")
     assert session_state["analysis_results"] == []
     assert [item.file_id for item in session_state["confirmed_results"]] == [2]
     assert session_state["execution_results"][0].status == "SUCCESS"
     assert reset_calls == [True]
-    assert any("a.pdf -> /repo/a.pdf" in message for message in successes)
-    assert any("b.pdf failed: disk full" in message for message in errors)
-    assert any("Kept 1 failed item" in message for message in warnings)
-    assert any("Retry ready: b.pdf" in message for message in infos)
+    assert any(t("execute.item_success", name="a.pdf", path="/repo/a.pdf") in message for message in successes)
+    assert any(t("execute.item_failed", name="b.pdf", detail=": disk full") in message for message in errors)
+    assert any(t("execute.partial_success", success_count=1, failed_count=1) in message for message in warnings)
+    assert any(t("execute.retry_ready", names="b.pdf") in message for message in infos)
 
 
 def test_render_search_handles_search_content_error(monkeypatch):
@@ -238,7 +239,7 @@ def test_render_search_warns_when_download_file_missing(monkeypatch, tmp_path: P
 
     ui_search.render_search(SimpleNamespace(storage=storage))
 
-    assert any("no longer available" in warning for warning in warnings)
+    assert any(t("search_records.file_missing") in warning for warning in warnings)
     assert downloads == []
 
 
@@ -270,7 +271,7 @@ def test_render_search_refuses_download_path_outside_repo(monkeypatch, tmp_path:
 
     ui_search.render_search(SimpleNamespace(storage=storage))
 
-    assert any("outside the repository" in warning for warning in warnings)
+    assert any(t("search_records.path_outside_repo") in warning for warning in warnings)
     assert downloads == []
 
 

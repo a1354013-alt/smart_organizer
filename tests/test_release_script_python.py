@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -14,10 +15,76 @@ from scripts.create_release_zip import (
     zip_contains_forbidden_entries,
 )
 from scripts.release_policy import SOURCE_ONLY_RELEASE_FILES
-from scripts.validate_release_source import run_step
+from scripts.validate_release_source import (
+    OutputTail,
+    StepTimeoutResult,
+    _build_timeout_result,
+    _format_timeout_message,
+    _tail_lines,
+    run_step,
+)
 from scripts.verify_release_zip import default_zip_path_arg, resolve_zip_paths, verify_release_zip
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+HANDSHAKE_WAIT_SECONDS = 5.0
+
+
+def _wait_for_path(path: Path, *, timeout_seconds: float = HANDSHAKE_WAIT_SECONDS) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"Timed out waiting for {path}")
+
+
+def _write_timeout_probe_script(
+    path: Path,
+    *,
+    ready_file: Path,
+    stdout_text: str = "",
+    stderr_text: str = "",
+    extra_before_sleep: str = "",
+) -> Path:
+    lines = [
+        "import pathlib",
+        "import sys",
+        "import time",
+        "",
+        f"ready = pathlib.Path({str(ready_file)!r})",
+        "ready.write_text('ready', encoding='utf-8')",
+    ]
+    if stdout_text:
+        lines.append(f"sys.stdout.write({stdout_text!r})")
+        lines.append("sys.stdout.flush()")
+    if stderr_text:
+        lines.append(f"sys.stderr.write({stderr_text!r})")
+        lines.append("sys.stderr.flush()")
+    if extra_before_sleep:
+        lines.append(extra_before_sleep)
+    lines.append("time.sleep(30)")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _run_step_in_thread(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    timeout_tail_lines: int,
+) -> tuple[dict[str, int], threading.Thread]:
+    result: dict[str, int] = {}
+
+    def _target() -> None:
+        result["returncode"] = run_step(
+            command,
+            timeout_seconds=timeout_seconds,
+            timeout_tail_lines=timeout_tail_lines,
+        )
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    return result, thread
 
 
 def _pid_exists(pid: int) -> bool:
@@ -70,6 +137,25 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "docs/PORTFOLIO_CASE_STUDY.md" in names
     for source_only_path in SOURCE_ONLY_RELEASE_FILES:
         assert source_only_path not in names
+
+
+def test_build_release_zip_wrapper_script_creates_release_zip(tmp_path: Path):
+    zip_path = tmp_path / "wrapper-package.zip"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "build_release_zip.py"),
+            "--output-dir",
+            str(tmp_path),
+            "--zip-name",
+            zip_path.name,
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+
+    assert zip_path.exists()
 
 
 def test_get_version_uses_static_parsing(monkeypatch):
@@ -248,7 +334,7 @@ def test_validate_release_run_step_streams_success(capsys):
 def test_validate_release_run_step_times_out_with_tail(capsys):
     returncode = run_step(
         [sys.executable, "-c", "import time; print('last visible line', flush=True); time.sleep(10)"],
-        timeout_seconds=1,
+        timeout_seconds=3,
         timeout_tail_lines=5,
     )
 
@@ -258,29 +344,27 @@ def test_validate_release_run_step_times_out_with_tail(capsys):
     assert "last visible line" in captured.err
 
 
-def test_validate_release_run_step_times_out_with_partial_line(capsys):
-    command = [
-        sys.executable,
-        "-c",
-        (
-            "import sys, time; "
-            "sys.stdout.write('partial stdout'); sys.stdout.flush(); "
-            "sys.stderr.write('partial stderr'); sys.stderr.flush(); "
-            "time.sleep(10)"
-        ),
-    ]
+def test_validate_release_run_step_times_out_with_partial_line(capsys, tmp_path: Path):
+    ready_path = tmp_path / "timeout-partial.ready"
+    script_path = tmp_path / "timeout-partial.py"
+    _write_timeout_probe_script(
+        script_path,
+        ready_file=ready_path,
+        stdout_text="partial stdout",
+        stderr_text="partial stderr",
+    )
+    command = [sys.executable, str(script_path)]
 
     started = time.perf_counter()
-    returncode = run_step(
-        command,
-        timeout_seconds=1,
-        timeout_tail_lines=5,
-    )
+    result, thread = _run_step_in_thread(command, timeout_seconds=3, timeout_tail_lines=5)
+    _wait_for_path(ready_path)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
     duration = time.perf_counter() - started
 
     captured = capsys.readouterr()
-    assert returncode == 124
-    assert duration < 4
+    assert result["returncode"] == 124
+    assert duration < 8
     assert "partial stdout" in captured.out
     assert "partial stderr" in captured.err
     assert "TIMEOUT" in captured.err
@@ -288,26 +372,53 @@ def test_validate_release_run_step_times_out_with_partial_line(capsys):
     assert "[stderr] partial stderr" in captured.err
 
 
-def test_validate_release_run_step_timeout_tail_keeps_flushed_partial_stdout_and_stderr(capsys):
-    command = [
-        sys.executable,
-        "-c",
-        (
-            "import sys, time; "
-            "sys.stdout.write('partial stdout flushed'); sys.stdout.flush(); "
-            "sys.stderr.write('partial stderr flushed'); sys.stderr.flush(); "
-            "time.sleep(10)"
-        ),
-    ]
-
-    returncode = run_step(command, timeout_seconds=1, timeout_tail_lines=5)
+def test_validate_release_run_step_timeout_tail_keeps_flushed_partial_stdout_and_stderr(
+    capsys,
+    tmp_path: Path,
+):
+    ready_path = tmp_path / "partial-tail.ready"
+    script_path = tmp_path / "partial-tail.py"
+    _write_timeout_probe_script(
+        script_path,
+        ready_file=ready_path,
+        stdout_text="partial stdout flushed",
+        stderr_text="partial stderr flushed",
+    )
+    result, thread = _run_step_in_thread(
+        [sys.executable, str(script_path)],
+        timeout_seconds=3,
+        timeout_tail_lines=5,
+    )
+    _wait_for_path(ready_path)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
 
     captured = capsys.readouterr()
-    assert returncode == 124
+    assert result["returncode"] == 124
     assert "partial stdout flushed" in captured.out
     assert "partial stderr flushed" in captured.err
     assert "[stdout] partial stdout flushed" in captured.err
     assert "[stderr] partial stderr flushed" in captured.err
+
+
+def test_validate_release_run_step_timeout_with_no_output_reports_empty_tail(capsys, tmp_path: Path):
+    ready_path = tmp_path / "silent.ready"
+    script_path = tmp_path / "silent.py"
+    _write_timeout_probe_script(script_path, ready_file=ready_path)
+
+    result, thread = _run_step_in_thread(
+        [sys.executable, str(script_path)],
+        timeout_seconds=3,
+        timeout_tail_lines=5,
+    )
+    _wait_for_path(ready_path)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    captured = capsys.readouterr()
+    assert result["returncode"] == 124
+    assert "TIMEOUT" in captured.err
+    assert "No output captured before timeout." in captured.err
 
 
 def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_path: Path):
@@ -326,7 +437,7 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         "ready_path = pathlib.Path(sys.argv[2])\n"
         "pid_path.write_text(str(os.getpid()), encoding='utf-8')\n"
         "ready_path.write_text('child-ready', encoding='utf-8')\n"
-        "time.sleep(10)\n",
+        "time.sleep(30)\n",
         encoding="utf-8",
     )
     parent_script = tmp_path / "parent_spawn.py"
@@ -352,7 +463,7 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         "parent_ready.write_text('parent-ready', encoding='utf-8')\n"
         "sys.stdout.write('parent partial stdout'); sys.stdout.flush()\n"
         "sys.stderr.write('parent partial stderr'); sys.stderr.flush()\n"
-        "time.sleep(10)\n",
+        "time.sleep(30)\n",
         encoding="utf-8",
     )
     command = [
@@ -365,10 +476,14 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
         str(child_script),
     ]
 
-    returncode = run_step(command, timeout_seconds=2, timeout_tail_lines=5)
+    result, thread = _run_step_in_thread(command, timeout_seconds=4, timeout_tail_lines=5)
+    _wait_for_path(parent_ready_file)
+    _wait_for_path(child_ready_file)
+    thread.join(timeout=12)
+    assert not thread.is_alive()
 
     captured = capsys.readouterr()
-    assert returncode == 124
+    assert result["returncode"] == 124
     assert "TIMEOUT" in captured.err
     assert parent_pid_file.exists()
     assert child_pid_file.exists()
@@ -410,3 +525,51 @@ def test_validate_release_run_step_failure_message_is_clear(capsys):
     assert "clear failure" in captured.err
     assert "FAILED" in captured.err
     assert "exit=7" in captured.err
+
+
+def test_timeout_tail_lines_limit_keeps_latest_entries():
+    tail = OutputTail(8)
+    for index in range(6):
+        tail.append("stdout", f"stdout-{index}\n")
+        tail.append("stderr", f"stderr-{index}\n")
+
+    lines = _tail_lines(tail.snapshot(), limit=3)
+
+    assert lines == [
+        "[stderr] stderr-4",
+        "[stdout] stdout-5",
+        "[stderr] stderr-5",
+    ]
+
+
+def test_format_timeout_message_includes_command_timeout_and_returncode():
+    message = _format_timeout_message(
+        StepTimeoutResult(
+            command=[sys.executable, "-m", "pytest", "-q"],
+            timeout_seconds=20,
+            returncode=-9,
+            duration=20.5,
+            tail_lines=[],
+        )
+    )
+
+    assert "python -m pytest -q" in message
+    assert "timeout=20s" in message
+    assert "returncode=-9" in message
+
+
+def test_build_timeout_result_captures_limited_tail():
+    tail = OutputTail(10)
+    tail.append("stdout", "alpha\n")
+    tail.append("stderr", "beta")
+
+    result = _build_timeout_result(
+        [sys.executable, "-m", "pytest", "-q"],
+        timeout_seconds=20,
+        duration=20.5,
+        returncode=-9,
+        tail=tail,
+        tail_lines=2,
+    )
+
+    assert result.tail_lines == ["[stdout] alpha", "[stderr] beta"]

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 
 import streamlit as st
 
+from i18n import t
 from services import AnalysisResult, ExecutionResult, finalize_batch
 from ui_common import UIContext, handle_ui_exception, safe_display_text
 from ui_state import reset_review_state
@@ -29,12 +30,15 @@ def _retryable_confirmed_results(
 
 
 def render_execute(context: UIContext) -> None:
-    st.header("Execute Organization")
+    st.header(t("execute.title"))
+    markdown = getattr(st, "markdown", None)
+    if callable(markdown):
+        markdown(t("execute.description"))
     confirmed_results = st.session_state.get("confirmed_results")
     if not confirmed_results:
-        st.info("Confirm reviewed items first, then run the organization step here.")
+        st.info(t("execute.empty"))
         return
-    if not st.button("Organize confirmed files", key="execute_button"):
+    if not st.button(t("execute.button"), key="execute_button"):
         return
 
     progress_bar = st.progress(0)
@@ -42,7 +46,7 @@ def render_execute(context: UIContext) -> None:
 
     def on_execute_progress(index: int, total: int, result: AnalysisResult) -> None:
         progress_bar.progress(index / total)
-        status_text.text(f"Organizing {index}/{total}: {safe_display_text(result.original_name)}")
+        status_text.text(t("execute.progress", index=index, total=total, name=safe_display_text(result.original_name)))
 
     try:
         execution_results = finalize_batch(
@@ -55,27 +59,38 @@ def render_execute(context: UIContext) -> None:
         success_count = sum(1 for result in execution_results if result.status == "SUCCESS")
         failed_count = sum(1 for result in execution_results if result.status == "FAILED")
         progress_bar.progress(1.0)
-        status_text.text("Organization completed." if failed_count == 0 else "Organization completed with retryable failures.")
+        status_text.text(
+            t("execute.complete") if failed_count == 0 else t("execute.complete_with_retryable_failures")
+        )
         st.session_state.execution_results = execution_results
         st.session_state.analysis_results = []
         st.session_state.confirmed_results = retryable_results
         reset_review_state()
 
         if failed_count == 0:
-            st.success(f"Organization completed successfully for {success_count} item(s).")
+            st.success(t("execute.success", count=success_count))
         else:
-            st.warning(
-                f"Organized {success_count} item(s). Kept {failed_count} failed item(s) in the pending list for retry."
-            )
+            st.warning(t("execute.partial_success", success_count=success_count, failed_count=failed_count))
 
         for result in execution_results:
             if result.status == "SUCCESS":
-                st.success(f"{safe_display_text(result.original_name)} -> {safe_display_text(result.new_path)}")
+                st.success(
+                    t(
+                        "execute.item_success",
+                        name=safe_display_text(result.original_name),
+                        path=safe_display_text(result.new_path),
+                    )
+                )
             else:
                 detail = f": {safe_display_text(result.error_message)}" if result.error_message else ""
-                st.error(f"{safe_display_text(result.original_name)} failed{detail}")
+                st.error(t("execute.item_failed", name=safe_display_text(result.original_name), detail=detail))
         if retryable_results:
-            st.info("Retry ready: " + ", ".join(safe_display_text(result.original_name) for result in retryable_results))
+            st.info(
+                t(
+                    "execute.retry_ready",
+                    names=", ".join(safe_display_text(result.original_name) for result in retryable_results),
+                )
+            )
     except Exception as exc:
         logger.exception("render_execute failed")
-        handle_ui_exception("Execution failed.", exc)
+        handle_ui_exception(t("execute.failed"), exc)

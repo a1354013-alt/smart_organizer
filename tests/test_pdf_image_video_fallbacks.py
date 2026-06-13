@@ -99,7 +99,8 @@ def test_image_metadata_and_ocr_fallback_for_corrupt_image(monkeypatch, tmp_path
     assert metadata["file_type"] == "photo"
     assert metadata["preview_path"] == str(image)
     assert metadata["extracted_text"] == ""
-    assert metadata["ocr_error"] is None
+    assert metadata["ocr_status"] == "failed"
+    assert metadata["ocr_error"] == "cannot identify image file"
 
 
 def test_video_ffprobe_and_thumbnail_failures_are_degraded_notes(monkeypatch, tmp_path: Path):

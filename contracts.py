@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 
 FileType: TypeAlias = Literal["document", "photo", "video", "unknown"]
 RecordStatus: TypeAlias = Literal["PENDING", "PROCESSED", "MOVING", "COMPLETED", "MISSING", "BROKEN"]
 DecisionSource: TypeAlias = Literal["RULE", "MANUAL_OVERRIDE", "RULE_RECLASSIFY", "RECOVERY"]
+OCRStatus: TypeAlias = Literal["disabled", "success", "unavailable", "failed", "timeout", "empty_text"]
 
 METADATA_REQUIRED_KEYS = {
     "file_type",
@@ -12,9 +14,32 @@ METADATA_REQUIRED_KEYS = {
     "extracted_text",
     "is_scanned",
     "preview_path",
+    "ocr_status",
     "ocr_error",
     "notes",
 }
+METADATA_RESERVED_KEYS = METADATA_REQUIRED_KEYS | {"video", "extra"}
+LEGACY_VIDEO_EXTRA_KEYS = {
+    "media_type",
+    "duration_seconds",
+    "width",
+    "height",
+    "fps",
+    "video_codec",
+    "file_size",
+    "created_at",
+    "modified_at",
+    "thumbnail_error",
+    "ffprobe_error",
+    "error",
+}
+MAX_EXTRACTED_TEXT_LENGTH = 20000
+MAX_PATH_LENGTH = 2048
+MAX_ERROR_LENGTH = 300
+MAX_NOTE_LENGTH = 300
+MAX_NOTES_COUNT = 50
+MAX_VIDEO_CODEC_LENGTH = 120
+MAX_TIMESTAMP_LENGTH = 64
 
 
 class VideoMetadata(TypedDict, total=False):
@@ -50,6 +75,7 @@ class ExtractedMetadata(TypedDict):
     extracted_text: str
     is_scanned: bool
     preview_path: str | None
+    ocr_status: NotRequired[OCRStatus | None]
     ocr_error: str | None
     notes: list[str]
 
@@ -73,6 +99,101 @@ class DecisionHistory(TypedDict, total=False):
     last_manual_reason: str | None
 
 
+def _normalize_text(value: object, *, max_length: int, allow_empty: bool = True) -> str | None:
+    if value is None:
+        return "" if allow_empty else None
+    text = str(value).strip()
+    if not text:
+        return "" if allow_empty else None
+    return text[:max_length]
+
+
+def _normalize_bool(value: object) -> bool:
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"", "0", "false", "no", "off", "none", "null"}:
+            return False
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def _normalize_int(value: object, *, min_value: int = 0, max_value: int | None = None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    number = int(parsed)
+    if number < min_value:
+        return None
+    if max_value is not None and number > max_value:
+        return None
+    return number
+
+
+def _normalize_float(value: object, *, min_value: float = 0.0, max_value: float | None = None) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    if number < min_value:
+        return None
+    if max_value is not None and number > max_value:
+        return None
+    return number
+
+
+def _normalize_ocr_status(value: object) -> OCRStatus | None:
+    raw = str(value or "").strip().lower()
+    if raw in {"disabled", "success", "unavailable", "failed", "timeout", "empty_text"}:
+        return cast(OCRStatus, raw)
+    return None
+
+
+def _normalize_notes(value: object) -> list[str]:
+    raw_items = value if isinstance(value, list) else ([] if value in (None, "") else [value])
+    notes: list[str] = []
+    for item in raw_items:
+        normalized = _normalize_text(item, max_length=MAX_NOTE_LENGTH, allow_empty=False)
+        if normalized is None:
+            continue
+        notes.append(normalized)
+        if len(notes) >= MAX_NOTES_COUNT:
+            break
+    return notes
+
+
+def _normalize_extra(
+    extra: dict[str, Any],
+    *,
+    file_type: FileType,
+    raw_video: object,
+) -> tuple[dict[str, Any], object]:
+    if raw_video is None and file_type == "video":
+        legacy_keys = {key for key in LEGACY_VIDEO_EXTRA_KEYS if key in extra}
+        if legacy_keys:
+            raw_video = {key: extra[key] for key in legacy_keys}
+
+    overlap = sorted(set(extra.keys()) & METADATA_RESERVED_KEYS)
+    if overlap:
+        raise ValueError(f"metadata.extra must not redefine contract keys: {', '.join(overlap)}")
+
+    normalized_extra = {
+        str(key): value
+        for key, value in extra.items()
+        if str(key) not in LEGACY_VIDEO_EXTRA_KEYS
+    }
+    return normalized_extra, raw_video
+
+
 def validate_extracted_metadata(raw: ExtractedMetadata | dict[str, Any]) -> ExtractedMetadata:
     """
     Normalize and validate the cross-module metadata contract.
@@ -88,48 +209,27 @@ def validate_extracted_metadata(raw: ExtractedMetadata | dict[str, Any]) -> Extr
     if not isinstance(extra, dict):
         raise TypeError("metadata.extra must be a dict when provided")
 
-    overlap = sorted(set(extra.keys()) & (METADATA_REQUIRED_KEYS | {"video"}))
-    if overlap:
-        raise ValueError(f"metadata.extra must not redefine contract keys: {', '.join(overlap)}")
-
-    notes = metadata.get("notes") or []
-    if not isinstance(notes, list):
-        notes = [str(notes)]
-
     ft_raw = str(metadata.get("file_type") or "unknown")
     if ft_raw in {"document", "photo", "video", "unknown"}:
         file_type: FileType = cast(FileType, ft_raw)
     else:
         file_type = "unknown"
 
+    raw_video = metadata.get("video")
+    extra, raw_video = _normalize_extra(extra, file_type=file_type, raw_video=raw_video)
+
     normalized: ExtractedMetadata = {
         "file_type": file_type,
-        "standard_date": str(metadata.get("standard_date") or ""),
-        "extracted_text": str(metadata.get("extracted_text") or ""),
-        "is_scanned": bool(metadata.get("is_scanned", False)),
-        "preview_path": metadata.get("preview_path"),
-        "ocr_error": metadata.get("ocr_error"),
-        "notes": [str(item) for item in notes],
+        "standard_date": _normalize_text(metadata.get("standard_date"), max_length=32) or "",
+        "extracted_text": _normalize_text(metadata.get("extracted_text"), max_length=MAX_EXTRACTED_TEXT_LENGTH) or "",
+        "is_scanned": _normalize_bool(metadata.get("is_scanned", False)),
+        "preview_path": _normalize_text(metadata.get("preview_path"), max_length=MAX_PATH_LENGTH, allow_empty=False),
+        "ocr_error": _normalize_text(metadata.get("ocr_error"), max_length=MAX_ERROR_LENGTH, allow_empty=False),
+        "notes": _normalize_notes(metadata.get("notes")),
     }
-
-    raw_video = metadata.get("video")
-    if raw_video is None and file_type == "video":
-        legacy_video_keys = {
-            "media_type",
-            "duration_seconds",
-            "width",
-            "height",
-            "fps",
-            "video_codec",
-            "file_size",
-            "created_at",
-            "modified_at",
-            "thumbnail_error",
-            "ffprobe_error",
-            "error",
-        }
-        if any(k in extra for k in legacy_video_keys):
-            raw_video = extra
+    ocr_status = _normalize_ocr_status(metadata.get("ocr_status"))
+    if ocr_status is not None:
+        normalized["ocr_status"] = ocr_status
 
     if file_type == "video":
         video_dict: dict[str, Any]
@@ -145,16 +245,16 @@ def validate_extracted_metadata(raw: ExtractedMetadata | dict[str, Any]) -> Extr
 
         normalized["video"] = {
             "media_type": "video",
-            "duration_seconds": cast(Any, video_dict.get("duration_seconds")),
-            "width": cast(Any, video_dict.get("width")),
-            "height": cast(Any, video_dict.get("height")),
-            "fps": cast(Any, video_dict.get("fps")),
-            "video_codec": cast(Any, video_dict.get("video_codec")),
-            "file_size": cast(Any, video_dict.get("file_size")),
-            "created_at": cast(Any, video_dict.get("created_at")),
-            "modified_at": cast(Any, video_dict.get("modified_at")),
-            "ffprobe_error": cast(Any, video_dict.get("ffprobe_error")),
-            "thumbnail_error": cast(Any, video_dict.get("thumbnail_error")),
+            "duration_seconds": cast(Any, _normalize_float(video_dict.get("duration_seconds"), min_value=0.0, max_value=31_536_000.0)),
+            "width": cast(Any, _normalize_int(video_dict.get("width"), min_value=1, max_value=100_000)),
+            "height": cast(Any, _normalize_int(video_dict.get("height"), min_value=1, max_value=100_000)),
+            "fps": cast(Any, _normalize_float(video_dict.get("fps"), min_value=0.0, max_value=1_000.0)),
+            "video_codec": cast(Any, _normalize_text(video_dict.get("video_codec"), max_length=MAX_VIDEO_CODEC_LENGTH, allow_empty=False)),
+            "file_size": cast(Any, _normalize_int(video_dict.get("file_size"), min_value=0, max_value=10**15)),
+            "created_at": cast(Any, _normalize_text(video_dict.get("created_at"), max_length=MAX_TIMESTAMP_LENGTH, allow_empty=False)),
+            "modified_at": cast(Any, _normalize_text(video_dict.get("modified_at"), max_length=MAX_TIMESTAMP_LENGTH, allow_empty=False)),
+            "ffprobe_error": cast(Any, _normalize_text(video_dict.get("ffprobe_error"), max_length=MAX_ERROR_LENGTH, allow_empty=False)),
+            "thumbnail_error": cast(Any, _normalize_text(video_dict.get("thumbnail_error"), max_length=MAX_ERROR_LENGTH, allow_empty=False)),
         }
     if extra:
         normalized["extra"] = extra

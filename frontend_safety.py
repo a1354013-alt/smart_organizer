@@ -4,14 +4,20 @@ import streamlit as st
 
 
 def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
-    """Best-effort mitigation for browser JSON.parse console errors."""
+    """Best-effort mitigation for local Streamlit browser-storage JSON.parse errors.
+
+    This inline script only cleans same-origin `localStorage` and `sessionStorage`
+    values created by the local Streamlit UI state layer. It does not process
+    external user HTML, does not accept arbitrary JavaScript input, and is not a
+    general-purpose HTML injection channel.
+    """
 
     if not enabled:
         return
 
     # Streamlit 1.56+ supports inline HTML with JavaScript via st.html.
-    # Keeping this script inline lets it sanitize same-origin browser storage
-    # without relying on the deprecated components.v1 HTML iframe helper.
+    # Keeping this script inline limits scope to local UI-state cleanup without
+    # adding remote scripts, CDN dependencies, or broader browser privileges.
     st.html(
         """
         <div style="display:none"></div>

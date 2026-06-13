@@ -1,0 +1,325 @@
+{
+  "app": {
+    "page_title": "Smart Organizer",
+    "tabs": {
+      "folder_scan": "Folder Scan",
+      "upload_analysis": "Upload Analysis",
+      "review_results": "Review Results",
+      "execute_organization": "Execute Organization",
+      "search_records": "Search & Records"
+    }
+  },
+  "sidebar": {
+    "title": "Smart Organizer",
+    "language_label": "Interface Language",
+    "quick_flow_title": "Quick Flow",
+    "quick_flow": {
+      "scan": "Scan a folder",
+      "preview": "Preview candidates",
+      "quarantine": "Move to quarantine",
+      "restore": "Restore or export reports"
+    },
+    "scan_settings_title": "Scan Settings",
+    "stale_days": "Unused days before review",
+    "large_file_mb": "Large file threshold (MB)",
+    "scan_subfolders": "Scan subfolders",
+    "max_files": "Maximum files to inspect",
+    "advanced_settings_title": "Advanced Settings",
+    "enable_ai_summary": "AI summary",
+    "enable_pdf_preview": "PDF preview",
+    "enable_ocr": "OCR",
+    "debug_mode": "Debug mode",
+    "dependency_check_title": "Dependency check",
+    "check_dependencies": "Check dependency status",
+    "dependency_check_success": "Dependency check completed.",
+    "dependency_check_hint": "Run this only when you need to inspect optional runtime tools.",
+    "heavy_file_mb": "Heavy file threshold (MB)",
+    "pdf_text_pages": "PDF text extraction pages",
+    "pdf_ocr_pages": "PDF OCR pages",
+    "upload_limit": "Single-file upload limit: {size}",
+    "upload_limits": "Upload limits: per file {file_size}, per batch {batch_size}",
+    "development_info_title": "Development Info",
+    "workspace": {
+      "project_root": "project root",
+      "uploads": "uploads",
+      "repo": "repo",
+      "database": "database"
+    },
+    "current_processing_file": "Current processing file: {name}",
+    "processing_options": "processing_options"
+  },
+  "home": {
+    "hero": {
+      "title": "Smart File Organization Assistant",
+      "subtitle": "Preview first, quarantine before deleting, and safely spot stale or oversized files.",
+      "chip_scan": "Scan before acting",
+      "chip_preview": "Preview first",
+      "chip_quarantine": "Quarantine first",
+      "chip_report": "Export reports"
+    },
+    "safety_notice": "This tool never deletes files directly. Every organization action moves files into quarantine first, and you can restore them later.",
+    "process_title": "How It Works",
+    "process": {
+      "step1_title": "1. Scan a folder",
+      "step1_desc": "Enter a folder path and start scanning to see which files may need attention.",
+      "step2_title": "2. Preview candidate files",
+      "step2_desc": "Review the suggestions and reasons before deciding what to act on.",
+      "step3_title": "3. Move to quarantine",
+      "step3_desc": "Files are moved to quarantine first instead of being deleted.",
+      "step4_title": "4. Restore or export reports",
+      "step4_desc": "You can restore files later or export Markdown and CSV reports."
+    },
+    "scan": {
+      "title": "Scan Folder",
+      "description": "This page reads file metadata only so you can review likely cleanup candidates safely.",
+      "input_label": "Folder to scan",
+      "input_placeholder": "For example: C:\\Users\\you\\Downloads",
+      "button": "Start Scan",
+      "progress": "Scanning... inspected {count} files",
+      "complete": "Scan complete.",
+      "permission_denied": "Permission denied while scanning this folder.",
+      "failed": "Folder scan failed.",
+      "warnings": "Scan warnings",
+      "empty": "No scan results yet. Enter a folder path and click “Start Scan” first."
+    },
+    "metrics": {
+      "scanned_files": "Scanned Files",
+      "candidates": "Candidates",
+      "total_size": "Total Size",
+      "stale_candidates": "Stale Files",
+      "large_candidates": "Large Files",
+      "quarantined": "Quarantined"
+    },
+    "summary": {
+      "title": "Scan Summary",
+      "scanned_files": "Scanned files: {count}",
+      "candidate_files": "Candidate files: {count}",
+      "reviewable_space": "Estimated reviewable space: {size}",
+      "quarantined_this_session": "Quarantined this session: {count}",
+      "restored_this_session": "Restored this session: {count}"
+    },
+    "candidates": {
+      "title": "Candidate Files",
+      "empty": "This folder currently has no stale or oversized files matching your scan settings.",
+      "limit_warning": "Showing the first {shown} candidates out of {total} to keep the table responsive.",
+      "risk_labels": "Risk labels: {labels}",
+      "reason_long_unused": "Long unused",
+      "reason_large_file": "Large file",
+      "reason_duplicate_candidate": "Possible duplicate filename",
+      "reason_temp_cache_log": "Temp / cache / log file",
+      "reason_low_confidence": "Review manually first",
+      "reason_selected_manually": "Selected manually",
+      "duplicate_type": {
+        "same_content_duplicate": "Same Content Duplicate",
+        "same_name_candidate": "Same Name Candidate",
+        "similar_name_candidate": "Similar Name Candidate",
+        "none": "No duplicate signal"
+      },
+      "duplicate_reason": {
+        "none": "No duplicate reason recorded"
+      },
+      "select_all_preview": "Select all candidates",
+      "select_safe_review": "Select reviewable items",
+      "clear_selection": "Clear selection",
+      "preview_button": "Preview Selected Items",
+      "quarantine_button": "Move to Quarantine",
+      "confirm_quarantine": "I understand these files will move into `.smart_organizer_quarantine/` first and can be restored later.",
+      "table": {
+        "select": "Select",
+        "name": "File Name",
+        "recommendation": "Recommendation",
+        "risk_level": "Risk Level",
+        "duplicate_type": "Duplicate Type",
+        "duplicate_reason": "Duplicate Reason",
+        "reasons": "Reason",
+        "size": "Size",
+        "last_modified": "Last Modified",
+        "path": "Path"
+      }
+    },
+    "operation_results": {
+      "title": "Operation Results",
+      "selected": "Selected: {count}",
+      "success": "Success: {count}",
+      "failed": "Failed: {count}",
+      "skipped": "Skipped: {count}"
+    },
+    "report": {
+      "preview_title": "Report Preview",
+      "export_md": "Export Markdown Report",
+      "export_csv": "Export CSV Report"
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "top_largest": "Largest Files",
+      "top_stale": "Most Stale Files",
+      "days_idle": "Idle for {days} days",
+      "empty_largest": "No large-file items to show yet.",
+      "empty_stale": "No stale-file items to show yet."
+    },
+    "recommended_actions": {
+      "title": "Recommendation Summary"
+    },
+    "quarantine": {
+      "title": "Quarantine & Restore",
+      "description": "Quarantine is a safe holding area, not deletion. You can restore files whenever needed.",
+      "restore_label": "Choose quarantined files to restore",
+      "restore_button": "Restore Selected Files",
+      "empty": "There are no quarantine items to restore for this folder."
+    }
+  },
+  "upload": {
+    "title": "Upload Analysis",
+    "description": "Upload PDFs, images, or videos and the app will try to extract text, previews, and classification suggestions.",
+    "supported_formats": "Supported formats: {formats}",
+    "limit_summary": "Upload limits: per file {file_size}, per batch {batch_size}.",
+    "batch_guidance": "Batch guidance: analysis keeps uploads in memory, so smaller batches are easier to review. Current batch limit: {size}.",
+    "uploader_label": "Choose files to analyze",
+    "empty": "No files uploaded yet. Upload a PDF, image, or video to begin analysis.",
+    "ready": "Ready to analyze {count} file(s), total size {size}.",
+    "large_batch_warning": "This batch may take a while because several large files are queued together.",
+    "start_button": "Start Analysis",
+    "progress": "Analyzing {index}/{total}: {name}",
+    "complete": "Analysis complete.",
+    "duplicates_skipped": "Skipped {count} duplicate file(s).",
+    "continue_to_review": "Analyzed {count} file(s). Continue to “Review Results”.",
+    "no_results": "No files were analyzed this time. Check the errors above for details.",
+    "failed": "Upload analysis failed.",
+    "limit_file": "{name}: file size {size} exceeds the per-file limit of {max_size}.",
+    "limit_batch": "Batch size {size} exceeds the upload batch limit of {max_size}. Upload fewer or smaller files at once."
+  },
+  "review": {
+    "title": "Review Results",
+    "description": "Check the classification, summary, and preview before sending files into the organization flow.",
+    "empty": "No analysis results yet. Start from “Upload Analysis” first.",
+    "invalid_format": "Analysis results have an unexpected format.",
+    "preview_title": "Preview",
+    "analysis_title": "Analysis",
+    "preview_load_failed": "Preview could not be loaded.",
+    "video_thumbnail_unavailable": "No video thumbnail is currently available.",
+    "preview_unavailable": "No preview is available.",
+    "file_name": "Filename",
+    "file_type": "Type",
+    "date": "Date",
+    "degraded_warning": "Some analysis steps were degraded or fell back safely.",
+    "last_error": "last_error: {message}",
+    "step_timings": "step_timings",
+    "scanned_warning": "This document may be scanned; OCR or fallback extraction was used.",
+    "notes": "Processing notes",
+    "topic_label": "Topic",
+    "classification_reason": "Classification reason",
+    "decision_reason": "Decision reason",
+    "topic_preview_failed": "Topic preview failed.",
+    "generate_ai_summary": "Generate AI Summary",
+    "enable_ai_first": "Enable AI summary in the sidebar first.",
+    "summary_label": "Summary",
+    "summary_value": "Summary: {summary}",
+    "ai_tags": "AI tags: {tags}",
+    "confirm_button": "Confirm Review Results",
+    "confirm_success": "Reviewed files are ready for “Execute Organization”.",
+    "confirm_failed": "Review confirmation failed."
+  },
+  "execute": {
+    "title": "Execute Organization",
+    "description": "Move confirmed files into the organized destination by category.",
+    "empty": "No confirmed items yet. Review the analysis results first.",
+    "button": "Organize Confirmed Files",
+    "progress": "Organizing {index}/{total}: {name}",
+    "complete": "Organization completed.",
+    "complete_with_retryable_failures": "Organization completed with retryable failures.",
+    "success": "Organization completed successfully for {count} item(s).",
+    "partial_success": "Organized {success_count} item(s). Kept {failed_count} failed item(s) in the pending list for retry.",
+    "item_success": "{name} -> {path}",
+    "item_failed": "{name} failed{detail}",
+    "retry_ready": "Retry ready: {names}",
+    "failed": "Execution failed."
+  },
+  "search_records": {
+    "title": "Search & Records",
+    "description": "Look up previous analysis, classification, and organization results.",
+    "search_title": "Search Analysis Records",
+    "records_title": "Organization Records",
+    "search_input_label": "Search filename or content",
+    "search_input_placeholder": "For example: invoice / screenshot / contract",
+    "search_empty": "No search yet. Enter a keyword to look through previous analysis records.",
+    "searching": "Searching...",
+    "search_no_results": "No matching organization records were found.",
+    "search_found": "Found {count} result(s).",
+    "topic": "Topic",
+    "path": "Path",
+    "tags": "Tags",
+    "snippet": "Snippet",
+    "download": "Download File",
+    "download_unavailable": "This file cannot be downloaded safely right now.",
+    "search_failed": "Search failed.",
+    "search_index_failed": "Search index failed. Try rebuilding records in “Organization Records”.",
+    "no_final_path": "Record has no organized file path.",
+    "invalid_path": "Record contains an invalid file path.",
+    "path_outside_repo": "Record path is outside the repository and cannot be downloaded.",
+    "file_missing": "The organized file is no longer available on disk.",
+    "records_filters": {
+      "status": "Status",
+      "topic": "Topic",
+      "file_type": "File Type",
+      "date_from": "Created From",
+      "date_to": "Created To",
+      "search": "Search filename or summary",
+      "page_size": "Page Size",
+      "page": "Page",
+      "all": "All"
+    },
+    "records_showing_page": "Showing page {current_page} of {page_count} ({total} records)",
+    "records_empty": "No matching organization records were found.",
+    "records_reset_hint": "Clear the search or reset the filters to bring records back into view.",
+    "records_export_csv": "Export Current Page as CSV",
+    "records_export_md": "Export Current Page as Markdown",
+    "maintenance_title": "Maintenance",
+    "maintenance_refresh": "Refresh File Locations",
+    "maintenance_rebuild_fts": "Rebuild FTS Rows",
+    "maintenance_reclassify": "Reclassify Selected Record",
+    "maintenance_hint": "Use reclassify when a record needs a fresh metadata-based topic assignment.",
+    "maintenance_refreshing": "Refreshing file locations...",
+    "maintenance_rebuilding": "Rebuilding FTS rows...",
+    "maintenance_reclassifying": "Reclassifying...",
+    "maintenance_done": "Done",
+    "maintenance_failed": "Failed",
+    "maintenance_fts_success": "FTS rows rebuilt successfully.",
+    "reclassify_file_id": "Reclassify file_id",
+    "reclassify_success": "Updated topic: {topic}",
+    "reclassify_missing_file": "The file is no longer available on disk. Refresh locations first.",
+    "reclassify_unavailable": "Reclassify becomes available after records are loaded. Refresh and rebuild remain available.",
+    "refresh_failed": "Failed to refresh file locations.",
+    "rebuild_failed": "Failed to rebuild FTS rows.",
+    "reclassify_failed": "Failed to reclassify record."
+  },
+  "renderers": {
+    "dependencies": {
+      "python": "Python Packages",
+      "system": "System Tools",
+      "config": "Configuration",
+      "empty": "No data available."
+    },
+    "video": {
+      "duration": "Duration",
+      "resolution": "Resolution",
+      "fps": "FPS",
+      "codec": "Codec",
+      "file_size": "File Size",
+      "not_available": "N/A",
+      "degraded": "Video metadata degraded: {message}",
+      "thumbnail_unavailable": "Video thumbnail unavailable: {message}"
+    }
+  },
+  "labels": {
+    "recommendation": {
+      "safe_to_review": "Safe to Review",
+      "needs_manual_check": "Needs Manual Check",
+      "do_not_touch": "Do Not Touch"
+    },
+    "risk": {
+      "safe_to_review": "Reviewable",
+      "needs_manual_check": "Manual Check",
+      "do_not_touch": "Do Not Touch"
+    }
+  }
+}

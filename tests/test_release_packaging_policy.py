@@ -42,6 +42,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
     assert required.issubset(set(allowlist))
     assert "compileall.py" not in allowlist
     for source_only_path in (
+        "scripts/build_release_zip.py",
         "scripts/check_workspace_clean.py",
         "scripts/create_release_zip.py",
         "scripts/release_policy.py",

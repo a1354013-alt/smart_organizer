@@ -24,8 +24,7 @@ def test_fresh_db_has_decision_history_columns(tmp_path: Path):
 
 def test_migration_creates_repeatable_query_indexes(tmp_path: Path):
     db_path = tmp_path / "legacy.db"
-    conn = sqlite3.connect(db_path)
-    try:
+    with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("INSERT INTO sys_config(key, value) VALUES ('schema_version', '1')")
         conn.execute(
@@ -40,8 +39,6 @@ def test_migration_creates_repeatable_query_indexes(tmp_path: Path):
             """
         )
         conn.commit()
-    finally:
-        conn.close()
 
     expected_indexes = {
         "idx_files_created_at_file_id",

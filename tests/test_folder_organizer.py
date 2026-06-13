@@ -140,6 +140,7 @@ def test_quarantine_move_restore_and_report(tmp_path: Path):
     assert rows[0]["scan_path"] == str(tmp_path)
     assert rows[0]["status"] == "SUCCESS"
     assert rows[0]["operation_id"] == moved["operation_id"]
+    assert "duplicate_type" in rows[0]
 
 
 def test_folder_dry_run_preserves_nested_quarantine_path_without_moving(tmp_path: Path):
@@ -437,3 +438,127 @@ def test_scan_local_folder_surfaces_similar_name_notes(tmp_path: Path):
     records = cast(list[dict[str, object]], scan["records"])
     similar_candidates = [record for record in records if any("similar name candidate" in str(reason) for reason in record["candidate_reasons"])]
     assert len(similar_candidates) == 2
+
+
+def test_duplicate_classification_distinguishes_same_content_same_name_and_similar_name(tmp_path: Path):
+    same_content_a = tmp_path / "a" / "shared.txt"
+    same_content_b = tmp_path / "b" / "renamed.txt"
+    same_name_first = tmp_path / "c" / "report.txt"
+    same_name_other = tmp_path / "d" / "report.txt"
+    similar_name = tmp_path / "e" / "report-final.txt"
+    for path in (same_content_a, same_content_b, same_name_first, same_name_other, similar_name):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    same_content_a.write_text("same payload", encoding="utf-8")
+    same_content_b.write_text("same payload", encoding="utf-8")
+    same_name_first.write_text("different payload one", encoding="utf-8")
+    same_name_other.write_text("different payload", encoding="utf-8")
+    similar_name.write_text("another payload", encoding="utf-8")
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+    records = {row["path"]: row for row in scan["records"]}
+
+    assert records[str(same_content_a)]["duplicate_type"] == "same_content_duplicate"
+    assert records[str(same_content_b)]["duplicate_type"] == "same_content_duplicate"
+    assert records[str(same_name_first)]["duplicate_type"] == "same_name_candidate"
+    assert records[str(same_name_other)]["duplicate_type"] == "same_name_candidate"
+    assert records[str(similar_name)]["duplicate_type"] == "similar_name_candidate"
+
+
+def test_duplicate_preview_and_manifest_keep_duplicate_reason(tmp_path: Path):
+    first = tmp_path / "one" / "duplicate.txt"
+    second = tmp_path / "two" / "duplicate.txt"
+    first.parent.mkdir(parents=True, exist_ok=True)
+    second.parent.mkdir(parents=True, exist_ok=True)
+    first.write_text("alpha", encoding="utf-8")
+    second.write_text("beta", encoding="utf-8")
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+    preview = run_folder_organizer(scan, [str(first)], dry_run=True)
+    moved = run_folder_organizer(scan, [str(first)], dry_run=False)
+
+    preview_row = preview["results"][0]
+    moved_row = moved["results"][0]
+    quarantine_item = list_quarantine_items(str(tmp_path))[0]
+
+    assert preview_row["duplicate_type"] == "same_name_candidate"
+    assert "same filename appears more than once" in str(preview_row["duplicate_reason"])
+    assert moved_row["duplicate_type"] == "same_name_candidate"
+    assert quarantine_item["duplicate_type"] == "same_name_candidate"
+    assert "same filename appears more than once" in str(quarantine_item["duplicate_reason"])
+
+
+def test_same_content_duplicate_detects_empty_files(tmp_path: Path):
+    first = tmp_path / "left" / "empty-a.txt"
+    second = tmp_path / "right" / "empty-b.txt"
+    first.parent.mkdir(parents=True, exist_ok=True)
+    second.parent.mkdir(parents=True, exist_ok=True)
+    first.write_bytes(b"")
+    second.write_bytes(b"")
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+    duplicate_types = {row["duplicate_type"] for row in scan["records"]}
+
+    assert "same_content_duplicate" in duplicate_types
+
+
+def test_duplicate_hash_failure_does_not_crash(monkeypatch, tmp_path: Path):
+    target = tmp_path / "locked.txt"
+    peer = tmp_path / "peer.txt"
+    target.write_text("locked", encoding="utf-8")
+    peer.write_text("peer!!", encoding="utf-8")
+
+    import folder_organizer as organizer_module
+
+    monkeypatch.setattr(organizer_module, "_hash_file", lambda _path: (None, "hash unavailable: blocked"))
+
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+
+    assert all(row["duplicate_reason"] == "hash unavailable: blocked" for row in scan["records"])
+
+
+def test_duplicate_hashing_skips_unique_file_sizes(monkeypatch, tmp_path: Path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two-two", encoding="utf-8")
+
+    import folder_organizer as organizer_module
+
+    hashed_paths: list[str] = []
+    original_hash = organizer_module._hash_file
+
+    def tracking_hash(path: Path):
+        hashed_paths.append(str(path))
+        return original_hash(path)
+
+    monkeypatch.setattr(organizer_module, "_hash_file", tracking_hash)
+
+    scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+
+    assert hashed_paths == []
+
+
+def test_duplicate_hashing_only_hashes_same_size_groups(monkeypatch, tmp_path: Path):
+    first = tmp_path / "a" / "first.txt"
+    second = tmp_path / "b" / "second.txt"
+    third = tmp_path / "c" / "third.txt"
+    for path in (first, second, third):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    first.write_text("same-size-a", encoding="utf-8")
+    second.write_text("same-size-b", encoding="utf-8")
+    third.write_text("different", encoding="utf-8")
+
+    import folder_organizer as organizer_module
+
+    hashed_paths: list[str] = []
+    original_hash = organizer_module._hash_file
+
+    def tracking_hash(path: Path):
+        hashed_paths.append(str(path))
+        return original_hash(path)
+
+    monkeypatch.setattr(organizer_module, "_hash_file", tracking_hash)
+
+    scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
+
+    assert sorted(hashed_paths) == sorted([str(first), str(second)])

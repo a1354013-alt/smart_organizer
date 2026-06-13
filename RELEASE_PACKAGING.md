@@ -5,6 +5,12 @@ Do not zip the whole workspace directly.
 Use one of these official packaging commands instead:
 
 ```bash
+python scripts/build_release_zip.py
+```
+
+Compatibility alias:
+
+```bash
 python scripts/create_release_zip.py
 ```
 
@@ -33,6 +39,7 @@ This is an official runtime/demo package. It intentionally does not include test
 
 Source-only scripts stay in the source repository and are never included in the runtime zip:
 
+- `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
 - `scripts/create_release_zip.py`
 - `scripts/release_policy.py`

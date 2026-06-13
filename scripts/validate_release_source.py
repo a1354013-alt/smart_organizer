@@ -11,8 +11,9 @@ import threading
 import time
 from collections import deque
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -37,6 +38,16 @@ STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
 PROCESS_TERMINATE_GRACE_SECONDS = 1.0
 PROCESS_KILL_GRACE_SECONDS = 1.0
 READER_JOIN_GRACE_SECONDS = 1.0
+DRAIN_AFTER_TERMINATE_GRACE_SECONDS = 0.25
+
+
+class SupportsWriteFlush(Protocol):
+    encoding: str | None
+    buffer: Any
+
+    def write(self, text: str) -> object: ...
+
+    def flush(self) -> object: ...
 
 
 class OutputTail:
@@ -63,6 +74,21 @@ class OutputTail:
             if partial:
                 lines.append(f"[{stream_name}] {partial}")
         return lines
+
+
+@dataclass(slots=True)
+class StepTimeoutResult:
+    command: list[str]
+    timeout_seconds: int
+    duration: float
+    returncode: int | None
+    tail_lines: list[str]
+
+
+def _tail_lines(lines: deque[str], *, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
+    return list(lines)[-limit:]
 
 
 def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> list[list[str]]:
@@ -130,49 +156,78 @@ def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
     return True
 
 
+def _start_process(command: list[str]) -> subprocess.Popen[Any]:
+    return subprocess.Popen(
+        command,
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        **_popen_kwargs(),
+    )
+
+
 def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        killpg = getattr(os, "killpg", None)
-        sigkill = getattr(signal, "SIGKILL", None)
-        if killpg is not None and sigkill is not None:
-            with suppress(ProcessLookupError):
-                killpg(proc.pid, sigkill)
-        with suppress(ProcessLookupError):
+        _taskkill_process_tree(proc.pid, force=True)
+        with suppress(ProcessLookupError, OSError):
             proc.kill()
-
-
-def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
-    if proc.poll() is not None:
         return
+
+    killpg = getattr(os, "killpg", None)
+    sigkill = getattr(signal, "SIGKILL", None)
+    if killpg is not None and sigkill is not None:
+        with suppress(ProcessLookupError):
+            killpg(proc.pid, sigkill)
+    with suppress(ProcessLookupError, OSError):
+        proc.kill()
+
+
+def _taskkill_process_tree(pid: int, *, force: bool) -> None:
+    command = ["taskkill", "/T", "/PID", str(pid)]
+    if force:
+        command.insert(1, "/F")
     subprocess.run(
-        ["taskkill", "/T", "/PID", str(proc.pid)],
+        command,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
 
 
+def _windows_ctrl_break_event() -> int | None:
+    if os.name != "nt":
+        return None
+    value = getattr(signal, "CTRL_BREAK_EVENT", None)
+    return int(value) if isinstance(value, int) else None
+
+
+def _terminate_process_tree_windows(proc: subprocess.Popen[Any]) -> None:
+    if proc.poll() is not None:
+        return
+    ctrl_break_event = _windows_ctrl_break_event()
+    if ctrl_break_event is not None:
+        with suppress(OSError, ValueError):
+            proc.send_signal(ctrl_break_event)
+    with suppress(ProcessLookupError, OSError):
+        proc.terminate()
+    _taskkill_process_tree(proc.pid, force=False)
+
+
 def _terminate_process(proc: subprocess.Popen[Any], *, deadline: float) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
-        with suppress(Exception):
-            _terminate_process_tree_windows(proc)
+        _terminate_process_tree_windows(proc)
     else:
         killpg = getattr(os, "killpg", None)
         if killpg is not None:
             with suppress(ProcessLookupError):
                 killpg(proc.pid, signal.SIGTERM)
-        with suppress(ProcessLookupError):
+        with suppress(ProcessLookupError, OSError):
             proc.terminate()
     terminate_deadline = min(deadline, time.perf_counter() + PROCESS_TERMINATE_GRACE_SECONDS)
     if _wait_until(proc, terminate_deadline):
@@ -188,6 +243,17 @@ def _join_reader_threads(threads: list[threading.Thread], *, deadline: float) ->
         if remaining <= 0:
             return
         thread.join(timeout=min(READER_JOIN_GRACE_SECONDS, remaining))
+
+
+def _drain_output_queue_once(
+    output_queue: queue.Queue[tuple[str, bytes | None]],
+) -> list[tuple[str, bytes | None]]:
+    items: list[tuple[str, bytes | None]] = []
+    while True:
+        try:
+            items.append(output_queue.get_nowait())
+        except queue.Empty:
+            return items
 
 
 def _drain_until_closed(
@@ -213,6 +279,7 @@ def _drain_until_closed(
             closed += 1
             continue
         _handle_output_chunk(stream_name, chunk, tail)
+    time.sleep(DRAIN_AFTER_TERMINATE_GRACE_SECONDS)
     return _drain_output_queue(output_queue, tail, closed=closed)
 
 
@@ -222,17 +289,39 @@ def _popen_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
-def _print_timeout_tail(tail: OutputTail, *, tail_lines: int) -> None:
-    lines = tail.snapshot()
+def _format_timeout_tail(tail: OutputTail, *, tail_lines: int) -> list[str]:
+    return _tail_lines(tail.snapshot(), limit=tail_lines)
+
+
+def _build_timeout_result(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    duration: float,
+    returncode: int | None,
+    tail: OutputTail,
+    tail_lines: int,
+) -> StepTimeoutResult:
+    return StepTimeoutResult(
+        command=list(command),
+        timeout_seconds=timeout_seconds,
+        duration=duration,
+        returncode=returncode,
+        tail_lines=_format_timeout_tail(tail, tail_lines=tail_lines),
+    )
+
+
+def _print_timeout_tail(result: StepTimeoutResult) -> None:
+    lines = result.tail_lines
     if not lines:
         print("No output captured before timeout.", file=sys.stderr, flush=True)
         return
-    print(f"Last {min(len(lines), tail_lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
+    print(f"Last {len(lines)} output line(s) before timeout:", file=sys.stderr, flush=True)
     for line in lines:
-        _write_text(sys.stderr, line + "\n")
+        _write_text(cast(SupportsWriteFlush, sys.stderr), line + "\n")
 
 
-def _write_text(target: Any, text: str) -> None:
+def _write_text(target: SupportsWriteFlush, text: str) -> None:
     try:
         target.write(text)
         target.flush()
@@ -280,10 +369,19 @@ def _drain_output_queue(
         _handle_output_chunk(stream_name, chunk, tail)
 
 
+def _format_timeout_message(result: StepTimeoutResult) -> str:
+    display = _display_command(result.command)
+    message = f"<== TIMEOUT {display} after {result.duration:.2f}s (timeout={result.timeout_seconds}s"
+    if result.returncode is not None:
+        message += f", returncode={result.returncode}"
+    message += ")"
+    return message
+
+
 def _handle_output_chunk(stream_name: str, chunk: bytes, tail: OutputTail) -> None:
     text = chunk.decode(STREAM_ENCODING, errors="replace")
     tail.append(stream_name, text)
-    target = sys.stderr if stream_name == "stderr" else sys.stdout
+    target = cast(SupportsWriteFlush, sys.stderr if stream_name == "stderr" else sys.stdout)
     _write_text(target, text)
 
 
@@ -292,15 +390,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
     started = time.perf_counter()
     print(f"==> START {display}", flush=True)
     print(f"    timeout={timeout_seconds}s", flush=True)
-    proc = subprocess.Popen(
-        command,
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        **_popen_kwargs(),
-    )
+    proc = _start_process(command)
     assert proc.stdout is not None
     assert proc.stderr is not None
 
@@ -329,9 +419,25 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
                 closed=closed,
                 deadline=cleanup_deadline + READER_JOIN_GRACE_SECONDS,
             )
+            for stream_name, chunk in _drain_output_queue_once(output_queue):
+                if chunk is None:
+                    continue
+                _handle_output_chunk(stream_name, chunk, tail)
             duration = time.perf_counter() - started
-            print(f"<== TIMEOUT {display} after {duration:.2f}s", file=sys.stderr, flush=True)
-            _print_timeout_tail(tail, tail_lines=max(1, int(timeout_tail_lines)))
+            timeout_result = _build_timeout_result(
+                command,
+                timeout_seconds=timeout_seconds,
+                duration=duration,
+                returncode=proc.poll(),
+                tail=tail,
+                tail_lines=max(1, int(timeout_tail_lines)),
+            )
+            print(
+                _format_timeout_message(timeout_result),
+                file=sys.stderr,
+                flush=True,
+            )
+            _print_timeout_tail(timeout_result)
             return 124
         try:
             stream_name, chunk = output_queue.get(timeout=min(0.05, max(0.0, deadline - now)))

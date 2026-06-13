@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from i18n import DEFAULT_LANGUAGE, SESSION_UI_LANGUAGE
+
 SESSION_ANALYSIS_RESULTS = "analysis_results"
 SESSION_CONFIRMED_RESULTS = "confirmed_results"
 SESSION_EXECUTION_RESULTS = "execution_results"
@@ -58,6 +60,7 @@ SESSION_DEFAULTS: dict[str, object] = {
     },
     SESSION_AI_ENABLED: False,
     SESSION_DEBUG_MODE: False,
+    SESSION_UI_LANGUAGE: DEFAULT_LANGUAGE,
 }
 
 

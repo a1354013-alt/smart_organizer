@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
+from i18n import t
 from storage import StorageManager
 from ui_records import build_records_maintenance_actions
 
@@ -59,10 +60,10 @@ def test_records_maintenance_actions_visible_without_rows():
     actions = build_records_maintenance_actions([])
     labels = {str(action["label"]) for action in actions}
 
-    assert "Refresh file locations" in labels
-    assert "Rebuild FTS rows" in labels
-    assert "Reclassify selected record" in labels
-    reclassify = next(action for action in actions if action["label"] == "Reclassify selected record")
+    assert t("search_records.maintenance_refresh") in labels
+    assert t("search_records.maintenance_rebuild_fts") in labels
+    assert t("search_records.maintenance_reclassify") in labels
+    reclassify = next(action for action in actions if action["label"] == t("search_records.maintenance_reclassify"))
     assert reclassify["enabled"] is False
 
 
