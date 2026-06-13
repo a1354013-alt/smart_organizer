@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from contracts import ExtractedMetadata, FileType, OCRStatus, VideoMetadata
@@ -124,7 +124,6 @@ class FileProcessor:
     ) -> int:
         return _read_int_env(key, int(default), min_value=min_value, max_value=max_value)
 
-    def get_dependency_status(self, *, refresh: bool = False) -> dict[str, dict[str, bool]]:
     def get_dependency_status(self, *, refresh: bool = False) -> dict[str, dict[str, bool]]:
         return build_dependency_status(
             image=Image,

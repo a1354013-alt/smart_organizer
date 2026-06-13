@@ -411,7 +411,7 @@ def test_restore_quarantined_items_rejects_tampered_manifest_paths(tmp_path: Pat
 
 def test_scan_local_folder_limits_similar_name_comparisons(monkeypatch, tmp_path: Path):
     for index in range(120):
-        (tmp_path / f"report-copy-{index}.txt").write_text("payload", encoding="utf-8")
+        (tmp_path / f"report-copy-{index}.txt").write_text(f"payload-{index}", encoding="utf-8")
 
     comparisons: list[tuple[str, str]] = []
     original = folder_organizer._looks_similar_name
@@ -436,7 +436,7 @@ def test_scan_local_folder_surfaces_similar_name_notes(tmp_path: Path):
     scan = scan_local_folder(str(tmp_path), recursive=True, max_files=50, stale_days=0, large_file_bytes=1024 * 1024)
 
     records = cast(list[dict[str, object]], scan["records"])
-    similar_candidates = [record for record in records if any("similar name candidate" in str(reason) for reason in record["candidate_reasons"])]
+    similar_candidates = [record for record in records if record.get("duplicate_type") == "similar_name_candidate"]
     assert len(similar_candidates) == 2
 
 

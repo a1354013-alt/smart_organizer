@@ -285,8 +285,8 @@ def _classify_duplicates(records: list[FolderScanRecord]) -> None:
     by_name: dict[str, list[FolderScanRecord]] = {}
     by_size: dict[int, list[FolderScanRecord]] = {}
     for record in records:
-        normalized_name = _normalize_duplicate_name(record.path)
-        by_name.setdefault(normalized_name, []).append(record)
+        exact_name = Path(record.path).name.lower()
+        by_name.setdefault(exact_name, []).append(record)
         by_size.setdefault(record.size_bytes, []).append(record)
 
     by_hash: dict[tuple[int, str], list[FolderScanRecord]] = {}
@@ -312,37 +312,13 @@ def _classify_duplicates(records: list[FolderScanRecord]) -> None:
             if reason not in record.candidate_reasons:
                 record.candidate_reasons.append(reason)
 
-    normalized_names = list(by_name.items())
-    for normalized_name, grouped_records in normalized_names:
+    for grouped_records in by_name.values():
         if len(grouped_records) > 1:
             for record in grouped_records:
                 if record.duplicate_type == SAME_CONTENT_DUPLICATE:
                     continue
                 record.duplicate_type = SAME_NAME_CANDIDATE
                 reason = "duplicate candidate: same filename appears more than once"
-                record.duplicate_reason = reason
-                if reason not in record.candidate_reasons:
-                    record.candidate_reasons.append(reason)
-
-        for other_name, other_records in normalized_names:
-            if normalized_name >= other_name:
-                continue
-            similarity = SequenceMatcher(None, normalized_name, other_name).ratio()
-            if similarity < 0.7 and normalized_name not in other_name and other_name not in normalized_name:
-                continue
-            for record in grouped_records:
-                if record.duplicate_type in {SAME_CONTENT_DUPLICATE, SAME_NAME_CANDIDATE}:
-                    continue
-                record.duplicate_type = SIMILAR_NAME_CANDIDATE
-                reason = "duplicate candidate: filename is similar to another file"
-                record.duplicate_reason = reason
-                if reason not in record.candidate_reasons:
-                    record.candidate_reasons.append(reason)
-            for record in other_records:
-                if record.duplicate_type in {SAME_CONTENT_DUPLICATE, SAME_NAME_CANDIDATE}:
-                    continue
-                record.duplicate_type = SIMILAR_NAME_CANDIDATE
-                reason = "duplicate candidate: filename is similar to another file"
                 record.duplicate_reason = reason
                 if reason not in record.candidate_reasons:
                     record.candidate_reasons.append(reason)
@@ -457,13 +433,11 @@ def _normalized_name_token(value: str) -> str:
     return normalized or stem or "file"
 
 
-def _similar_name_bucket_key(record: FolderScanRecord) -> tuple[str, str, int, str, int]:
+def _similar_name_bucket_key(record: FolderScanRecord) -> tuple[str, str, int]:
     normalized = _normalized_name_token(record.name)
-    prefix = normalized[:12]
-    length_bucket = len(normalized) // 5
-    parent_dir = Path(record.path).parent.name.lower()
+    prefix = normalized[:6]
     size_bucket = record.size_bytes // max(1, 256 * 1024)
-    return (record.ext, prefix, length_bucket, parent_dir, size_bucket)
+    return (record.ext, prefix, size_bucket)
 
 
 def _looks_similar_name(left: str, right: str) -> bool:
@@ -481,9 +455,9 @@ def _looks_similar_name(left: str, right: str) -> bool:
 
 def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
     notes: list[str] = []
-    buckets: dict[tuple[str, str, int, str, int], list[FolderScanRecord]] = defaultdict(list)
+    buckets: dict[tuple[str, str, int], list[FolderScanRecord]] = defaultdict(list)
     for record in records:
-        if record.duplicate_type in {SAME_CONTENT_DUPLICATE, SAME_NAME_CANDIDATE}:
+        if record.duplicate_type == SAME_CONTENT_DUPLICATE:
             continue
         buckets[_similar_name_bucket_key(record)].append(record)
 
@@ -508,14 +482,16 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
                 candidate_name = _normalized_name_token(candidate.name)
                 if _looks_similar_name(base_name, candidate_name):
                     reason = "duplicate candidate: filename is similar to another file"
-                    record.duplicate_type = SIMILAR_NAME_CANDIDATE
-                    record.duplicate_reason = reason
-                    if reason not in record.candidate_reasons:
-                        record.candidate_reasons.append(reason)
-                    candidate.duplicate_type = SIMILAR_NAME_CANDIDATE
-                    candidate.duplicate_reason = reason
-                    if reason not in candidate.candidate_reasons:
-                        candidate.candidate_reasons.append(reason)
+                    if record.duplicate_type != SAME_NAME_CANDIDATE:
+                        record.duplicate_type = SIMILAR_NAME_CANDIDATE
+                        record.duplicate_reason = reason
+                        if reason not in record.candidate_reasons:
+                            record.candidate_reasons.append(reason)
+                    if candidate.duplicate_type != SAME_NAME_CANDIDATE:
+                        candidate.duplicate_type = SIMILAR_NAME_CANDIDATE
+                        candidate.duplicate_reason = reason
+                        if reason not in candidate.candidate_reasons:
+                            candidate.candidate_reasons.append(reason)
     if skipped_buckets:
         notes.append(
             f"Similar-name detection skipped {skipped_buckets} oversized bucket(s) to keep large scans responsive."
@@ -623,7 +599,6 @@ def scan_local_folder(
 
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
     notes.extend(_apply_similar_name_detection(records))
-    _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
     errors.extend(manifest_warnings)
     stats = FolderScanStats(
