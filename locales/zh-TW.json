@@ -1,4 +1,7 @@
 {
+  "common": {
+    "close": "關閉"
+  },
   "app": {
     "page_title": "智慧檔案整理助理",
     "tabs": {
@@ -48,7 +51,38 @@
     "current_processing_file": "目前處理檔案：{name}",
     "processing_options": "processing_options"
   },
+  "malware": {
+    "enable_scan": "啟用 ClamAV 木馬掃描",
+    "timeout_seconds": "單檔掃描 timeout 秒數",
+    "database_max_age_days": "病毒資料庫過期天數",
+    "check_status": "檢查 ClamAV 狀態",
+    "update_database": "更新病毒資料庫",
+    "status_available": "ClamAV 可用",
+    "status_clamscan_missing": "找不到 clamscan",
+    "status_freshclam_missing": "找不到 freshclam，無法更新病毒碼",
+    "status_database_missing": "找不到病毒資料庫",
+    "status_database_outdated": "病毒碼可能過期",
+    "status_unknown": "無法判斷 ClamAV 狀態",
+    "database_version": "病毒資料庫版本：{version}",
+    "database_date": "病毒資料庫日期：{date}",
+    "database_age_days": "病毒資料庫年齡：{days} 天",
+    "freshclam_ready": "freshclam 可用，可手動更新病毒資料庫。",
+    "scan_clean": "安全",
+    "scan_infected": "感染",
+    "scan_suspicious": "可疑",
+    "scan_not_scanned": "未掃描",
+    "scan_scanner_unavailable": "掃描器不可用",
+    "scan_database_missing": "病毒資料庫遺失",
+    "scan_database_outdated": "病毒碼過期",
+    "scan_error": "掃描錯誤",
+    "scan_timeout": "掃描逾時",
+    "infected_warning": "此檔案被 ClamAV 標記為感染。Smart Organizer 不會移動、刪除或開啟此檔案，請使用防毒軟體處理。",
+    "selected_infected_warning": "已選取的感染檔案會被跳過且不會搬移：{files}"
+  },
   "home": {
+    "header": {
+      "subtitle": "主畫面保持精簡，需要細節時再開啟對話視窗。"
+    },
     "hero": {
       "title": "智慧檔案整理助理",
       "subtitle": "先預覽、再隔離、不直接刪除，協助找出長久未使用或過大的檔案。",
@@ -56,6 +90,29 @@
       "chip_preview": "預覽後再操作",
       "chip_quarantine": "先移隔離區",
       "chip_report": "可匯出報表"
+    },
+    "help": {
+      "scan": "掃描資料夾，找出久未使用、過大、疑似重複或暫存類型檔案。",
+      "preview": "先預覽候選檔案與原因，再決定是否採取動作。",
+      "quarantine": "先移到隔離區，不直接刪除，後續仍可還原。",
+      "restore": "右側面板可用來還原隔離檔案或匯出報表。"
+    },
+    "dialogs": {
+      "help_button": "使用說明",
+      "help_title": "使用說明",
+      "safety_button": "安全規則",
+      "safety_title": "安全規則",
+      "workflow_button": "操作流程",
+      "workflow_title": "操作流程",
+      "warnings_button": "掃描警告",
+      "warnings_title": "掃描警告",
+      "warnings_empty": "這次掃描沒有額外警告。",
+      "report_preview_button": "報表預覽",
+      "report_preview_title": "報表預覽",
+      "stats_button": "統計明細",
+      "stats_title": "統計明細",
+      "paths_title": "已選取路徑",
+      "paths_empty": "目前沒有已選取的候選路徑。"
     },
     "safety_notice": "此工具不會直接刪除檔案。所有整理動作都會先移到隔離區，之後仍可還原。",
     "process_title": "操作流程",
@@ -80,6 +137,9 @@
       "permission_denied": "掃描此資料夾時權限不足。",
       "failed": "資料夾掃描失敗。",
       "warnings": "掃描提醒",
+      "status_empty": "請先輸入資料夾路徑，開始一頁式掃描。",
+      "status_input_ready": "準備掃描：{path}",
+      "status_ready": "目前掃描：{path} | 已檢查 {scanned} 個檔案",
       "empty": "還沒有掃描結果：請先輸入資料夾路徑並按「開始掃描」。"
     },
     "metrics": {
@@ -96,13 +156,15 @@
       "candidate_files": "候選檔案：{count}",
       "reviewable_space": "可優先複查空間：{size}",
       "quarantined_this_session": "本次已移入隔離區：{count}",
-      "restored_this_session": "本次已還原：{count}"
+      "restored_this_session": "本次已還原：{count}",
+      "inline": "已掃描 {scanned} | 候選 {candidates} | 可複查空間 {size} | 已隔離 {quarantined} | 已還原 {restored}"
     },
     "candidates": {
       "title": "候選檔案",
       "empty": "這個資料夾目前沒有符合條件的大檔案或久未使用檔案。",
       "limit_warning": "為了保持表格順暢，目前只顯示前 {shown} 筆候選檔案，共 {total} 筆；隱藏列的選取狀態會保留。",
       "hidden_selection_summary": "目前有 {selected} 筆已選取候選檔案不在可見表格中（隱藏總數：{hidden}）。",
+      "table_summary": "總數 {total} | 顯示 {shown} | 隱藏 {hidden} | 已選取 {selected}",
       "risk_labels": "風險對照：{labels}",
       "reason_long_unused": "長時間未使用",
       "reason_large_file": "檔案偏大",
@@ -122,6 +184,7 @@
       "select_all_preview": "全選候選檔案",
       "select_safe_review": "全選可複查項目",
       "clear_selection": "清除選取",
+      "path_details_button": "查看路徑",
       "preview_button": "預覽選取項目",
       "quarantine_button": "移至隔離區",
       "confirm_quarantine": "我知道這些檔案會先移到 `.smart_organizer_quarantine/`，之後仍可還原。",
@@ -130,6 +193,9 @@
         "name": "檔名",
         "recommendation": "建議",
         "risk_level": "風險等級",
+        "malware_status": "木馬掃描",
+        "malware_scanner": "掃描器",
+        "malware_threat_name": "威脅名稱",
         "duplicate_type": "重複分類",
         "duplicate_reason": "重複原因",
         "reasons": "原因",

@@ -35,6 +35,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "folder_service.py",
         "folder_report.py",
         "report_exports.py",
+        "malware_scanner.py",
         "scripts/create_demo_folder.py",
         "docs/KNOWN_LIMITATIONS.md",
         "docs/PORTFOLIO_CASE_STUDY.md",

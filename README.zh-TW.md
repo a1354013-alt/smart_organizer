@@ -110,6 +110,8 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+Streamlit 首頁在桌機寬度下會使用精簡的 `100vh` dashboard 版面。使用說明、安全規則、操作流程、掃描警告、報表預覽與統計明細都移到上方對話視窗按鈕中；若螢幕較小，版面會自動退回一般可捲動模式。
+
 ## 在 VS Code 用 F5 啟動
 
 在 source repository 中，VS Code 可以直接啟動 Streamlit app：
@@ -125,7 +127,29 @@ python -m pip install -r requirements.txt
 4. 按 `F5`，並選擇 `Smart Organizer: Streamlit App`。
 5. 若瀏覽器沒有自動開啟，請手動前往 `http://localhost:8501`。
 
+使用這個 VS Code 啟動設定時，會直接開啟 Streamlit。首頁預設採精簡 dashboard 版面，較長的說明內容則集中在上方的對話視窗按鈕中。
+
 `.vscode/launch.json`、`.vscode/tasks.json`、`.vscode/extensions.json` 只存在於 source repository，不會放進 runtime release zip。
+
+## 選配 ClamAV 木馬掃描
+
+Smart Organizer 可以在整理候選檔案前，選擇性呼叫本機安裝的 ClamAV。這只是整合本機防毒掃描器，不是要把 Smart Organizer 做成防毒軟體。
+
+- ClamAV 是外部選配相依，不會被打包進 runtime release zip。
+- 若找不到 `clamscan`，候選檔案會顯示「掃描器不可用」，不會假裝檔案安全。
+- 若找不到 `freshclam`，仍可用現有病毒碼掃描，但 Smart Organizer 無法替你更新病毒資料庫。
+- Smart Organizer 不會把檔案上傳到雲端掃描，不會執行可疑檔案，也不會自動刪除感染檔案。
+- 被 ClamAV 標記為 `infected` 的檔案，會被禁止進入 Smart Organizer 的搬移、隔離與還原流程。
+
+建議的本機手動檢查指令：
+
+```bash
+clamscan --version
+freshclam
+clamscan --no-summary path/to/file
+```
+
+請依照作業系統使用 ClamAV 官方安裝方式，讓 `clamscan` 與 `freshclam` 都能在 `PATH` 上找到。若 `freshclam` 因權限、網路或防火牆失敗，請先依 ClamAV 官方方式處理主機環境，再回到 Smart Organizer 手動按「更新病毒資料庫」。
 
 ## Demo 資料集
 

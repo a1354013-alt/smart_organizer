@@ -42,6 +42,11 @@ from folder_models import (
     save_manifest,
     string_list,
 )
+from malware_scanner import (
+    ClamAvStatus,
+    get_clamav_status,
+    scan_files,
+)
 
 LOW_RISK_SUFFIXES = {".txt", ".log", ".tmp", ".cache", ".bak", ".old", ".fake"}
 MANUAL_REVIEW_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -52,6 +57,10 @@ SIMILAR_NAME_NEIGHBOR_LIMIT = 8
 SAME_CONTENT_DUPLICATE = "same_content_duplicate"
 SAME_NAME_CANDIDATE = "same_name_candidate"
 SIMILAR_NAME_CANDIDATE = "similar_name_candidate"
+INFECTED_FILE_BLOCK_MESSAGE = (
+    "This file was marked infected by ClamAV. Smart Organizer will not move, delete, or open it. "
+    "Please handle it with your antivirus software."
+)
 
 
 def _resolve_path(path_value: Path | str) -> Path:
@@ -381,6 +390,76 @@ def _recommendation(reasons: list[str], risk_level: str) -> str:
     return Recommendation.DO_NOT_TOUCH.value
 
 
+def _risk_rank(value: str) -> int:
+    ranks = {
+        RiskLevel.SAFE_TO_REVIEW.value: 0,
+        RiskLevel.NEEDS_MANUAL_CHECK.value: 1,
+        RiskLevel.DO_NOT_TOUCH.value: 2,
+    }
+    return ranks.get(value, 2)
+
+
+def _set_minimum_risk(record: FolderScanRecord, risk_level: str) -> None:
+    if _risk_rank(risk_level) > _risk_rank(record.risk_level):
+        record.risk_level = risk_level
+    record.recommendation = _recommendation(record.candidate_reasons, record.risk_level)
+
+
+def _apply_malware_scan_results(
+    records: list[FolderScanRecord],
+    *,
+    timeout_seconds: int,
+    max_database_age_days: int,
+) -> list[str]:
+    notes: list[str] = []
+    candidate_records = [record for record in records if record.candidate_reasons]
+    clamav_status: ClamAvStatus = get_clamav_status(max_database_age_days)
+    if clamav_status.message:
+        notes.append(f"ClamAV: {clamav_status.message}")
+    if not candidate_records:
+        return notes
+
+    results = scan_files(
+        [Path(record.path) for record in candidate_records],
+        timeout_seconds=timeout_seconds,
+        max_database_age_days=max_database_age_days,
+        max_files=len(candidate_records),
+    )
+    for record in candidate_records:
+        scan_result = results.get(str(Path(record.path).expanduser().resolve(strict=False)))
+        if scan_result is None:
+            continue
+        record.malware_status = scan_result.status
+        record.malware_scanner = scan_result.scanner
+        record.malware_threat_name = scan_result.threat_name or ""
+        record.malware_message = scan_result.message
+        if scan_result.status in {
+            "infected",
+            "suspicious",
+            "timeout",
+            "error",
+            "scanner_unavailable",
+            "database_missing",
+        }:
+            _set_minimum_risk(record, RiskLevel.DO_NOT_TOUCH.value)
+        elif scan_result.status == "database_outdated":
+            _set_minimum_risk(record, RiskLevel.NEEDS_MANUAL_CHECK.value)
+    return notes
+
+
+def _operation_malware_payload(record: dict[str, object]) -> dict[str, str]:
+    return {
+        "malware_status": str(record.get("malware_status") or "not_scanned"),
+        "malware_scanner": str(record.get("malware_scanner") or ""),
+        "malware_threat_name": str(record.get("malware_threat_name") or ""),
+        "malware_message": str(record.get("malware_message") or ""),
+    }
+
+
+def _infected_record(record: dict[str, object]) -> bool:
+    return str(record.get("malware_status") or "") == "infected"
+
+
 def _operation_reason_text(record: dict[str, object]) -> str:
     reasons = string_list(record.get("candidate_reasons"))
     duplicate_type = str(record.get("duplicate_type") or "").strip()
@@ -506,6 +585,9 @@ def scan_local_folder(
     max_files: int,
     stale_days: int,
     large_file_bytes: int = 250 * 1024 * 1024,
+    enable_malware_scan: bool = False,
+    malware_scan_timeout_seconds: int = 30,
+    malware_database_max_age_days: int = 7,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
@@ -599,6 +681,14 @@ def scan_local_folder(
 
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
     notes.extend(_apply_similar_name_detection(records))
+    if enable_malware_scan:
+        notes.extend(
+            _apply_malware_scan_results(
+                records,
+                timeout_seconds=int(malware_scan_timeout_seconds),
+                max_database_age_days=int(malware_database_max_age_days),
+            )
+        )
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
     errors.extend(manifest_warnings)
     stats = FolderScanStats(
@@ -658,6 +748,7 @@ def run_folder_organizer(
                         processed_at=iso_now(),
                         error_message="Selected file is not available in the current scan result.",
                         operation_id=operation_id,
+                        **_operation_malware_payload({}),
                     )
                 )
                 continue
@@ -666,6 +757,25 @@ def run_folder_organizer(
             reasons = _operation_reason_text(record)
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
+            malware_payload = _operation_malware_payload(record)
+            if _infected_record(record):
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original_path),
+                        new_path=None,
+                        status="SKIPPED",
+                        reason=reasons,
+                        duplicate_type=str(record.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                        file_size=file_size,
+                        last_modified=str(last_modified) if last_modified is not None else None,
+                        processed_at=iso_now(),
+                        error_message=INFECTED_FILE_BLOCK_MESSAGE,
+                        operation_id=operation_id,
+                        **malware_payload,
+                    )
+                )
+                continue
             if dry_run:
                 try:
                     preview_destination = safe_destination(
@@ -689,6 +799,7 @@ def run_folder_organizer(
                             processed_at=iso_now(),
                             error_message="Dry-run preview only.",
                             operation_id=operation_id,
+                            **malware_payload,
                         )
                     )
                 except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
@@ -705,6 +816,7 @@ def run_folder_organizer(
                             processed_at=iso_now(),
                             error_message=str(exc) or type(exc).__name__,
                             operation_id=operation_id,
+                            **malware_payload,
                         )
                     )
                 continue
@@ -736,6 +848,10 @@ def run_folder_organizer(
                     "last_error": "",
                     "duplicate_type": str(record.get("duplicate_type") or ""),
                     "duplicate_reason": str(record.get("duplicate_reason") or ""),
+                    "malware_status": malware_payload["malware_status"],
+                    "malware_scanner": malware_payload["malware_scanner"],
+                    "malware_threat_name": malware_payload["malware_threat_name"],
+                    "malware_message": malware_payload["malware_message"],
                 }
                 manifest_items.append(manifest_item)
                 manifest["items"] = manifest_items
@@ -758,6 +874,7 @@ def run_folder_organizer(
                         processed_at=iso_now(),
                         error_message=None,
                         operation_id=operation_id,
+                        **malware_payload,
                     )
                 )
             except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
@@ -781,6 +898,7 @@ def run_folder_organizer(
                         processed_at=iso_now(),
                         error_message=str(exc) or type(exc).__name__,
                         operation_id=operation_id,
+                        **malware_payload,
                     )
                 )
 
@@ -833,11 +951,31 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         processed_at=iso_now(),
                         error_message="Manifest entry not found.",
                         operation_id=None,
+                        **_operation_malware_payload({}),
                     )
                 )
                 continue
             source = Path(str(item.get("quarantine_path") or ""))
             original = Path(str(item.get("original_path") or ""))
+            malware_payload = _operation_malware_payload(item)
+            if _infected_record(item):
+                results.append(
+                    FolderOperationRow(
+                        original_path=str(original) if item.get("original_path") else None,
+                        new_path=None,
+                        status="FAILED",
+                        reason=str(item.get("reason") or ""),
+                        duplicate_type=str(item.get("duplicate_type") or "") or None,
+                        duplicate_reason=str(item.get("duplicate_reason") or "") or None,
+                        file_size=safe_int(item.get("file_size")),
+                        last_modified=str(item.get("last_modified") or "") or None,
+                        processed_at=iso_now(),
+                        error_message=INFECTED_FILE_BLOCK_MESSAGE,
+                        operation_id=str(item.get("operation_id") or "") or None,
+                        **malware_payload,
+                    )
+                )
+                continue
             try:
                 quarantine_root = quarantine_dir(root).resolve()
                 validated_source = _validate_quarantine_path(source, quarantine_root, label="manifest quarantine_path")
@@ -863,6 +1001,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         processed_at=iso_now(),
                         error_message=None,
                         operation_id=str(item.get("operation_id") or "") or None,
+                        **malware_payload,
                     )
                 )
             except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
@@ -879,6 +1018,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         processed_at=iso_now(),
                         error_message=str(exc) or type(exc).__name__,
                         operation_id=str(item.get("operation_id") or "") or None,
+                        **malware_payload,
                     )
                 )
 

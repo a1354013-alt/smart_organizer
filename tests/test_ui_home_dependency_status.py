@@ -159,6 +159,9 @@ def test_candidate_row_surfaces_duplicate_type_and_reason():
             "name": "report.txt",
             "recommendation": Recommendation.NEEDS_MANUAL_CHECK.value,
             "risk_level": "needs_manual_check",
+            "malware_status": "infected",
+            "malware_scanner": "ClamAV",
+            "malware_threat_name": "Eicar-Test-Signature",
             "duplicate_type": "same_name_candidate",
             "duplicate_reason": "same filename appears more than once",
             "candidate_reasons": ["duplicate candidate: same filename appears more than once"],
@@ -170,11 +173,14 @@ def test_candidate_row_surfaces_duplicate_type_and_reason():
 
     assert row["duplicate_type"] == t("home.candidates.duplicate_type.same_name_candidate")
     assert row["duplicate_reason"] == "same filename appears more than once"
+    assert row["malware_status"] == t("malware.scan_infected")
+    assert row["malware_scanner"] == "ClamAV"
+    assert row["malware_threat_name"] == "Eicar-Test-Signature"
     assert "duplicate" in str(row["reasons"]).lower()
 
 
 def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
-    metric_values: list[tuple[str, object]] = []
+    candidate_metrics: list[int] = []
     session_state = {
         "folder_scan_current": {
             "path": "C:/scan",
@@ -205,11 +211,11 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
         markdown=lambda *args, **kwargs: None,
         info=lambda *args, **kwargs: None,
         columns=lambda spec, **kwargs: [_Column() for _ in range(spec if isinstance(spec, int) else len(spec))],
+        container=lambda **kwargs: nullcontext(),
         text_input=lambda *args, **kwargs: "C:/scan",
         button=lambda *args, **kwargs: False,
         progress=lambda *args, **kwargs: SimpleNamespace(progress=lambda value: None),
         empty=lambda: SimpleNamespace(text=lambda value: None),
-        expander=lambda *args, **kwargs: nullcontext(),
         write=lambda *args, **kwargs: None,
         subheader=lambda *args, **kwargs: None,
         checkbox=lambda *args, **kwargs: False,
@@ -221,24 +227,18 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
     )
 
     monkeypatch.setattr("ui_home.st", fake_st)
-    monkeypatch.setattr("ui_home.card_open", lambda *args, **kwargs: None)
-    monkeypatch.setattr("ui_home.card_close", lambda *args, **kwargs: None)
     monkeypatch.setattr("ui_home.get_quarantine_items_safe", lambda _path: ([], []))
     monkeypatch.setattr("ui_home._render_candidate_editor", lambda _context, candidates: [str(item["path"]) for item in candidates])
     monkeypatch.setattr("ui_home._render_operation_results", lambda _result: None)
     monkeypatch.setattr("ui_home.resolve_report_inputs", lambda current_scan, report_snapshot, operation_result: (current_scan, operation_result))
     monkeypatch.setattr("ui_home.export_folder_report_markdown", lambda *_args, **_kwargs: "report")
     monkeypatch.setattr("ui_home.export_folder_report_csv", lambda *_args, **_kwargs: b"csv")
-    monkeypatch.setattr(
-        "ui_home.render_safe_html_text",
-        lambda css_class, value, max_chars=200: metric_values.append((css_class, value)),
-    )
+    monkeypatch.setattr("ui_home._render_scan_metrics", lambda stats, candidates, quarantined: candidate_metrics.append(len(candidates)))
 
     context = SimpleNamespace(storage=SimpleNamespace(path_exists=lambda path: False), processor=SimpleNamespace())
     render_home(context)
 
-    candidate_metrics = [value for css_class, value in metric_values if css_class == "status-metric"]
-    assert 2 in candidate_metrics
+    assert candidate_metrics == [2]
 
 
 def test_limit_candidate_rows_caps_large_result_sets():

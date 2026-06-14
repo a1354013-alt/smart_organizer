@@ -1,4 +1,7 @@
 {
+  "common": {
+    "close": "Close"
+  },
   "app": {
     "page_title": "Smart Organizer",
     "tabs": {
@@ -48,7 +51,38 @@
     "current_processing_file": "Current processing file: {name}",
     "processing_options": "processing_options"
   },
+  "malware": {
+    "enable_scan": "Enable ClamAV malware scan",
+    "timeout_seconds": "Single-file scan timeout (seconds)",
+    "database_max_age_days": "Virus database max age (days)",
+    "check_status": "Check ClamAV status",
+    "update_database": "Update virus database",
+    "status_available": "ClamAV is available",
+    "status_clamscan_missing": "clamscan was not found",
+    "status_freshclam_missing": "freshclam was not found, so Smart Organizer cannot update the virus database",
+    "status_database_missing": "Virus database was not found",
+    "status_database_outdated": "Virus database may be outdated",
+    "status_unknown": "Unable to determine ClamAV status",
+    "database_version": "Database version: {version}",
+    "database_date": "Database date: {date}",
+    "database_age_days": "Database age: {days} day(s)",
+    "freshclam_ready": "freshclam is available for manual updates.",
+    "scan_clean": "Clean",
+    "scan_infected": "Infected",
+    "scan_suspicious": "Suspicious",
+    "scan_not_scanned": "Not scanned",
+    "scan_scanner_unavailable": "Scanner unavailable",
+    "scan_database_missing": "Database missing",
+    "scan_database_outdated": "Database outdated",
+    "scan_error": "Scan error",
+    "scan_timeout": "Scan timeout",
+    "infected_warning": "This file was marked infected by ClamAV. Smart Organizer will not move, delete, or open it. Please handle it with your antivirus software.",
+    "selected_infected_warning": "Selected infected files will be skipped and not moved: {files}"
+  },
   "home": {
+    "header": {
+      "subtitle": "Keep the dashboard compact and open details only when you need them."
+    },
     "hero": {
       "title": "Smart File Organization Assistant",
       "subtitle": "Preview first, quarantine before deleting, and safely spot stale or oversized files.",
@@ -56,6 +90,29 @@
       "chip_preview": "Preview first",
       "chip_quarantine": "Quarantine first",
       "chip_report": "Export reports"
+    },
+    "help": {
+      "scan": "Scan a folder to identify stale, oversized, duplicate-like, or temporary files.",
+      "preview": "Preview the selected candidates before moving anything.",
+      "quarantine": "Move files into quarantine first so you can restore them later.",
+      "restore": "Use the side panel to restore quarantined files or export reports."
+    },
+    "dialogs": {
+      "help_button": "Usage",
+      "help_title": "Usage",
+      "safety_button": "Safety Rules",
+      "safety_title": "Safety Rules",
+      "workflow_button": "Workflow",
+      "workflow_title": "Workflow",
+      "warnings_button": "Scan Warnings",
+      "warnings_title": "Scan Warnings",
+      "warnings_empty": "No warnings were reported for this scan.",
+      "report_preview_button": "Report Preview",
+      "report_preview_title": "Report Preview",
+      "stats_button": "Stats",
+      "stats_title": "Stats",
+      "paths_title": "Selected Paths",
+      "paths_empty": "No candidate paths are selected right now."
     },
     "safety_notice": "This tool never deletes files directly. Every organization action moves files into quarantine first, and you can restore them later.",
     "process_title": "How It Works",
@@ -80,6 +137,9 @@
       "permission_denied": "Permission denied while scanning this folder.",
       "failed": "Folder scan failed.",
       "warnings": "Scan warnings",
+      "status_empty": "Enter a folder path to begin a focused one-page scan.",
+      "status_input_ready": "Ready to scan: {path}",
+      "status_ready": "Current scan: {path} | {scanned} file(s) inspected",
       "empty": "No scan results yet. Enter a folder path and click “Start Scan” first."
     },
     "metrics": {
@@ -96,13 +156,15 @@
       "candidate_files": "Candidate files: {count}",
       "reviewable_space": "Estimated reviewable space: {size}",
       "quarantined_this_session": "Quarantined this session: {count}",
-      "restored_this_session": "Restored this session: {count}"
+      "restored_this_session": "Restored this session: {count}",
+      "inline": "Scanned {scanned} | Candidates {candidates} | Reviewable {size} | Quarantined {quarantined} | Restored {restored}"
     },
     "candidates": {
       "title": "Candidate Files",
       "empty": "This folder currently has no stale or oversized files matching your scan settings.",
       "limit_warning": "Showing the first {shown} candidates out of {total} to keep the table responsive. Selection is preserved for hidden candidates.",
       "hidden_selection_summary": "{selected} hidden candidate(s) remain selected outside the visible table (hidden total: {hidden}).",
+      "table_summary": "Total {total} | Showing {shown} | Hidden {hidden} | Selected {selected}",
       "risk_labels": "Risk labels: {labels}",
       "reason_long_unused": "Long unused",
       "reason_large_file": "Large file",
@@ -122,6 +184,7 @@
       "select_all_preview": "Select all candidates",
       "select_safe_review": "Select reviewable items",
       "clear_selection": "Clear selection",
+      "path_details_button": "Selected Paths",
       "preview_button": "Preview Selected Items",
       "quarantine_button": "Move to Quarantine",
       "confirm_quarantine": "I understand these files will move into `.smart_organizer_quarantine/` first and can be restored later.",
@@ -130,6 +193,9 @@
         "name": "File Name",
         "recommendation": "Recommendation",
         "risk_level": "Risk Level",
+        "malware_status": "Malware Scan",
+        "malware_scanner": "Scanner",
+        "malware_threat_name": "Threat",
         "duplicate_type": "Duplicate Type",
         "duplicate_reason": "Duplicate Reason",
         "reasons": "Reason",

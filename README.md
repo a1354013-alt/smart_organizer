@@ -112,6 +112,8 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+The Streamlit home tab uses a compact `100vh` dashboard layout on desktop widths. Help, safety rules, workflow notes, warning details, report preview, and stats are available from dialog buttons instead of expanding the main page. On smaller screens the layout falls back to normal scrolling so the UI remains usable.
+
 ## Run In VS Code
 
 In the source repository, VS Code can launch the Streamlit app directly:
@@ -127,7 +129,29 @@ python -m pip install -r requirements.txt
 4. Press `F5` and choose `Smart Organizer: Streamlit App`.
 5. Open `http://localhost:8501` if the browser does not open automatically.
 
+Using the VS Code launch target starts Streamlit directly. The home view opens with the compact dashboard layout, and the top dialog buttons contain the longer explanatory content.
+
 The `.vscode/launch.json`, `.vscode/tasks.json`, and `.vscode/extensions.json` files are source-repository helpers and are not included in the runtime release zip.
+
+## Optional ClamAV Malware Scan
+
+Smart Organizer can optionally call a local ClamAV installation before you organize candidate files. This is an integration point for a local antivirus scanner, not a replacement for antivirus software.
+
+- ClamAV is an external optional dependency and is not bundled into the runtime zip.
+- If `clamscan` is missing, candidate rows show `Scanner unavailable` instead of pretending files are clean.
+- If `freshclam` is missing, Smart Organizer can still scan with ClamAV, but the UI cannot update virus databases for you.
+- Smart Organizer never uploads files to cloud scanners, never executes suspicious files, and never deletes infected files automatically.
+- Files marked `infected` by ClamAV are blocked from preview-to-move execution, quarantine moves, and restore flows inside Smart Organizer.
+
+Typical local verification commands:
+
+```bash
+clamscan --version
+freshclam
+clamscan --no-summary path/to/file
+```
+
+Install ClamAV using the official package for your operating system so that both `clamscan` and `freshclam` are available on `PATH`. If `freshclam` fails because of permissions, networking, or firewall rules, resolve it with the official ClamAV guidance on that machine and then retry the manual update button in Smart Organizer.
 
 ## Demo Dataset
 

@@ -54,6 +54,9 @@ def scan_folder(
     max_files: int,
     stale_days: int,
     large_file_bytes: int,
+    enable_malware_scan: bool = False,
+    malware_scan_timeout_seconds: int = 30,
+    malware_database_max_age_days: int = 7,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     path_obj = validate_scan_target(folder_path)
@@ -63,6 +66,9 @@ def scan_folder(
         max_files=max_files,
         stale_days=stale_days,
         large_file_bytes=large_file_bytes,
+        enable_malware_scan=enable_malware_scan,
+        malware_scan_timeout_seconds=malware_scan_timeout_seconds,
+        malware_database_max_age_days=malware_database_max_age_days,
         progress_callback=progress_callback,
     )
 
@@ -85,6 +91,9 @@ def quarantine_selected_files(
     max_files: int,
     stale_days: int,
     large_file_bytes: int,
+    enable_malware_scan: bool = False,
+    malware_scan_timeout_seconds: int = 30,
+    malware_database_max_age_days: int = 7,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object] | None]:
     report_snapshot = build_report_snapshot(scan_result)
     operation_result = run_folder_organizer(scan_result, selected_paths, dry_run=False)
@@ -94,6 +103,9 @@ def quarantine_selected_files(
         max_files=max_files,
         stale_days=stale_days,
         large_file_bytes=large_file_bytes,
+        enable_malware_scan=enable_malware_scan,
+        malware_scan_timeout_seconds=malware_scan_timeout_seconds,
+        malware_database_max_age_days=malware_database_max_age_days,
     )
     return operation_result, refreshed_scan, report_snapshot
 
@@ -106,6 +118,9 @@ def restore_quarantine_selection(
     max_files: int,
     stale_days: int,
     large_file_bytes: int,
+    enable_malware_scan: bool = False,
+    malware_scan_timeout_seconds: int = 30,
+    malware_database_max_age_days: int = 7,
 ) -> tuple[dict[str, object], dict[str, object] | None]:
     validated_path = validate_scan_target(folder_path)
     restore_result = restore_quarantined_items(str(validated_path), quarantine_paths)
@@ -117,6 +132,9 @@ def restore_quarantine_selection(
             max_files=max_files,
             stale_days=stale_days,
             large_file_bytes=large_file_bytes,
+            enable_malware_scan=enable_malware_scan,
+            malware_scan_timeout_seconds=malware_scan_timeout_seconds,
+            malware_database_max_age_days=malware_database_max_age_days,
         )
     except FolderOrganizerError:
         refreshed_scan = None

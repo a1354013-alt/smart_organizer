@@ -1,6 +1,9 @@
 # Known Limitations
 
 - Folder scan decisions rely on file metadata and filesystem timestamps, primarily metadata, `mtime`, `atime`, and file size. The homepage scan does not inspect full file contents.
+- Optional ClamAV integration scans candidate files one file at a time without unpacking archives. It reports the local scanner result only and must not be treated as a guarantee that a file is safe.
+- ClamAV binaries and virus databases are not bundled with Smart Organizer. Users must install `clamscan` and `freshclam` separately and maintain their local virus database.
+- If ClamAV is unavailable, misconfigured, missing its database, or has an outdated database, Smart Organizer surfaces that state in the UI instead of silently treating files as clean.
 - Candidate scoring is deterministic and rule-based. It explains confidence, risk level, and reasons, but it is still a review aid rather than a guarantee that a file should be moved.
 - `atime` can be disabled or coarse on some systems, including some Windows configurations, so users should treat long-unused detection as a supporting signal.
 - Quarantine and restore depend on `.smart_organizer_quarantine/manifest.json`. Tampered entries that point outside the scan root or quarantine root are rejected instead of restored.
@@ -16,3 +19,4 @@
 - Record timestamps are stored in UTC ISO 8601. The UI may render them in local time, while exported reports keep UTC labels.
 - AI summary features require a valid OpenAI API key. Core review and organization flows should still work without one.
 - The default cleanup flow does not permanently delete selected user files. Selected files are moved into quarantine unless the user restores them later.
+- Files marked `infected` by ClamAV are intentionally blocked from Smart Organizer move, quarantine, and restore operations. Users must handle those files with their antivirus tooling outside this app.

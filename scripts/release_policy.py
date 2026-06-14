@@ -71,6 +71,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "folder_service.py",
         "folder_report.py",
         "report_exports.py",
+        "malware_scanner.py",
     ),
     "runtime_docs_and_helpers": (
         "requirements.txt",

@@ -34,6 +34,25 @@ def test_scan_local_folder_marks_stale_and_large_candidates(tmp_path: Path):
     assert stats["large_candidates"] == 1
 
 
+def test_scan_local_folder_adds_default_malware_fields(tmp_path: Path):
+    target = tmp_path / "candidate.log"
+    target.write_text("stale", encoding="utf-8")
+
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=True,
+        max_files=100,
+        stale_days=0,
+        large_file_bytes=1024,
+    )
+
+    record = cast(dict[str, object], scan["records"][0])
+    assert record["malware_status"] == "not_scanned"
+    assert record["malware_scanner"] == ""
+    assert record["malware_threat_name"] == ""
+    assert record["malware_message"] == ""
+
+
 def test_scan_local_folder_rejects_missing_root(tmp_path: Path):
     missing = tmp_path / "missing"
 

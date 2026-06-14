@@ -94,6 +94,10 @@ class _FakeStreamlit:
     def caption(self, value: str) -> None:
         self.calls.append(("caption", value))
 
+    def expander(self, label: str, **kwargs):  # noqa: ANN003
+        self.calls.append(("expander", label))
+        return nullcontext()
+
     def success(self, value: str) -> None:
         self.calls.append(("success", value))
 

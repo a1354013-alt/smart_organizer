@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
@@ -9,6 +10,7 @@ from typing import Any
 
 import streamlit as st
 
+from i18n import t
 from services import UploadedFileData
 from ui_state import SESSION_DEBUG_MODE
 
@@ -86,37 +88,89 @@ def inject_global_css() -> None:
         """
         <style>
           :root {
-            --so-bg: #f4f8fb;
+            --so-bg: #f6f9fc;
             --so-surface: rgba(255, 255, 255, 0.96);
+            --so-surface-muted: rgba(248, 250, 252, 0.98);
             --so-border: rgba(15, 23, 42, 0.08);
             --so-text: #0f172a;
             --so-muted: rgba(15, 23, 42, 0.65);
-            --so-accent: #0f766e;
-            --so-accent-2: #2563eb;
+            --so-accent: #ff4b6e;
+            --so-accent-2: #db3056;
             --so-warning: #fef3c7;
             --so-danger: #dc2626;
             --so-success: #15803d;
-            --so-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+            --so-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
             --so-radius: 18px;
-            --so-primary-border: rgba(37, 99, 235, 0.16);
+            --so-primary-border: rgba(255, 75, 110, 0.16);
             --so-secondary-border: rgba(15, 118, 110, 0.16);
+            --so-header-height: 3.25rem;
+          }
+
+          html,
+          body,
+          .stApp,
+          [data-testid="stAppViewContainer"] {
+            height: 100vh;
+            max-height: 100vh;
+            overflow: hidden;
+          }
+
+          body {
+            color: var(--so-text);
+          }
+
+          [data-testid="stAppViewContainer"] > .main {
+            height: 100vh;
+            overflow: hidden;
           }
 
           .stApp {
             background: radial-gradient(900px 460px at 10% -10%, rgba(15, 118, 110, 0.10), transparent 58%),
-                        radial-gradient(780px 420px at 95% 0%, rgba(37, 99, 235, 0.10), transparent 52%),
+                        radial-gradient(780px 420px at 95% 0%, rgba(255, 75, 110, 0.10), transparent 52%),
                         var(--so-bg);
             color: var(--so-text);
           }
 
           .block-container {
-            padding-top: 1.35rem;
-            padding-bottom: 2rem;
+            height: calc(100vh - var(--so-header-height));
+            max-height: calc(100vh - var(--so-header-height));
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
           }
 
           section[data-testid="stSidebar"] {
+            height: 100vh;
+            overflow: hidden;
             background: rgba(255, 255, 255, 0.86);
             border-right: 1px solid rgba(15, 23, 42, 0.06);
+          }
+
+          section[data-testid="stSidebar"] > div:first-child {
+            height: 100vh;
+            overflow-y: auto;
+          }
+
+          section[data-testid="stSidebar"],
+          section[data-testid="stSidebar"] * {
+            color: #0f172a;
+          }
+
+          section[data-testid="stSidebar"] label,
+          section[data-testid="stSidebar"] p,
+          section[data-testid="stSidebar"] span {
+            color: #0f172a;
+          }
+
+          .stMarkdown,
+          .stCaption,
+          label,
+          p,
+          span {
+            color: inherit;
           }
 
           section[data-testid="stSidebar"] .stMarkdown,
@@ -125,31 +179,85 @@ def inject_global_css() -> None:
             line-height: 1.45;
           }
 
-          .hero-card,
-          .primary-action-card,
-          .secondary-action-card,
-          .status-card,
-          .workflow-step-card {
+          [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
+            background: transparent;
+          }
+
+          .so-card,
+          .so-dialog-body {
             background: var(--so-surface);
             border: 1px solid var(--so-border);
             border-radius: var(--so-radius);
             box-shadow: var(--so-shadow);
             padding: 16px 18px;
-            margin: 4px 0 14px 0;
           }
 
-          .primary-action-card {
-            background: linear-gradient(135deg, rgba(239, 246, 255, 0.98), rgba(248, 250, 252, 0.95));
+          .so-card {
+            margin: 0 0 12px 0;
+          }
+
+          .so-card-primary {
+            background: linear-gradient(135deg, rgba(255, 241, 242, 0.98), rgba(248, 250, 252, 0.95));
             border-color: var(--so-primary-border);
           }
 
-          .secondary-action-card {
+          .so-card-secondary {
             background: linear-gradient(135deg, rgba(240, 253, 250, 0.98), rgba(248, 250, 252, 0.95));
             border-color: var(--so-secondary-border);
           }
 
-          .workflow-step-card {
-            min-height: 116px;
+          .so-card-compact {
+            padding: 14px 16px;
+          }
+
+          .so-card-scroll {
+            overflow: hidden;
+          }
+
+          .so-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+            gap: 10px;
+            margin-top: 8px;
+            margin-bottom: 10px;
+          }
+
+          .so-stat-card {
+            background: var(--so-surface-muted);
+            border: 1px solid var(--so-border);
+            border-radius: 14px;
+            padding: 12px 14px;
+          }
+
+          .so-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+          }
+
+          .so-toolbar-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--so-muted);
+            font-size: 13px;
+          }
+
+          .so-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+          }
+
+          .so-header-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
           }
 
           .hero-row {
@@ -180,12 +288,13 @@ def inject_global_css() -> None:
             white-space: nowrap;
           }
 
-          .hero-subtitle {
+          .hero-subtitle,
+          .so-dialog-body p {
             margin: 6px 0 0 0;
             color: var(--so-muted);
             font-size: 14px;
             line-height: 1.55;
-            max-width: 760px;
+            max-width: 820px;
           }
 
           .feature-chips {
@@ -233,9 +342,78 @@ def inject_global_css() -> None:
             margin-top: 4px;
           }
 
+          .so-table-summary {
+            color: var(--so-muted);
+            font-size: 13px;
+            margin-bottom: 8px;
+          }
+
+          .so-inline-code {
+            font-family: "Consolas", "SFMono-Regular", monospace;
+            font-size: 12px;
+          }
+
+          [data-testid="stDataFrame"],
+          [data-testid="stDataEditor"] {
+            max-width: 100%;
+          }
+
+          [data-testid="stDataFrame"] div[role="grid"],
+          [data-testid="stDataEditor"] div[role="grid"] {
+            min-width: 0;
+          }
+
+          .stButton > button,
+          .stDownloadButton > button {
+            border-radius: 12px;
+          }
+
           .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, var(--so-accent-2), #1d4ed8);
-            border: 1px solid rgba(37, 99, 235, 0.22);
+            background: linear-gradient(135deg, var(--so-accent), var(--so-accent-2));
+            border: 1px solid rgba(255, 75, 110, 0.24);
+          }
+
+          @media (max-width: 900px) {
+            html,
+            body,
+            .stApp,
+            [data-testid="stAppViewContainer"] {
+              height: auto;
+              max-height: none;
+              overflow: auto;
+            }
+
+            [data-testid="stAppViewContainer"] > .main {
+              height: auto;
+              overflow: visible;
+            }
+
+            .block-container {
+              height: auto;
+              max-height: none;
+              overflow: visible;
+              padding-left: 0.75rem;
+              padding-right: 0.75rem;
+            }
+
+            section[data-testid="stSidebar"] {
+              height: auto;
+              overflow: visible;
+            }
+
+            section[data-testid="stSidebar"] > div:first-child {
+              height: auto;
+              overflow-y: visible;
+            }
+
+            .so-header,
+            .hero-row {
+              flex-direction: column;
+            }
+
+            .so-header-actions {
+              justify-content: flex-start;
+            }
           }
         </style>
         """,
@@ -244,11 +422,45 @@ def inject_global_css() -> None:
 
 
 def card_open(class_name: str) -> None:
+    """Deprecated: do not wrap Streamlit widgets across markdown blocks with this helper."""
     st.markdown(f'<div class="{safe_css_class_name(class_name)}">', unsafe_allow_html=True)
 
 
 def card_close() -> None:
+    """Deprecated: close the matching HTML-only card opened by ``card_open``."""
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def open_dialog_state(key: str) -> None:
+    st.session_state[key] = True
+
+
+def close_dialog_state(key: str) -> None:
+    st.session_state[key] = False
+
+
+def render_dialog(*, key: str, title: str, render_body: Callable[[], None]) -> None:
+    if not st.session_state.get(key):
+        return
+
+    if hasattr(st, "dialog"):
+
+        @st.dialog(title)
+        def _dialog() -> None:
+            with st.container():
+                render_body()
+            if st.button(t("common.close"), key=f"{key}_close"):
+                close_dialog_state(key)
+                st.rerun()
+
+        _dialog()
+        return
+
+    with st.expander(title, expanded=True):
+        render_body()
+        if st.button(t("common.close"), key=f"{key}_close_fallback"):
+            close_dialog_state(key)
+            st.rerun()
 
 
 def is_debug() -> bool:

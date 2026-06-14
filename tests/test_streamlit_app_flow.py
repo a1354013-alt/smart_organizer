@@ -35,6 +35,9 @@ def test_streamlit_folder_quarantine_restore_report_flow(tmp_path: Path):
     assert not app.exception
     assert len(app.tabs) == 5
     assert app.text_input[0].label == t("home.scan.input_label")
+    assert any(checkbox.label == t("malware.enable_scan") for checkbox in app.checkbox)
+    assert any(button.label == t("malware.check_status") for button in app.button)
+    assert any(button.label == t("malware.update_database") for button in app.button)
 
     app.text_input[0].set_value(str(demo_dir))
     _find_button(app, t("home.scan.button")).click().run()

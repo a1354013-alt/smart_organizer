@@ -133,6 +133,7 @@ def test_python_release_script_builds_clean_zip(tmp_path):
     assert "folder_service.py" in names
     assert "folder_report.py" in names
     assert "report_exports.py" in names
+    assert "malware_scanner.py" in names
     assert "docs/KNOWN_LIMITATIONS.md" in names
     assert "docs/PORTFOLIO_CASE_STUDY.md" in names
     for source_only_path in SOURCE_ONLY_RELEASE_FILES:

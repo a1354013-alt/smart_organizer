@@ -103,6 +103,10 @@ class FolderScanRecord:
     duplicate_reason: str | None = None
     confidence: float = 0.0
     risk_level: str = RiskLevel.DO_NOT_TOUCH.value
+    malware_status: str = "not_scanned"
+    malware_scanner: str = ""
+    malware_threat_name: str = ""
+    malware_message: str = ""
     reason_codes: list[str] | None = None
     file_age_score: float = 0.0
     size_score: float = 0.0
@@ -172,6 +176,10 @@ class FolderOperationRow:
     processed_at: str
     error_message: str | None
     operation_id: str | None
+    malware_status: str = "not_scanned"
+    malware_scanner: str = ""
+    malware_threat_name: str = ""
+    malware_message: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -218,6 +226,10 @@ class ManifestItem(TypedDict, total=False):
     last_error: str
     duplicate_type: str
     duplicate_reason: str
+    malware_status: str
+    malware_scanner: str
+    malware_threat_name: str
+    malware_message: str
 
 
 def human_bytes(num_bytes: int | None) -> str:
@@ -351,6 +363,10 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
                 "last_error": str(item.get("last_error") or ""),
                 "duplicate_type": str(item.get("duplicate_type") or ""),
                 "duplicate_reason": str(item.get("duplicate_reason") or ""),
+                "malware_status": str(item.get("malware_status") or "not_scanned"),
+                "malware_scanner": str(item.get("malware_scanner") or ""),
+                "malware_threat_name": str(item.get("malware_threat_name") or ""),
+                "malware_message": str(item.get("malware_message") or ""),
             }
         )
     return normalized
