@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import locale
 import os
 import queue
 import signal
@@ -34,7 +33,7 @@ COMMAND_TIMEOUTS_SECONDS = {
     "scripts/check_workspace_clean.py": 60,
 }
 DEFAULT_TIMEOUT_TAIL_LINES = 40
-STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+STREAM_ENCODING = "utf-8"
 PROCESS_TERMINATE_GRACE_SECONDS = 1.0
 PROCESS_KILL_GRACE_SECONDS = 1.0
 READER_JOIN_GRACE_SECONDS = 1.0

@@ -152,7 +152,15 @@ def generate_video_thumbnail(
             preview_path,
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=max(1, int(timeout_seconds or 10)), text=True)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=max(1, int(timeout_seconds or 10)),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+            )
             if os.path.exists(preview_path):
                 return preview_path, None
             stderr = (proc.stderr or "").strip()

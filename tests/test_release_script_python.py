@@ -20,6 +20,7 @@ from scripts.validate_release_source import (
     StepTimeoutResult,
     _build_timeout_result,
     _format_timeout_message,
+    _handle_output_chunk,
     _tail_lines,
     run_step,
 )
@@ -253,6 +254,16 @@ def test_verify_release_zip_rejects_runtime_artifacts_in_zip(tmp_path: Path):
         assert "dist/runtime.zip" in str(exc) or "coverage/index.html" in str(exc)
     else:
         raise AssertionError("Expected runtime artifacts to fail verification")
+
+
+def test_validate_release_output_chunk_uses_utf8_replace_for_invalid_bytes(capsys):
+    tail = OutputTail(5)
+
+    _handle_output_chunk("stdout", b"\xe6\x96", tail)
+
+    captured = capsys.readouterr().out
+    assert "\ufffd" in captured
+    assert any("\ufffd" in line for line in tail.snapshot())
 
 
 def test_extracted_release_zip_smoke_imports_app_main(tmp_path: Path):

@@ -40,9 +40,12 @@ def test_extract_video_metadata_uses_timeout(monkeypatch, tmp_path: Path):
     processor = FileProcessor()
     captured: dict[str, object] = {}
 
-    def fake_run(cmd, capture_output, timeout, text):
+    def fake_run(cmd, capture_output, timeout, text, encoding, errors, shell):
         captured["cmd"] = cmd
         captured["timeout"] = timeout
+        captured["encoding"] = encoding
+        captured["errors"] = errors
+        captured["shell"] = shell
         return SimpleNamespace(
             returncode=0,
             stdout='{"format":{"duration":"4.0"},"streams":[{"codec_type":"video","width":320,"height":240,"codec_name":"h264","r_frame_rate":"30/1"}]}',
@@ -59,6 +62,9 @@ def test_extract_video_metadata_uses_timeout(monkeypatch, tmp_path: Path):
     assert isinstance(cmd, list)
     assert cmd[0] == "ffprobe"
     assert captured["timeout"] == VIDEO_TOOL_TIMEOUT_SECONDS
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert captured["shell"] is False
     assert metadata["duration_seconds"] == 4.0
     assert metadata["width"] == 320
     assert metadata["height"] == 240
@@ -84,9 +90,12 @@ def test_generate_video_thumbnail_timeout_returns_clean_error(monkeypatch, tmp_p
         lambda *_args, **_kwargs: {"duration_seconds": 4.0},
     )
 
-    def fake_run(cmd, capture_output, timeout, text):
+    def fake_run(cmd, capture_output, timeout, text, encoding, errors, shell):
         assert cmd[0] == "ffmpeg"
         assert timeout == VIDEO_TOOL_TIMEOUT_SECONDS
+        assert encoding == "utf-8"
+        assert errors == "replace"
+        assert shell is False
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -116,8 +125,11 @@ def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monk
         staticmethod(lambda _path: str(preview_base_path)),
     )
 
-    def fake_run(cmd, capture_output, timeout, text):
+    def fake_run(cmd, capture_output, timeout, text, encoding, errors, shell):
         captured["cmd"] = cmd
+        captured["encoding"] = encoding
+        captured["errors"] = errors
+        captured["shell"] = shell
         expected_preview_path.write_bytes(b"jpg")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -146,6 +158,9 @@ def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monk
     assert cmd[cmd.index("-i") + 1] == str(video_path)
     assert cmd[-1] == str(expected_preview_path)
     assert str(video_path) not in cmd[cmd.index("-vf") + 1 :]
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert captured["shell"] is False
 
 
 def test_generate_video_thumbnail_falls_back_when_ffmpeg_unavailable(monkeypatch, tmp_path: Path):

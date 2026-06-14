@@ -67,7 +67,15 @@ VIDEO_TOOL_TIMEOUT_SECONDS = _read_int_env("VIDEO_TOOL_TIMEOUT_SECONDS", 10, min
 
 def _run_video_subprocess(cmd: list[str], *, timeout_seconds: int | None = None) -> Any:
     timeout = max(1, int(timeout_seconds or VIDEO_TOOL_TIMEOUT_SECONDS))
-    return subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        timeout=timeout,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        shell=False,
+    )
 
 
 def _sniff_video_container(file_path: str, *, max_bytes: int = 4096) -> tuple[bool, str | None]:

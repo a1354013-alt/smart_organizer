@@ -23,6 +23,10 @@ def test_vscode_launch_config_supports_streamlit_f5():
     assert config["module"] == "streamlit"
     assert config["args"][:2] == ["run", "app.py"]
     assert "--server.port" in config["args"]
+    assert config["env"] == {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
 
 
 def test_vscode_tasks_cover_validation_and_release_workflow():
