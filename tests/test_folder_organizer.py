@@ -375,6 +375,45 @@ def test_run_folder_organizer_rejects_forged_record_outside_scan_root(tmp_path: 
     assert not (scan_root / QUARANTINE_DIRNAME / operation_id / outside_file.name).exists()
 
 
+def test_run_folder_organizer_skips_blocked_malware_statuses(tmp_path: Path):
+    blocked_statuses = [
+        "scanner_unavailable",
+        "database_missing",
+        "timeout",
+        "error",
+        "suspicious",
+        "infected",
+    ]
+    records: list[dict[str, object]] = []
+    selected: list[str] = []
+    for status in blocked_statuses:
+        target = tmp_path / f"{status}.txt"
+        target.write_text(status, encoding="utf-8")
+        selected.append(str(target))
+        records.append(
+            {
+                "path": str(target),
+                "name": target.name,
+                "candidate_reasons": ["stale"],
+                "size_bytes": target.stat().st_size,
+                "mtime": "2026-06-15T00:00:00+00:00",
+                "malware_status": status,
+                "malware_scanner": "ClamAV",
+                "malware_message": f"{status} for test",
+            }
+        )
+    scan: dict[str, object] = {"path": str(tmp_path), "records": records}
+
+    result = run_folder_organizer(scan, selected, dry_run=False)
+
+    rows = cast(list[dict[str, object]], result["results"])
+    assert result["summary"]["skipped"] == len(blocked_statuses)
+    assert result["summary"]["success"] == 0
+    assert {row["malware_status"] for row in rows} == set(blocked_statuses)
+    assert all(row["status"] == "SKIPPED" for row in rows)
+    assert all((tmp_path / f"{status}.txt").exists() for status in blocked_statuses)
+
+
 def test_restore_quarantined_items_rejects_tampered_manifest_paths(tmp_path: Path):
     scan_root = tmp_path / "scan"
     outside_root = tmp_path / "outside"

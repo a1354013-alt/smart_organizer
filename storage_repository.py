@@ -251,12 +251,20 @@ class StorageRepositoryMixin:
                     if temp_path and str(temp_path) != db_temp_path and self._path_exists(temp_path):
                         with suppress(Exception):
                             self._remove_path(str(temp_path))
+                    return {
+                        "success": False,
+                        "reason": "DUPLICATE",
+                        "file_id": int(row[0]),
+                        "status": str(row[1] or ""),
+                        "final_path": str(row[2]) if row[2] else None,
+                    }
+                if temp_created and temp_path and self._path_exists(temp_path):
+                    with suppress(Exception):
+                        self._remove_path(str(temp_path))
                 return {
                     "success": False,
-                    "reason": "DUPLICATE",
-                    "file_id": int(row[0]),
-                    "status": str(row[1] or ""),
-                    "final_path": str(row[2]) if row[2] else None,
+                    "reason": "ERROR",
+                    "message": "Database integrity error occurred, but no duplicate file record was found.",
                 }
         except (ValueError, OSError, sqlite3.Error) as exc:
             logger.error(

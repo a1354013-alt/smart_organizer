@@ -66,6 +66,9 @@
     "database_version": "Database version: {version}",
     "database_date": "Database date: {date}",
     "database_age_days": "Database age: {days} day(s)",
+    "clamscan_path": "clamscan path: {path}",
+    "freshclam_path": "freshclam path: {path}",
+    "database_dir": "Database directory: {path}",
     "freshclam_ready": "freshclam is available for manual updates.",
     "scan_clean": "Clean",
     "scan_infected": "Infected",
@@ -77,7 +80,9 @@
     "scan_error": "Scan error",
     "scan_timeout": "Scan timeout",
     "infected_warning": "This file was marked infected by ClamAV. Smart Organizer will not move, delete, or open it. Please handle it with your antivirus software.",
-    "selected_infected_warning": "Selected infected files will be skipped and not moved: {files}"
+    "blocked_warning": "This file is not confirmed clean ({status}). Smart Organizer will skip it until the malware scan is clean.",
+    "selected_infected_warning": "Selected infected files will be skipped and not moved: {files}",
+    "selected_blocked_warning": "Selected files with blocked malware scan status will be skipped and not moved: {files}"
   },
   "home": {
     "header": {

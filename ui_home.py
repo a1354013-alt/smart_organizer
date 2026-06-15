@@ -31,7 +31,13 @@ from i18n import (
     set_current_language,
     t,
 )
-from malware_scanner import ClamAvStatus, get_clamav_status, update_clamav_database
+from malware_scanner import (
+    ClamAvStatus,
+    get_clamav_status,
+    is_candidate_auto_selectable,
+    is_malware_blocked_status,
+    update_clamav_database,
+)
 from ui_common import (
     UIContext,
     close_dialog_state,
@@ -139,10 +145,13 @@ def _malware_scan_label(value: object) -> str:
     return t(label_key) if label_key else status
 
 
-def _infected_candidate_warning(item: dict[str, object]) -> str | None:
-    if str(item.get("malware_status") or "") != "infected":
+def _blocked_candidate_warning(item: dict[str, object]) -> str | None:
+    status = str(item.get("malware_status") or "")
+    if not is_malware_blocked_status(status):
         return None
-    return t("malware.infected_warning")
+    if status == "infected":
+        return t("malware.infected_warning")
+    return t("malware.blocked_warning", status=_malware_scan_label(status))
 
 
 def _serialize_clamav_status(status: ClamAvStatus) -> dict[str, object]:
@@ -171,9 +180,12 @@ def _render_clamav_status_box(status: dict[str, object]) -> None:
     age_days = status.get("database_age_days")
     if isinstance(age_days, int):
         details.append(t("malware.database_age_days", days=age_days))
-    freshclam_path = str(status.get("freshclam_path") or "").strip()
-    if freshclam_path:
-        details.append(t("malware.freshclam_ready"))
+    clamscan_path = str(status.get("clamscan_path") or "").strip() or "-"
+    freshclam_path = str(status.get("freshclam_path") or "").strip() or "-"
+    database_dir = str(status.get("database_dir") or "").strip() or "-"
+    details.append(t("malware.clamscan_path", path=clamscan_path))
+    details.append(t("malware.freshclam_path", path=freshclam_path))
+    details.append(t("malware.database_dir", path=database_dir))
     renderer = st.success if availability == "available" else st.warning
     renderer("\n".join(f"- {line}" for line in details))
 
@@ -409,7 +421,12 @@ def render_sidebar(context: UIContext) -> None:
         )
 
 
-def _render_candidate_editor(context: UIContext, candidates: list[dict[str, object]]) -> list[str]:
+def _render_candidate_editor(
+    context: UIContext,
+    candidates: list[dict[str, object]],
+    *,
+    enable_malware_scan: bool,
+) -> list[str]:
     if not candidates:
         st.info(t("home.candidates.empty"))
         st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
@@ -425,6 +442,7 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
     rows = [_candidate_row(item) for item in visible_candidates]
     visible_paths = {str(row.get("path")) for row in rows}
     candidate_paths = [str(item.get("path")) for item in candidates if str(item.get("path") or "").strip()]
+    candidate_by_path = {str(item.get("path")): item for item in candidates if str(item.get("path") or "").strip()}
     selected_paths = [str(path) for path in cast(list[object], st.session_state.get(SESSION_FOLDER_SELECTED_PATHS, []))]
 
     action_columns = st.columns(4, gap="small")
@@ -433,7 +451,7 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
             st.session_state[SESSION_FOLDER_SELECTED_PATHS] = [
                 str(item.get("path"))
                 for item in candidates
-                if str(item.get("malware_status") or "") != "infected"
+                if is_candidate_auto_selectable(item, enable_malware_scan=enable_malware_scan)
             ]
             selected_paths = list(st.session_state[SESSION_FOLDER_SELECTED_PATHS])
     with action_columns[1]:
@@ -441,7 +459,8 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
             st.session_state[SESSION_FOLDER_SELECTED_PATHS] = [
                 str(item.get("path"))
                 for item in candidates
-                if item.get("risk_level") == "safe_to_review" and str(item.get("malware_status") or "") != "infected"
+                if item.get("risk_level") == "safe_to_review"
+                and is_candidate_auto_selectable(item, enable_malware_scan=enable_malware_scan)
             ]
             selected_paths = list(st.session_state[SESSION_FOLDER_SELECTED_PATHS])
     with action_columns[2]:
@@ -504,7 +523,12 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
         )
         edited_rows = cast(list[dict[str, object]], edited.to_dict("records"))
         merged_selected = merge_visible_selection(set(selected_paths), rows, edited_rows)
-        selected_paths = [path for path in candidate_paths if path in merged_selected]
+        selected_paths = [
+            path
+            for path in candidate_paths
+            if path in merged_selected
+            and not is_malware_blocked_status(candidate_by_path.get(path, {}).get("malware_status"))
+        ]
         hidden_selected_count = sum(1 for path in selected_paths if path not in visible_paths)
         if hidden_selected_count:
             st.caption(
@@ -526,7 +550,12 @@ def _render_candidate_editor(context: UIContext, candidates: list[dict[str, obje
     st.dataframe(table_rows, use_container_width=True, height=380)
     fallback_rows = [dict(row, select=str(row["path"]) in selected_visible) for row in rows]
     merged_selected = merge_visible_selection(set(selected_paths), rows, fallback_rows)
-    selected = [path for path in candidate_paths if path in merged_selected]
+    selected = [
+        path
+        for path in candidate_paths
+        if path in merged_selected
+        and not is_malware_blocked_status(candidate_by_path.get(path, {}).get("malware_status"))
+    ]
     hidden_selected_count = sum(1 for path in selected if path not in visible_paths)
     if hidden_selected_count:
         st.caption(
@@ -879,21 +908,27 @@ def _render_results_panel(
         )
 
         st.subheader(t("home.candidates.title"))
-        selected_paths = _render_candidate_editor(context, candidates)
-        infected_candidates = [item for item in candidates if str(item.get("malware_status") or "") == "infected"]
-        for item in infected_candidates[:10]:
+        selected_paths = _render_candidate_editor(
+            context,
+            candidates,
+            enable_malware_scan=enable_malware_scan,
+        )
+        blocked_candidates = [item for item in candidates if is_malware_blocked_status(item.get("malware_status"))]
+        for item in blocked_candidates[:10]:
             threat_name = str(item.get("malware_threat_name") or "").strip()
             suffix = f" ({threat_name})" if threat_name else ""
-            st.warning(f"{item.get('name')}{suffix}: {t('malware.infected_warning')}")
+            warning = _blocked_candidate_warning(item)
+            if warning:
+                st.warning(f"{item.get('name')}{suffix}: {warning}")
         blocked_selected = [
             str(item.get("name") or item.get("path") or "")
             for item in candidates
-            if str(item.get("path") or "") in selected_paths and str(item.get("malware_status") or "") == "infected"
+            if str(item.get("path") or "") in selected_paths and is_malware_blocked_status(item.get("malware_status"))
         ]
         if blocked_selected:
             st.warning(
                 t(
-                    "malware.selected_infected_warning",
+                    "malware.selected_blocked_warning",
                     files=", ".join(blocked_selected[:5]),
                 )
             )

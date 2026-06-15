@@ -66,6 +66,9 @@
     "database_version": "病毒資料庫版本：{version}",
     "database_date": "病毒資料庫日期：{date}",
     "database_age_days": "病毒資料庫年齡：{days} 天",
+    "clamscan_path": "clamscan 路徑：{path}",
+    "freshclam_path": "freshclam 路徑：{path}",
+    "database_dir": "病毒資料庫目錄：{path}",
     "freshclam_ready": "freshclam 可用，可手動更新病毒資料庫。",
     "scan_clean": "安全",
     "scan_infected": "感染",
@@ -77,7 +80,9 @@
     "scan_error": "掃描錯誤",
     "scan_timeout": "掃描逾時",
     "infected_warning": "此檔案被 ClamAV 標記為感染。Smart Organizer 不會移動、刪除或開啟此檔案，請使用防毒軟體處理。",
-    "selected_infected_warning": "已選取的感染檔案會被跳過且不會搬移：{files}"
+    "blocked_warning": "此檔案尚未確認為安全（{status}）。Smart Organizer 會先跳過，直到木馬掃描狀態為乾淨。",
+    "selected_infected_warning": "已選取的感染檔案會被跳過且不會搬移：{files}",
+    "selected_blocked_warning": "已選取但掃描狀態被阻擋的檔案會被跳過且不會搬移：{files}"
   },
   "home": {
     "header": {

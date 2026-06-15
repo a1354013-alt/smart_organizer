@@ -45,6 +45,7 @@ from folder_models import (
 from malware_scanner import (
     ClamAvStatus,
     get_clamav_status,
+    is_malware_blocked_status,
     scan_files,
 )
 
@@ -60,6 +61,10 @@ SIMILAR_NAME_CANDIDATE = "similar_name_candidate"
 INFECTED_FILE_BLOCK_MESSAGE = (
     "This file was marked infected by ClamAV. Smart Organizer will not move, delete, or open it. "
     "Please handle it with your antivirus software."
+)
+MALWARE_FILE_BLOCK_MESSAGE = (
+    "This file does not have a confirmed clean malware scan status. "
+    "Smart Organizer will skip it until the scan status is clean."
 )
 
 
@@ -456,8 +461,14 @@ def _operation_malware_payload(record: dict[str, object]) -> dict[str, str]:
     }
 
 
-def _infected_record(record: dict[str, object]) -> bool:
-    return str(record.get("malware_status") or "") == "infected"
+def _malware_block_message(record: dict[str, object]) -> str | None:
+    status = str(record.get("malware_status") or "")
+    if not is_malware_blocked_status(status):
+        return None
+    if status == "infected":
+        return INFECTED_FILE_BLOCK_MESSAGE
+    message = str(record.get("malware_message") or "").strip()
+    return f"{MALWARE_FILE_BLOCK_MESSAGE} {message}".strip()
 
 
 def _operation_reason_text(record: dict[str, object]) -> str:
@@ -758,7 +769,8 @@ def run_folder_organizer(
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
             malware_payload = _operation_malware_payload(record)
-            if _infected_record(record):
+            malware_block_message = _malware_block_message(record)
+            if malware_block_message is not None:
                 results.append(
                     FolderOperationRow(
                         original_path=str(original_path),
@@ -770,7 +782,7 @@ def run_folder_organizer(
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
-                        error_message=INFECTED_FILE_BLOCK_MESSAGE,
+                        error_message=malware_block_message,
                         operation_id=operation_id,
                         **malware_payload,
                     )
@@ -958,7 +970,8 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
             source = Path(str(item.get("quarantine_path") or ""))
             original = Path(str(item.get("original_path") or ""))
             malware_payload = _operation_malware_payload(item)
-            if _infected_record(item):
+            malware_block_message = _malware_block_message(item)
+            if malware_block_message is not None:
                 results.append(
                     FolderOperationRow(
                         original_path=str(original) if item.get("original_path") else None,
@@ -970,7 +983,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),
-                        error_message=INFECTED_FILE_BLOCK_MESSAGE,
+                        error_message=malware_block_message,
                         operation_id=str(item.get("operation_id") or "") or None,
                         **malware_payload,
                     )

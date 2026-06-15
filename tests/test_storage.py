@@ -299,6 +299,40 @@ class _FailingInsertConnection:
         self._real.close()
 
 
+class _IntegrityInsertNoDuplicateCursor:
+    def __init__(self, real_cursor: sqlite3.Cursor) -> None:
+        self._real = real_cursor
+
+    def execute(self, sql: str, params: Iterable[object] = ()) -> sqlite3.Cursor:
+        if "INSERT INTO files" in sql:
+            raise sqlite3.IntegrityError("forced integrity failure")
+        return self._real.execute(sql, tuple(params))
+
+    def fetchone(self) -> object:
+        return self._real.fetchone()
+
+    @property
+    def lastrowid(self) -> int:
+        return int(self._real.lastrowid or 0)
+
+
+class _IntegrityInsertNoDuplicateConnection:
+    def __init__(self, real_conn: sqlite3.Connection) -> None:
+        self._real = real_conn
+
+    def cursor(self) -> _IntegrityInsertNoDuplicateCursor:
+        return _IntegrityInsertNoDuplicateCursor(self._real.cursor())
+
+    def rollback(self) -> None:
+        self._real.rollback()
+
+    def commit(self) -> None:
+        self._real.commit()
+
+    def close(self) -> None:
+        self._real.close()
+
+
 def test_create_temp_file_cleans_orphan_temp_file_when_db_insert_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -320,3 +354,30 @@ def test_create_temp_file_cleans_orphan_temp_file_when_db_insert_fails(
 
     assert result["success"] is False
     assert list(Path(upload_dir).glob("*broken.pdf")) == []
+
+
+def test_create_temp_file_integrity_error_without_duplicate_returns_error_and_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = str(tmp_path / "test.db")
+    repo_root = str(tmp_path / "repo")
+    upload_dir = str(tmp_path / "uploads")
+    storage = StorageManager(db_path, repo_root, upload_dir)
+    real_get_connection = storage._get_connection
+
+    def failing_get_connection() -> _IntegrityInsertNoDuplicateConnection:
+        return _IntegrityInsertNoDuplicateConnection(real_get_connection())
+
+    monkeypatch.setattr(storage, "_get_connection", failing_get_connection)
+
+    payload = _minimal_pdf_bytes()
+    file_hash = _sha256(payload + b"integrity")
+    result = storage.create_temp_file("missing-duplicate.pdf", payload, file_hash, "document")
+
+    assert result == {
+        "success": False,
+        "reason": "ERROR",
+        "message": "Database integrity error occurred, but no duplicate file record was found.",
+    }
+    assert list(Path(upload_dir).glob("*missing-duplicate.pdf")) == []

@@ -228,7 +228,10 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
 
     monkeypatch.setattr("ui_home.st", fake_st)
     monkeypatch.setattr("ui_home.get_quarantine_items_safe", lambda _path: ([], []))
-    monkeypatch.setattr("ui_home._render_candidate_editor", lambda _context, candidates: [str(item["path"]) for item in candidates])
+    monkeypatch.setattr(
+        "ui_home._render_candidate_editor",
+        lambda _context, candidates, **_kwargs: [str(item["path"]) for item in candidates],
+    )
     monkeypatch.setattr("ui_home._render_operation_results", lambda _result: None)
     monkeypatch.setattr("ui_home.resolve_report_inputs", lambda current_scan, report_snapshot, operation_result: (current_scan, operation_result))
     monkeypatch.setattr("ui_home.export_folder_report_markdown", lambda *_args, **_kwargs: "report")
