@@ -14,7 +14,7 @@ from config import UPLOAD_MAX_BATCH_BYTES, UPLOAD_MAX_FILE_BYTES
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 MAX_UPLOAD_BYTES = UPLOAD_MAX_FILE_BYTES
 MAX_UPLOAD_BATCH_BYTES = UPLOAD_MAX_BATCH_BYTES
 
@@ -64,6 +64,60 @@ class StorageBase:
             except sqlite3.Error as e:
                 logger.warning("in-memory keepalive connection failed: %s", e)
                 self._keepalive_conn = None
+
+    def _is_relative_to(self, child: Path, parent: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def _allowed_preview_roots(self) -> list[Path]:
+        roots: list[Path] = []
+        for root in (self.upload_dir, self.repo_root):
+            if str(root).startswith("mem://"):
+                continue
+            roots.append(root.resolve(strict=False))
+        if len(roots) >= 2:
+            common_parent = Path(os.path.commonpath([str(root) for root in roots]))
+            roots.append(common_parent.resolve(strict=False))
+        return roots
+
+    def _normalize_preview_path(self, path_value: object) -> str | None:
+        if path_value in (None, ""):
+            return None
+        raw = str(path_value).strip()
+        if not raw:
+            return None
+        if self._mem_files is not None and self._is_mem_path(raw):
+            return raw if raw in self._mem_files else None
+
+        candidate = Path(raw).expanduser()
+        if ".." in candidate.parts:
+            return None
+        if not candidate.is_absolute():
+            candidate = Path(self.repo_root) / candidate
+        lexical = candidate.resolve(strict=False)
+
+        for root in self._allowed_preview_roots():
+            if self._is_relative_to(lexical, root):
+                break
+        else:
+            return None
+
+        existing_target = None
+        try:
+            if candidate.exists():
+                existing_target = candidate.resolve(strict=True)
+        except OSError:
+            return None
+
+        if existing_target is not None:
+            for root in self._allowed_preview_roots():
+                if self._is_relative_to(existing_target, root):
+                    return str(existing_target)
+            return None
+        return str(lexical)
 
     def close(self) -> None:
         if self._closed:

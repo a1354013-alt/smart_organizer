@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from folder_organizer import FolderOrganizer
+from folder_service import preview_selected_actions, scan_folder
 
 
 def test_quarantine_rejects_source_outside_scan_root(tmp_path: Path):
@@ -130,3 +133,30 @@ def test_low_level_restore_does_not_overwrite_existing_target(tmp_path: Path):
     assert result.target == str(scan_root / "doc__1.txt")
     assert existing.read_text(encoding="utf-8") == "existing payload"
     assert (scan_root / "doc__1.txt").read_text(encoding="utf-8") == "restored payload"
+
+
+def test_scan_folder_skips_symlink_targets_for_safety(tmp_path: Path):
+    inside = tmp_path / "inside.txt"
+    outside_root = tmp_path.parent / f"{tmp_path.name}_outside"
+    outside_root.mkdir(exist_ok=True)
+    outside = outside_root / "outside.txt"
+    symlink_path = tmp_path / "link.txt"
+    inside.write_text("inside", encoding="utf-8")
+    outside.write_text("outside", encoding="utf-8")
+    try:
+        symlink_path.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    scan = scan_folder(str(tmp_path), recursive=False, max_files=20, stale_days=0, large_file_bytes=10)
+    records = {row["path"]: row for row in scan["records"]}
+
+    assert str(symlink_path) in records
+    assert records[str(symlink_path)]["is_symlink"] is True
+    assert records[str(symlink_path)]["recommendation"] == "Do not touch"
+
+    preview = preview_selected_actions(scan, [str(symlink_path)])
+    row = preview["results"][0]
+    assert row["status"] == "SKIPPED"
+    assert "symbolic link" in str(row["error_message"]).lower()
+    assert outside.exists()

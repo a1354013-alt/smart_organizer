@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 
 from core import FileProcessor
-from services import BatchAnalysisOutcome, UploadedFileData, analyze_upload_batch_async
+from services import (
+    BatchAnalysisOutcome,
+    UploadedFileData,
+    analyze_upload_batch,
+    analyze_upload_batch_async,
+)
 from storage import StorageManager
 
 
@@ -58,3 +63,37 @@ def test_analyze_upload_batch_async_minimal_batch_progress_and_contract():
     assert progress_events
     assert progress_events[-1] == (1, 1)
 
+
+def test_sync_and_async_batch_validation_share_total_size_limit(monkeypatch):
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    processor = FileProcessor()
+    uploads = [
+        UploadedFileData(name="one.pdf", content=b"%PDF-1.4\n" + b"a" * 8, mime_type="application/pdf"),
+        UploadedFileData(name="two.pdf", content=b"%PDF-1.4\n" + b"b" * 8, mime_type="application/pdf"),
+    ]
+
+    monkeypatch.setattr("services_analysis.MAX_UPLOAD_BATCH_BYTES", 12)
+    monkeypatch.setattr("services_analysis.MAX_UPLOAD_BYTES", 100)
+
+    sync_outcome = analyze_upload_batch(uploads, processor=processor, storage=storage)
+    async_outcome = analyze_upload_batch_async(uploads, processor=processor, storage=storage, max_workers=1)
+
+    expected = "Batch size 34 bytes exceeds the upload batch limit of 12 bytes."
+    assert sync_outcome.errors == [expected]
+    assert async_outcome.errors == [expected]
+
+
+def test_sync_and_async_batch_validation_share_single_file_errors(monkeypatch):
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    processor = FileProcessor()
+    uploads = [UploadedFileData(name="huge.pdf", content=b"%PDF-1.4\n" + b"x" * 20, mime_type="application/pdf")]
+
+    monkeypatch.setattr("services_analysis.MAX_UPLOAD_BATCH_BYTES", 100)
+    monkeypatch.setattr("services_analysis.MAX_UPLOAD_BYTES", 10)
+
+    sync_outcome = analyze_upload_batch(uploads, processor=processor, storage=storage)
+    async_outcome = analyze_upload_batch_async(uploads, processor=processor, storage=storage, max_workers=1)
+
+    expected = "huge.pdf: file size 29 bytes exceeds the per-file limit of 10 bytes."
+    assert sync_outcome.errors == [expected]
+    assert async_outcome.errors == [expected]

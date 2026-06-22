@@ -90,6 +90,9 @@ def render_records(context: UIContext, *, show_header: bool = True) -> None:
     for record in display_records:
         record["created_at"] = format_timestamp_for_display(record.get("created_at"))
         record["main_topic"] = topic_display_label(record.get("main_topic"))
+        tags = [part.strip() for part in str(record.get("all_tags") or "").split(",") if part.strip()]
+        if tags:
+            record["all_tags"] = ", ".join(topic_display_label(tag) for tag in tags)
     total = int(page.get("total") or 0)
     file_id_options = [record.get("file_id") for record in records if record.get("file_id") is not None]
 

@@ -381,3 +381,31 @@ def test_create_temp_file_integrity_error_without_duplicate_returns_error_and_cl
         "message": "Database integrity error occurred, but no duplicate file record was found.",
     }
     assert list(Path(upload_dir).glob("*missing-duplicate.pdf")) == []
+
+
+def test_update_file_metadata_normalizes_topic_and_rejects_preview_escape(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    payload = _minimal_pdf_bytes()
+    result = storage.create_temp_file("invoice.pdf", payload, _sha256(payload + b"topic"), "document")
+
+    storage.update_file_metadata(
+        result["file_id"],
+        {
+            "standard_date": "2026-05-07",
+            "main_topic": "發票",
+            "summary": "summary",
+            "summary_status": "failed",
+            "summary_error": "boom",
+            "content": "content",
+            "is_scanned": False,
+            "preview_path": "../evil.png",
+            "classification_reason": "test",
+            "tag_scores": {"發票": 1.0},
+        },
+    )
+
+    stored = _require_record(storage.get_file_by_id(result["file_id"]))
+    assert stored["main_topic"] == "document.invoice"
+    assert stored["preview_path"] is None
+    assert stored["summary_status"] == "failed"
+    assert stored["summary_error"] == "boom"

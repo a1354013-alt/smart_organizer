@@ -94,6 +94,7 @@ class FolderScanRecord:
     atime: str
     days_since_access: int
     file_kind: str
+    is_symlink: bool
     is_stale: bool
     is_large: bool
     candidate_reasons: list[str]
@@ -140,6 +141,7 @@ class FolderScanResult:
     max_files: int
     stale_days: int
     large_file_bytes: int
+    enable_malware_scan: bool
     scanned_at: str
     elapsed_seconds: float
     records: list[FolderScanRecord]
@@ -154,6 +156,7 @@ class FolderScanResult:
             "max_files": self.max_files,
             "stale_days": self.stale_days,
             "large_file_bytes": self.large_file_bytes,
+            "enable_malware_scan": self.enable_malware_scan,
             "scanned_at": self.scanned_at,
             "elapsed_seconds": self.elapsed_seconds,
             "records": [record.to_dict() for record in self.records],

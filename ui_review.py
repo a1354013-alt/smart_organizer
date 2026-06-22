@@ -120,8 +120,14 @@ def render_review(context: UIContext) -> None:
                     else:
                         try:
                             suggestion = generate_summary_suggestion(computed, processor=context.processor)
-                            st.session_state.review_summaries[result.file_id] = suggestion.summary
-                            st.info(t("review.summary_value", summary=safe_display_text(suggestion.summary)))
+                            result.summary_status = suggestion.status
+                            result.summary_error = suggestion.error
+                            if suggestion.summary:
+                                result.summary = suggestion.summary
+                                st.session_state.review_summaries[result.file_id] = suggestion.summary
+                                st.info(t("review.summary_value", summary=safe_display_text(suggestion.summary)))
+                            elif suggestion.error:
+                                st.warning(safe_display_text(suggestion.error))
                             if suggestion.llm_tags:
                                 st.caption(t("review.ai_tags", tags=safe_display_text(", ".join(suggestion.llm_tags))))
                         except Exception as exc:

@@ -18,11 +18,11 @@ def _log_context(**fields: object) -> str:
 
 
 def _resolved_preview_path(storage: StorageManager, current_preview: object, new_preview: object) -> str | None:
-    normalized_new = str(new_preview).strip() if new_preview not in (None, "") else ""
+    normalized_new = storage._normalize_preview_path(new_preview)
     if normalized_new:
         return normalized_new
 
-    normalized_current = str(current_preview).strip() if current_preview not in (None, "") else ""
+    normalized_current = storage._normalize_preview_path(current_preview)
     if normalized_current and storage.path_exists(normalized_current):
         return normalized_current
     return None
@@ -43,6 +43,8 @@ def persist_confirmed_metadata(result: AnalysisResult, *, storage: StorageManage
             "standard_date": result.standard_date,
             "main_topic": result.main_topic,
             "summary": result.summary or "",
+            "summary_status": result.summary_status,
+            "summary_error": result.summary_error,
             "content": (result.metadata or {}).get("extracted_text", "") or "",
             "is_scanned": bool(result.is_scanned),
             "preview_path": result.preview_path,
@@ -160,6 +162,8 @@ def reclassify_record(
             "standard_date": metadata.get("standard_date"),
             "main_topic": main_topic,
             "summary": info.get("summary") or "",
+            "summary_status": info.get("summary_status"),
+            "summary_error": info.get("summary_error"),
             "content": metadata.get("extracted_text") or "",
             "is_scanned": metadata.get("is_scanned") or False,
             "preview_path": _resolved_preview_path(storage, info.get("preview_path"), metadata.get("preview_path")),

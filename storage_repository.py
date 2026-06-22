@@ -8,11 +8,12 @@ import uuid
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from core import FileUtils
 from storage_base import MAX_UPLOAD_BYTES, _log_context, utc_now_iso
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
+from topic_taxonomy import normalize_topic_key, normalize_topic_scores
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +68,11 @@ class StorageRepositoryMixin:
         return original_name, safe_name, payload
 
     def _merge_main_topic_into_tags(self, main_topic: str, tags_with_confidence: Mapping[str, object] | None) -> dict[str, float]:
-        merged: dict[str, float] = {}
-        for tag_name, confidence in (tags_with_confidence or {}).items():
-            if not tag_name:
-                continue
-            try:
-                merged[str(tag_name)] = float(confidence)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                merged[str(tag_name)] = 0.0
-
-        if main_topic:
+        merged = normalize_topic_scores(tags_with_confidence)
+        normalized_topic = normalize_topic_key(main_topic)
+        if normalized_topic:
             current_max = max(merged.values(), default=0.0)
-            merged[main_topic] = max(merged.get(main_topic, 0.0), current_max, 1.0)
-
+            merged[normalized_topic] = max(merged.get(normalized_topic, 0.0), current_max, 1.0)
         return merged
 
     def _replace_file_tags(self, cursor: sqlite3.Cursor, file_id: int, tags_with_confidence: dict[str, float]) -> None:
@@ -120,16 +113,24 @@ class StorageRepositoryMixin:
         file_id: int,
         requested_preview_path: object,
     ) -> str | None:
-        normalized_preview = str(requested_preview_path).strip() if requested_preview_path not in (None, "") else ""
+        normalized_preview = cast(Any, self)._normalize_preview_path(requested_preview_path)
         if normalized_preview:
             return normalized_preview
 
         cursor.execute("SELECT preview_path FROM files WHERE file_id = ?", (int(file_id),))
         existing_row = cursor.fetchone()
-        existing_preview = str(existing_row[0]).strip() if existing_row and existing_row[0] else ""
+        existing_preview = cast(Any, self)._normalize_preview_path(existing_row[0] if existing_row else None)
         if existing_preview and self.path_exists(existing_preview):
             return existing_preview
         return None
+
+    def _normalize_record_row(self, record: dict[str, object]) -> dict[str, object]:
+        normalized = dict(record)
+        normalized["main_topic"] = normalize_topic_key(normalized.get("main_topic"))
+        normalized["preview_path"] = cast(Any, self)._normalize_preview_path(normalized.get("preview_path"))
+        normalized["summary_status"] = str(normalized.get("summary_status") or "").strip() or None
+        normalized["summary_error"] = str(normalized.get("summary_error") or "").strip() or None
+        return normalized
 
     def create_temp_file(
         self: Any,
@@ -308,7 +309,7 @@ class StorageRepositoryMixin:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM files WHERE file_id = ?", (file_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            return self._normalize_record_row(dict(row)) if row else None
         except sqlite3.Error as exc:
             logger.error("get_file_by_id failed: %s", exc)
             return None
@@ -324,12 +325,14 @@ class StorageRepositoryMixin:
             conn = self._get_connection()
             cursor = conn.cursor()
             normalized_date = FileUtils.normalize_standard_date(metadata.get("standard_date"))
-            main_topic = str(metadata.get("main_topic", "") or "")
+            main_topic = normalize_topic_key(metadata.get("main_topic"))
             self_file_id = int(file_id)
             preview_path = self._resolve_preview_path_for_update(cursor, self_file_id, metadata.get("preview_path"))
             tag_scores = self._merge_main_topic_into_tags(main_topic, metadata.get("tag_scores"))
             manual_override = metadata.get("manual_override")
             manual_override_val = None if manual_override is None else (1 if manual_override else 0)
+            summary_status = str(metadata.get("summary_status") or "").strip() or None
+            summary_error = str(metadata.get("summary_error") or "").strip() or None
 
             decision_source = metadata.get("decision_source")
             last_manual_topic = metadata.get("last_manual_topic")
@@ -347,6 +350,8 @@ class StorageRepositoryMixin:
                 SET standard_date = ?,
                     main_topic = ?,
                     summary = ?,
+                    summary_status = ?,
+                    summary_error = ?,
                     preview_path = ?,
                     classification_reason = COALESCE(?, classification_reason),
                     final_decision_reason = COALESCE(?, final_decision_reason),
@@ -366,6 +371,8 @@ class StorageRepositoryMixin:
                     normalized_date,
                     main_topic,
                     metadata.get("summary", ""),
+                    summary_status,
+                    summary_error,
                     preview_path,
                     metadata.get("classification_reason"),
                     metadata.get("final_decision_reason"),
@@ -413,6 +420,7 @@ class StorageRepositoryMixin:
                     main_topic=main_topic,
                     decision_source=decision_source,
                     preview_path=preview_path,
+                    summary_status=summary_status,
                 ),
             )
         except sqlite3.Error as exc:
@@ -467,7 +475,12 @@ class StorageRepositoryMixin:
                 cursor.execute(
                     f"SELECT DISTINCT COALESCE({field}, '') FROM files WHERE COALESCE({field}, '') <> '' ORDER BY {field}"
                 )
-                values[field] = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+                raw_values = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+                values[field] = (
+                    sorted({normalize_topic_key(value) for value in raw_values if normalize_topic_key(value)})
+                    if field == "main_topic"
+                    else raw_values
+                )
             return values
         except sqlite3.Error as exc:
             logger.error("get_record_filter_values failed: %s", exc)
@@ -502,12 +515,14 @@ class StorageRepositoryMixin:
                 params.append(status)
             if main_topic:
                 where_parts.append("f.main_topic = ?")
-                params.append(main_topic)
+                params.append(normalize_topic_key(main_topic))
             if file_type:
                 where_parts.append("f.file_type = ?")
                 params.append(file_type)
             if search:
                 like = f"%{self._escape_like(search.strip())}%"
+                normalized_search = normalize_topic_key(search.strip())
+                topic_like = f"%{self._escape_like(normalized_search)}%" if normalized_search else like
                 where_parts.append(
                     "("
                     "f.original_name LIKE ? ESCAPE '\\' "
@@ -522,7 +537,7 @@ class StorageRepositoryMixin:
                     ")"
                     ")"
                 )
-                params.extend([like, like, like, like])
+                params.extend([like, topic_like, like, topic_like])
             if date_from:
                 where_parts.append("date(f.created_at) >= date(?)")
                 params.append(date_from)
@@ -556,7 +571,7 @@ class StorageRepositoryMixin:
                 """,
                 tuple(query_params),
             )
-            return {"items": [dict(row) for row in cursor.fetchall()], "total": total}
+            return {"items": [self._normalize_record_row(dict(row)) for row in cursor.fetchall()], "total": total}
         except sqlite3.Error as exc:
             logger.error("get_records_page failed: %s", exc)
             return {"items": [], "total": 0}

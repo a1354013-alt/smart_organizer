@@ -130,21 +130,34 @@ def generate_video_thumbnail(
     ffmpeg_available: bool,
     timeout_seconds: int,
     thumb_percent: float = 0.5,
+    duration_seconds: float | None = None,
 ) -> tuple[str | None, str | None]:
-    del thumb_percent
     if not ffmpeg_available:
         return None, "ffmpeg is unavailable; thumbnail generation was skipped."
     try:
         base_preview_path = FileUtils.build_preview_path(file_path)
         preview_path = os.path.splitext(base_preview_path)[0] + ".jpg"
         os.makedirs(os.path.dirname(preview_path), exist_ok=True)
+        try:
+            normalized_percent = float(thumb_percent)
+        except (TypeError, ValueError):
+            normalized_percent = 0.5
+        normalized_percent = min(1.0, max(0.0, normalized_percent))
+        seek_seconds = 1.0
+        if duration_seconds is not None:
+            try:
+                seek_seconds = max(0.0, float(duration_seconds) * normalized_percent)
+            except (TypeError, ValueError):
+                seek_seconds = 1.0
         cmd = [
             "ffmpeg",
             "-y",
+            "-ss",
+            f"{seek_seconds:.3f}",
             "-i",
             file_path,
             "-vf",
-            "thumbnail,scale=320:-1",
+            "scale=320:-1",
             "-frames:v",
             "1",
             "-q:v",

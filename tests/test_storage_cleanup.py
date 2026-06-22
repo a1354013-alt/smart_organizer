@@ -17,12 +17,13 @@ def _make_old_file(path: Path, payload: bytes = b"x") -> None:
 def test_cleanup_orphaned_uploads_only_touches_internal_temp_and_preview_files(tmp_path: Path):
     storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
 
-    orphan_temp = tmp_path / "uploads" / "deadbeef_orphan.pdf"
+    orphan_temp = tmp_path / "uploads" / ("a" * 64 + "_" + "b" * 32 + "_orphan.pdf")
     orphan_preview = tmp_path / "uploads" / "previews" / "preview_deadbeef_orphan.png"
     referenced_preview = tmp_path / "uploads" / "previews" / "preview_cafebabe_kept.png"
     user_target = tmp_path / "repo" / "deadbeef_user_file.pdf"
+    weird_name = tmp_path / "uploads" / "notes-final.pdf"
 
-    for path in (orphan_temp, orphan_preview, referenced_preview, user_target):
+    for path in (orphan_temp, orphan_preview, referenced_preview, user_target, weird_name):
         _make_old_file(path)
 
     created = storage.create_temp_file("kept.pdf", b"%PDF-1.4\n%%EOF\n", "cafebabe" * 8, "document")
@@ -48,18 +49,20 @@ def test_cleanup_orphaned_uploads_only_touches_internal_temp_and_preview_files(t
     assert str(orphan_preview) in touched_paths
     assert str(referenced_preview) not in touched_paths
     assert str(user_target) not in touched_paths
+    assert str(weird_name) not in touched_paths
     assert not orphan_temp.exists()
     assert not orphan_preview.exists()
     assert kept_temp_path.exists()
     assert referenced_preview.exists()
     assert user_target.exists()
+    assert weird_name.exists()
     assert touched_paths[str(orphan_temp)]["status"] == "deleted"
     assert touched_paths[str(orphan_preview)]["status"] == "deleted"
 
 
 def test_cleanup_orphaned_uploads_reports_permission_error_clearly(monkeypatch, tmp_path: Path):
     storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
-    blocked_temp = tmp_path / "uploads" / "deadbeef_blocked.pdf"
+    blocked_temp = tmp_path / "uploads" / ("c" * 64 + "_" + "d" * 32 + "_blocked.pdf")
     _make_old_file(blocked_temp)
 
     original_unlink = Path.unlink

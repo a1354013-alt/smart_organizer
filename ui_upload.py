@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
+from core_utils import FileUtils
 from i18n import t
 from services import UploadedFileData, analyze_upload_batch
 from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES
@@ -17,6 +19,7 @@ from ui_common import (
     safe_display_text,
 )
 from ui_state import reset_review_state
+from upload_validation import validate_upload_batch
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +48,34 @@ def validate_upload_batch_limits(
     max_file_bytes: int,
     max_batch_bytes: int,
 ) -> list[str]:
+    display_by_safe_name = {
+        FileUtils.sanitize_filename(Path(str(getattr(uploaded_file, "name", "uploaded file"))).name): safe_display_text(
+            getattr(uploaded_file, "name", "uploaded file")
+        )
+        for uploaded_file in uploaded_files
+    }
+    size_by_safe_name = {
+        FileUtils.sanitize_filename(Path(str(getattr(uploaded_file, "name", "uploaded file"))).name): _uploaded_file_size(uploaded_file)
+        for uploaded_file in uploaded_files
+    }
+    validation = validate_upload_batch(
+        [(getattr(uploaded_file, "name", "uploaded file"), _uploaded_file_size(uploaded_file)) for uploaded_file in uploaded_files],
+        max_file_bytes=max_file_bytes,
+        max_batch_bytes=max_batch_bytes,
+    )
     errors: list[str] = []
-    total = 0
-    for uploaded_file in uploaded_files:
-        size = _uploaded_file_size(uploaded_file)
-        total += size
-        name = safe_display_text(getattr(uploaded_file, "name", "uploaded file"))
-        if size > max_file_bytes:
-            errors.append(t("upload.limit_file", name=name, size=format_bytes(size), max_size=format_bytes(max_file_bytes)))
-    if total > max_batch_bytes:
-        errors.append(t("upload.limit_batch", size=format_bytes(total), max_size=format_bytes(max_batch_bytes)))
+    for error in validation.errors:
+        if error.code == "file_too_large":
+            errors.append(
+                t(
+                    "upload.limit_file",
+                    name=display_by_safe_name.get(error.filename, safe_display_text(error.filename)),
+                    size=format_bytes(size_by_safe_name.get(error.filename, 0)),
+                    max_size=format_bytes(max_file_bytes),
+                )
+            )
+        elif error.code == "batch_too_large":
+            errors.append(t("upload.limit_batch", size=format_bytes(validation.total_bytes), max_size=format_bytes(max_batch_bytes)))
     return errors
 
 

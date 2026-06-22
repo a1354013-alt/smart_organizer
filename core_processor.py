@@ -15,7 +15,7 @@ from core_classification import sync_manual_topic as _sync_manual_topic
 from core_utils import FileUtils
 from processors.dependency_status import build_dependency_status
 from processors.image_processor import OCRImageResult, get_photo_date, ocr_image
-from processors.llm_summary import generate_llm_summary
+from processors.llm_summary import generate_llm_summary, generate_llm_summary_result
 from processors.metadata_contract import build_invalid_video_metadata, build_metadata_payload
 from processors.optional_deps import (
     Image,
@@ -251,7 +251,12 @@ class FileProcessor:
                 video = video_meta
 
                 started = time.perf_counter()
-                thumb, thumb_error = self._generate_video_thumbnail(file_path, thumb_percent=0.5, timeout_seconds=thumb_timeout)
+                thumb, thumb_error = self._generate_video_thumbnail(
+                    file_path,
+                    thumb_percent=0.5,
+                    timeout_seconds=thumb_timeout,
+                    duration_seconds=video_meta.get("duration_seconds"),
+                )
                 _record("video_thumbnail", started)
                 if thumb:
                     preview_path = thumb
@@ -407,12 +412,19 @@ class FileProcessor:
             run_video_subprocess=lambda cmd, timeout: _run_video_subprocess(cmd, timeout_seconds=timeout),
         )
 
-    def _generate_video_thumbnail(self, file_path: str, thumb_percent: float = 0.5, timeout_seconds: int = 10) -> tuple[str | None, str | None]:
+    def _generate_video_thumbnail(
+        self,
+        file_path: str,
+        thumb_percent: float = 0.5,
+        timeout_seconds: int = 10,
+        duration_seconds: float | None = None,
+    ) -> tuple[str | None, str | None]:
         return generate_video_thumbnail(
             file_path,
             ffmpeg_available=is_ffmpeg_available(),
             timeout_seconds=timeout_seconds,
             thumb_percent=thumb_percent,
+            duration_seconds=duration_seconds,
         )
 
     def _extract_pdf_text_with_timeout(self, file_path: str, *, max_pages: int, timeout_seconds: int) -> tuple[bool, str | None, str | None]:
@@ -443,6 +455,16 @@ class FileProcessor:
 
     def get_llm_summary(self, text: str, file_type: str, enabled: bool = False) -> tuple[str | None, list[str]]:
         return generate_llm_summary(
+            text,
+            file_type=file_type,
+            enabled=enabled,
+            openai_client_class=OpenAI,
+            model=self.model,
+            timeout_seconds=self.openai_timeout_seconds,
+        )
+
+    def get_llm_summary_result(self, text: str, file_type: str, enabled: bool = False) -> dict[str, object]:
+        return generate_llm_summary_result(
             text,
             file_type=file_type,
             enabled=enabled,

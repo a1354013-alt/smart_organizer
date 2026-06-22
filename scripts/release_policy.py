@@ -39,6 +39,8 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "contracts.py",
         "frontend_safety.py",
         "logging_config.py",
+        "topic_taxonomy.py",
+        "upload_validation.py",
         "version.py",
         "i18n.py",
     ),
