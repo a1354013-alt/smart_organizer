@@ -439,7 +439,7 @@ def _apply_malware_scan_results(
     max_database_age_days: int,
 ) -> list[str]:
     notes: list[str] = []
-    candidate_records = [record for record in records if record.candidate_reasons]
+    candidate_records = [record for record in records if record.candidate_reasons and not record.is_symlink]
     clamav_status: ClamAvStatus = get_clamav_status(max_database_age_days)
     if clamav_status.message:
         notes.append(f"ClamAV: {clamav_status.message}")
@@ -509,10 +509,19 @@ def _operation_reason_text(record: dict[str, object]) -> str:
 def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: int, large_file_bytes: int) -> None:
     name_counts: dict[str, int] = {}
     for record in records:
+        if record.is_symlink:
+            continue
         duplicate_key = _normalize_duplicate_name(record.path)
         name_counts[duplicate_key] = name_counts.get(duplicate_key, 0) + 1
 
     for record in records:
+        if record.is_symlink:
+            record.confidence = 0.0
+            record.risk_level = RiskLevel.DO_NOT_TOUCH.value
+            record.reason_codes = _reason_codes(record.candidate_reasons)
+            record.category = "symlink"
+            record.recommendation = Recommendation.DO_NOT_TOUCH.value
+            continue
         duplicate_key = _normalize_duplicate_name(record.path)
         duplicate_count = name_counts.get(duplicate_key, 0)
         (
@@ -569,6 +578,8 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
     notes: list[str] = []
     buckets: dict[tuple[str, str, int], list[FolderScanRecord]] = defaultdict(list)
     for record in records:
+        if record.is_symlink:
+            continue
         if record.duplicate_type == SAME_CONTENT_DUPLICATE:
             continue
         buckets[_similar_name_bucket_key(record)].append(record)
