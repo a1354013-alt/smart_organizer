@@ -8,6 +8,7 @@ from typing import cast
 import folder_organizer
 from folder_models import QUARANTINE_DIRNAME, ScanPathError
 from folder_organizer import (
+    LARGE_FILE_DEEP_COMPARE_MESSAGE,
     SIMILAR_NAME_COMPARISON_LIMIT,
     list_quarantine_items,
     restore_quarantined_items,
@@ -381,6 +382,7 @@ def test_run_folder_organizer_skips_blocked_malware_statuses(tmp_path: Path):
     blocked_statuses = [
         "scanner_unavailable",
         "database_missing",
+        "database_outdated",
         "timeout",
         "error",
         "suspicious",
@@ -404,7 +406,7 @@ def test_run_folder_organizer_skips_blocked_malware_statuses(tmp_path: Path):
                 "malware_message": f"{status} for test",
             }
         )
-    scan: dict[str, object] = {"path": str(tmp_path), "records": records}
+    scan: dict[str, object] = {"path": str(tmp_path), "records": records, "enable_malware_scan": True}
 
     result = run_folder_organizer(scan, selected, dry_run=False)
 
@@ -414,6 +416,63 @@ def test_run_folder_organizer_skips_blocked_malware_statuses(tmp_path: Path):
     assert {row["malware_status"] for row in rows} == set(blocked_statuses)
     assert all(row["status"] == "SKIPPED" for row in rows)
     assert all((tmp_path / f"{status}.txt").exists() for status in blocked_statuses)
+
+
+def test_run_folder_organizer_blocks_not_scanned_when_malware_scan_enabled(tmp_path: Path):
+    target = tmp_path / "pending.txt"
+    target.write_text("pending", encoding="utf-8")
+    scan = {
+        "path": str(tmp_path),
+        "records": [
+            {
+                "path": str(target),
+                "name": target.name,
+                "candidate_reasons": ["stale"],
+                "size_bytes": target.stat().st_size,
+                "mtime": "2026-06-15T00:00:00+00:00",
+                "malware_status": "not_scanned",
+                "malware_scanner": "",
+                "malware_message": "",
+            }
+        ],
+        "enable_malware_scan": True,
+    }
+
+    result = run_folder_organizer(scan, [str(target)], dry_run=False)
+
+    row = cast(list[dict[str, object]], result["results"])[0]
+    assert result["summary"]["skipped"] == 1
+    assert row["status"] == "SKIPPED"
+    assert "skip it until the scan status is clean" in str(row["error_message"])
+    assert target.exists()
+
+
+def test_large_files_skip_deep_hash_by_default(monkeypatch, tmp_path: Path):
+    first = tmp_path / "a.bin"
+    second = tmp_path / "b.bin"
+    first.write_bytes(b"a" * 32)
+    second.write_bytes(b"a" * 32)
+    calls: list[Path] = []
+
+    def fake_hash(path_obj: Path, *, chunk_size: int = 1024 * 1024):
+        del chunk_size
+        calls.append(path_obj)
+        return "hash", None
+
+    monkeypatch.setattr("folder_organizer._hash_file", fake_hash)
+
+    scan = scan_local_folder(
+        str(tmp_path),
+        recursive=False,
+        max_files=10,
+        stale_days=0,
+        large_file_bytes=1,
+    )
+    records = cast(list[dict[str, object]], scan["records"])
+
+    assert calls == []
+    assert all(row.get("duplicate_type") is None for row in records)
+    assert any(LARGE_FILE_DEEP_COMPARE_MESSAGE in cast(list[str], row["candidate_reasons"]) for row in records)
 
 
 def test_restore_quarantined_items_rejects_tampered_manifest_paths(tmp_path: Path):

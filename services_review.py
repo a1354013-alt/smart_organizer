@@ -45,6 +45,8 @@ def apply_manual_topic_override(
         preview_path=result.preview_path,
         is_scanned=result.is_scanned,
         summary=summary if summary is not None else result.summary,
+        summary_status=result.summary_status,
+        summary_error=result.summary_error,
         manual_override=manual,
         analysis_status=result.analysis_status,
         last_error=result.last_error,
@@ -78,6 +80,8 @@ def _clone_analysis_result(result: AnalysisResult) -> AnalysisResult:
         preview_path=result.preview_path,
         is_scanned=result.is_scanned,
         summary=result.summary,
+        summary_status=result.summary_status,
+        summary_error=result.summary_error,
         manual_override=bool(result.manual_override),
         analysis_status=result.analysis_status,
         last_error=result.last_error,
@@ -134,8 +138,26 @@ def generate_summary_suggestion(
     enabled: bool = True,
 ) -> SummarySuggestion:
     text = (result.metadata or {}).get("extracted_text", "") or ""
-    summary, tags = processor.get_llm_summary(text, result.file_type, enabled=enabled)
-    suggestion = SummarySuggestion(summary=str(summary or ""), llm_tags=list(tags or []))
+    summary: str | None
+    tags: list[str]
+    if hasattr(processor, "get_llm_summary_result"):
+        payload = processor.get_llm_summary_result(text, result.file_type, enabled=enabled)
+        summary_obj = payload.get("summary")
+        summary = str(summary_obj) if isinstance(summary_obj, str) else ""
+        tags_obj = payload.get("tags") or []
+        tags = list(tags_obj) if isinstance(tags_obj, list) else []
+        status = str(payload.get("status") or "ok")
+        error = str(payload.get("error") or "").strip() or None
+    else:
+        summary, tags = processor.get_llm_summary(text, result.file_type, enabled=enabled)
+        status = "ok" if summary else "disabled"
+        error = None
+    suggestion = SummarySuggestion(
+        summary=str(summary or ""),
+        llm_tags=list(tags or []),
+        status=status,
+        error=error,
+    )
     logger.info(
         "generate_summary_suggestion%s",
         _log_context(

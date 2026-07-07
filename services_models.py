@@ -35,6 +35,8 @@ class AnalysisResult:
     preview_path: str | None
     is_scanned: bool
     summary: str | None = None
+    summary_status: str | None = None
+    summary_error: str | None = None
     manual_override: bool = False
     analysis_status: str = "OK"  # "OK" | "WARNING" | "PARTIAL"
     last_error: str | None = None
@@ -54,6 +56,8 @@ class ExecutionResult:
 class SummarySuggestion:
     summary: str
     llm_tags: list[str]
+    status: str = "ok"
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,7 @@ from core_utils import FileUtils
 logger = logging.getLogger(__name__)
 
 
-def generate_llm_summary(
+def generate_llm_summary_result(
     text: str,
     *,
     file_type: str,
@@ -18,16 +18,26 @@ def generate_llm_summary(
     openai_client_class: Any,
     model: str,
     timeout_seconds: int,
-) -> tuple[str | None, list[str]]:
+) -> dict[str, object]:
     note = None
     if not enabled:
-        return None, []
+        return {"summary": None, "tags": [], "status": "disabled", "error": None}
     if openai_client_class is None:
-        return "OpenAI SDK is unavailable. Install the optional dependency to enable AI summaries.", []
+        return {
+            "summary": None,
+            "tags": [],
+            "status": "failed",
+            "error": "OpenAI SDK is unavailable. Install the optional dependency to enable AI summaries.",
+        }
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
-        return "OPENAI_API_KEY is not configured, so AI summaries are disabled.", []
+        return {
+            "summary": None,
+            "tags": [],
+            "status": "disabled",
+            "error": "OPENAI_API_KEY is not configured, so AI summaries are disabled.",
+        }
 
     max_chars = int(os.getenv("LLM_TRUNCATE_CHARS") or FileUtils.DEFAULT_LLM_TRUNCATE_CHARS)
     truncated, was_truncated = FileUtils.truncate_text(text, max_chars)
@@ -60,10 +70,34 @@ def generate_llm_summary(
         normalized_tags = [str(tag).strip() for tag in tags if str(tag).strip()][:10]
         if note and note not in summary:
             summary = f"{summary} {note}"
-        return summary, normalized_tags
+        return {"summary": summary, "tags": normalized_tags, "status": "ok", "error": None}
     except Exception:
         logger.error("LLM summary generation failed", exc_info=True)
         message = "AI summary generation failed. Please review the logs for details."
         if note:
             message = f"{message} {note}"
-        return message, []
+        return {"summary": None, "tags": [], "status": "failed", "error": message}
+
+
+def generate_llm_summary(
+    text: str,
+    *,
+    file_type: str,
+    enabled: bool,
+    openai_client_class: Any,
+    model: str,
+    timeout_seconds: int,
+) -> tuple[str | None, list[str]]:
+    result = generate_llm_summary_result(
+        text,
+        file_type=file_type,
+        enabled=enabled,
+        openai_client_class=openai_client_class,
+        model=model,
+        timeout_seconds=timeout_seconds,
+    )
+    tags_obj = result.get("tags") or []
+    tags = list(tags_obj) if isinstance(tags_obj, list) else []
+    summary_obj = result.get("summary")
+    summary = str(summary_obj) if isinstance(summary_obj, str) else None
+    return summary, tags

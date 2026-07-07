@@ -66,6 +66,12 @@ MALWARE_FILE_BLOCK_MESSAGE = (
     "This file does not have a confirmed clean malware scan status. "
     "Smart Organizer will skip it until the scan status is clean."
 )
+SYMLINK_BLOCK_MESSAGE = (
+    "This path is a symbolic link. Smart Organizer skips symlinks by default for safety."
+)
+LARGE_FILE_DEEP_COMPARE_MESSAGE = (
+    "Large-file duplicate hashing was skipped. Enable deep compare to verify same-content duplicates."
+)
 
 
 def _resolve_path(path_value: Path | str) -> Path:
@@ -295,10 +301,18 @@ def _hash_file(path_obj: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str | 
     return digest.hexdigest(), None
 
 
-def _classify_duplicates(records: list[FolderScanRecord]) -> None:
+def _classify_duplicates(
+    records: list[FolderScanRecord],
+    *,
+    large_file_bytes: int,
+    deep_compare_large_files: bool,
+) -> list[str]:
+    notes: list[str] = []
     by_name: dict[str, list[FolderScanRecord]] = {}
     by_size: dict[int, list[FolderScanRecord]] = {}
     for record in records:
+        if record.is_symlink:
+            continue
         exact_name = Path(record.path).name.lower()
         by_name.setdefault(exact_name, []).append(record)
         by_size.setdefault(record.size_bytes, []).append(record)
@@ -308,6 +322,13 @@ def _classify_duplicates(records: list[FolderScanRecord]) -> None:
         if len(grouped_records) < 2:
             continue
         for record in grouped_records:
+            if record.size_bytes >= int(large_file_bytes) and not deep_compare_large_files:
+                if LARGE_FILE_DEEP_COMPARE_MESSAGE not in record.candidate_reasons:
+                    record.candidate_reasons.append(LARGE_FILE_DEEP_COMPARE_MESSAGE)
+                if not record.duplicate_reason:
+                    record.duplicate_reason = LARGE_FILE_DEEP_COMPARE_MESSAGE
+                notes.append(LARGE_FILE_DEEP_COMPARE_MESSAGE)
+                continue
             file_hash, hash_error = _hash_file(Path(record.path))
             if hash_error:
                 if not record.duplicate_reason:
@@ -336,6 +357,7 @@ def _classify_duplicates(records: list[FolderScanRecord]) -> None:
                 record.duplicate_reason = reason
                 if reason not in record.candidate_reasons:
                     record.candidate_reasons.append(reason)
+    return list(dict.fromkeys(notes))
 
 
 def _extension_risk_score(suffix: str) -> float:
@@ -417,7 +439,7 @@ def _apply_malware_scan_results(
     max_database_age_days: int,
 ) -> list[str]:
     notes: list[str] = []
-    candidate_records = [record for record in records if record.candidate_reasons]
+    candidate_records = [record for record in records if record.candidate_reasons and not record.is_symlink]
     clamav_status: ClamAvStatus = get_clamav_status(max_database_age_days)
     if clamav_status.message:
         notes.append(f"ClamAV: {clamav_status.message}")
@@ -463,7 +485,8 @@ def _operation_malware_payload(record: dict[str, object]) -> dict[str, str]:
 
 def _malware_block_message(record: dict[str, object]) -> str | None:
     status = str(record.get("malware_status") or "")
-    if not is_malware_blocked_status(status):
+    enforce_malware_scan = bool(record.get("_enable_malware_scan"))
+    if not is_malware_blocked_status(status, enable_malware_scan=enforce_malware_scan):
         return None
     if status == "infected":
         return INFECTED_FILE_BLOCK_MESSAGE
@@ -484,13 +507,21 @@ def _operation_reason_text(record: dict[str, object]) -> str:
 
 
 def _apply_explainable_scoring(records: list[FolderScanRecord], *, stale_days: int, large_file_bytes: int) -> None:
-    _classify_duplicates(records)
     name_counts: dict[str, int] = {}
     for record in records:
+        if record.is_symlink:
+            continue
         duplicate_key = _normalize_duplicate_name(record.path)
         name_counts[duplicate_key] = name_counts.get(duplicate_key, 0) + 1
 
     for record in records:
+        if record.is_symlink:
+            record.confidence = 0.0
+            record.risk_level = RiskLevel.DO_NOT_TOUCH.value
+            record.reason_codes = _reason_codes(record.candidate_reasons)
+            record.category = "symlink"
+            record.recommendation = Recommendation.DO_NOT_TOUCH.value
+            continue
         duplicate_key = _normalize_duplicate_name(record.path)
         duplicate_count = name_counts.get(duplicate_key, 0)
         (
@@ -547,6 +578,8 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
     notes: list[str] = []
     buckets: dict[tuple[str, str, int], list[FolderScanRecord]] = defaultdict(list)
     for record in records:
+        if record.is_symlink:
+            continue
         if record.duplicate_type == SAME_CONTENT_DUPLICATE:
             continue
         buckets[_similar_name_bucket_key(record)].append(record)
@@ -596,6 +629,7 @@ def scan_local_folder(
     max_files: int,
     stale_days: int,
     large_file_bytes: int = 250 * 1024 * 1024,
+    deep_compare_large_files: bool = False,
     enable_malware_scan: bool = False,
     malware_scan_timeout_seconds: int = 30,
     malware_database_max_age_days: int = 7,
@@ -637,6 +671,7 @@ def scan_local_folder(
                 atime=atime.isoformat(),
                 days_since_access=age_days,
                 file_kind=infer_local_file_kind(str(path_obj)),
+                is_symlink=False,
                 is_stale=stale_age_days is not None,
                 is_large=int(stat_result.st_size) >= int(large_file_bytes),
                 candidate_reasons=reasons,
@@ -653,14 +688,51 @@ def scan_local_folder(
     if recursive:
         walker = os.walk(str(root), topdown=True, onerror=on_walk_error)
         for dirpath, dirnames, filenames in walker:
-            dirnames[:] = [name for name in dirnames if name != QUARANTINE_DIRNAME]
+            kept_dirnames: list[str] = []
+            for name in dirnames:
+                if name == QUARANTINE_DIRNAME:
+                    continue
+                dir_path = Path(dirpath) / name
+                try:
+                    if dir_path.is_symlink():
+                        notes.append(f"Skipped symlink directory for safety: {dir_path}")
+                        continue
+                except OSError:
+                    notes.append(f"Skipped unreadable directory entry: {dir_path}")
+                    continue
+                kept_dirnames.append(name)
+            dirnames[:] = kept_dirnames
             for filename in filenames:
                 if scanned >= int(max_files):
                     break
                 path_obj = Path(dirpath) / filename
                 visited += 1
                 try:
-                    append_record(path_obj, path_obj.stat())
+                    stat_result = path_obj.lstat()
+                    if path_obj.is_symlink():
+                        records.append(
+                            FolderScanRecord(
+                                path=str(path_obj),
+                                name=path_obj.name,
+                                ext=path_obj.suffix.lower(),
+                                size_bytes=int(stat_result.st_size),
+                                mtime=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC).isoformat(),
+                                atime=datetime.datetime.fromtimestamp(stat_result.st_atime, tz=datetime.UTC).isoformat(),
+                                days_since_access=0,
+                                file_kind=infer_local_file_kind(str(path_obj)),
+                                is_symlink=True,
+                                is_stale=False,
+                                is_large=False,
+                                candidate_reasons=[SYMLINK_BLOCK_MESSAGE],
+                                recommendation=Recommendation.DO_NOT_TOUCH.value,
+                                category="symlink",
+                                duplicate_reason=SYMLINK_BLOCK_MESSAGE,
+                                risk_level=RiskLevel.DO_NOT_TOUCH.value,
+                            )
+                        )
+                        scanned += 1
+                        continue
+                    append_record(path_obj, stat_result)
                 except PermissionError:
                     errors.append(f"Permission denied: {path_obj}")
                 except FileNotFoundError:
@@ -674,11 +746,38 @@ def scan_local_folder(
             for entry in os.scandir(str(root)):
                 if scanned >= int(max_files):
                     break
-                if not entry.is_file():
+                try:
+                    if entry.is_symlink():
+                        stat_result = entry.stat(follow_symlinks=False)
+                        records.append(
+                            FolderScanRecord(
+                                path=str(Path(entry.path)),
+                                name=entry.name,
+                                ext=Path(entry.name).suffix.lower(),
+                                size_bytes=int(stat_result.st_size),
+                                mtime=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC).isoformat(),
+                                atime=datetime.datetime.fromtimestamp(stat_result.st_atime, tz=datetime.UTC).isoformat(),
+                                days_since_access=0,
+                                file_kind=infer_local_file_kind(entry.path),
+                                is_symlink=True,
+                                is_stale=False,
+                                is_large=False,
+                                candidate_reasons=[SYMLINK_BLOCK_MESSAGE],
+                                recommendation=Recommendation.DO_NOT_TOUCH.value,
+                                category="symlink",
+                                duplicate_reason=SYMLINK_BLOCK_MESSAGE,
+                                risk_level=RiskLevel.DO_NOT_TOUCH.value,
+                            )
+                        )
+                        scanned += 1
+                        continue
+                except OSError:
+                    continue
+                if not entry.is_file(follow_symlinks=False):
                     continue
                 visited += 1
                 try:
-                    append_record(Path(entry.path), entry.stat())
+                    append_record(Path(entry.path), entry.stat(follow_symlinks=False))
                 except PermissionError:
                     errors.append(f"Permission denied: {entry.path}")
                 except FileNotFoundError:
@@ -690,7 +789,13 @@ def scan_local_folder(
         except OSError as exc:
             errors.append(f"Failed to scan {root}: {exc}")
 
+    duplicate_notes = _classify_duplicates(
+        records,
+        large_file_bytes=int(large_file_bytes),
+        deep_compare_large_files=bool(deep_compare_large_files),
+    )
     _apply_explainable_scoring(records, stale_days=int(stale_days), large_file_bytes=int(large_file_bytes))
+    notes.extend(duplicate_notes)
     notes.extend(_apply_similar_name_detection(records))
     if enable_malware_scan:
         notes.extend(
@@ -716,6 +821,7 @@ def scan_local_folder(
         max_files=int(max_files),
         stale_days=int(stale_days),
         large_file_bytes=int(large_file_bytes),
+        enable_malware_scan=bool(enable_malware_scan),
         scanned_at=iso_now(),
         elapsed_seconds=round(time.perf_counter() - started, 3),
         records=records,
@@ -739,6 +845,7 @@ def run_folder_organizer(
     }
     operation_id = uuid.uuid4().hex
     results: list[FolderOperationRow] = []
+    enable_malware_scan = bool(scan_result.get("enable_malware_scan"))
     with quarantine_manifest_guard(root):
         manifest = recover_quarantine_manifest(str(root))
         manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
@@ -769,7 +876,11 @@ def run_folder_organizer(
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
             malware_payload = _operation_malware_payload(record)
-            malware_block_message = _malware_block_message(record)
+            record_with_policy = dict(record)
+            record_with_policy["_enable_malware_scan"] = enable_malware_scan
+            malware_block_message = _malware_block_message(record_with_policy)
+            if bool(record.get("is_symlink")):
+                malware_block_message = SYMLINK_BLOCK_MESSAGE
             if malware_block_message is not None:
                 results.append(
                     FolderOperationRow(

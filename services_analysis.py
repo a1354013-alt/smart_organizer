@@ -12,6 +12,8 @@ from core import FileProcessor
 from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo, UploadedFileData
 from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES, StorageManager
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
+from topic_taxonomy import normalize_topic_key
+from upload_validation import validate_upload_batch
 
 logger = logging.getLogger(__name__)
 
@@ -130,11 +132,11 @@ def analyze_one_upload(
             err = f"classify failed: {type(exc).__name__}: {exc}"
             last_error = err if not last_error else f"{last_error} | {err}"
             if metadata.get("file_type") == "photo":
-                main_topic = "Photos"
+                main_topic = "photo.other"
             elif metadata.get("file_type") == "video":
-                main_topic = "Videos"
+                main_topic = "video.unclassified"
             else:
-                main_topic = "Documents"
+                main_topic = "document.other"
             tag_scores = {}
             classification_reason = err
 
@@ -155,14 +157,16 @@ def analyze_one_upload(
                 original_name=uploaded.name,
                 file_type=metadata.get("file_type") or "unknown",
                 standard_date=metadata.get("standard_date") or "",
-                main_topic=main_topic,
-                suggested_main_topic=main_topic,
+                main_topic=normalize_topic_key(main_topic),
+                suggested_main_topic=normalize_topic_key(main_topic),
                 tag_scores=dict(tag_scores or {}),
                 classification_reason=classification_reason or "",
                 final_decision_reason="Auto-classified from metadata and filename signals.",
                 metadata=metadata,
                 preview_path=metadata.get("preview_path"),
                 is_scanned=bool(metadata.get("is_scanned", False)),
+                summary_status=None,
+                summary_error=None,
                 analysis_status=analysis_status,
                 last_error=last_error,
                 step_timings=step_timings,
@@ -189,19 +193,29 @@ def analyze_upload_batch(
     results: list[AnalysisResult] = []
     duplicates: list[DuplicateInfo] = []
     errors: list[str] = []
-    batch_size = sum(len(upload.content) for upload in upload_list)
+    validation = validate_upload_batch(
+        [(upload.name, len(upload.content)) for upload in upload_list],
+        max_file_bytes=MAX_UPLOAD_BYTES,
+        max_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
+    )
 
-    if batch_size > MAX_UPLOAD_BATCH_BYTES:
-        errors.append(
-            f"Batch size {batch_size} bytes exceeds the upload batch limit of {MAX_UPLOAD_BATCH_BYTES} bytes."
-        )
+    batch_level_errors = [error.detail for error in validation.errors if error.code == "batch_too_large"]
+    if batch_level_errors:
+        errors.extend(batch_level_errors)
         return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=errors)
 
     for index, uploaded in enumerate(upload_list, start=1):
-        if len(uploaded.content) > MAX_UPLOAD_BYTES:
-            errors.append(
-                f"{uploaded.name}: file size {len(uploaded.content)} bytes exceeds the per-file limit of {MAX_UPLOAD_BYTES} bytes."
-            )
+        upload_errors = [
+            error.detail
+            for error in validate_upload_batch(
+                [(uploaded.name, len(uploaded.content))],
+                max_file_bytes=MAX_UPLOAD_BYTES,
+                max_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
+            ).errors
+            if error.code != "batch_too_large"
+        ]
+        if upload_errors:
+            errors.extend(upload_errors)
             continue
         if progress_callback is not None:
             progress_callback(index, total, uploaded)
@@ -244,9 +258,28 @@ def analyze_upload_batch_async(
     results: list[AnalysisResult] = []
     duplicates: list[DuplicateInfo] = []
     errors: list[str] = []
+    validation = validate_upload_batch(
+        [(upload.name, len(upload.content)) for upload in upload_list],
+        max_file_bytes=MAX_UPLOAD_BYTES,
+        max_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
+    )
+    batch_level_errors = [error.detail for error in validation.errors if error.code == "batch_too_large"]
+    if batch_level_errors:
+        return BatchAnalysisOutcome(results=results, duplicates=duplicates, errors=batch_level_errors)
 
     def process_single(uploaded: UploadedFileData) -> tuple[AnalysisResult | None, DuplicateInfo | None, str | None]:
         try:
+            upload_errors = [
+                error.detail
+                for error in validate_upload_batch(
+                    [(uploaded.name, len(uploaded.content))],
+                    max_file_bytes=MAX_UPLOAD_BYTES,
+                    max_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
+                ).errors
+                if error.code != "batch_too_large"
+            ]
+            if upload_errors:
+                return None, None, " | ".join(upload_errors)
             return analyze_one_upload(
                 uploaded,
                 processor=processor,

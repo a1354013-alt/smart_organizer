@@ -22,7 +22,9 @@ def test_record_exports_escape_markdown_and_csv_fields():
             "file_id": 1,
             "original_name": 'bad|name,\n"quoted".txt',
             "file_type": "document",
-            "main_topic": "Topic",
+            "main_topic": "document.other",
+            "summary_status": "ok",
+            "summary_error": "",
             "status": "READY",
             "created_at": "2026-05-05T12:00:00+00:00",
             "last_error": "<script>alert(1)</script>",
@@ -42,6 +44,7 @@ def test_record_exports_escape_markdown_and_csv_fields():
     assert "<script>alert(1)</script>" in markdown_payload
     assert rows[0]["original_name"] == 'bad|name,\n"quoted".txt'
     assert rows[0]["last_error"] == "<script>alert(1)</script>"
+    assert rows[0]["main_topic"] == "其他文件"
     assert escape_display_text("<script>") == "&lt;script&gt;"
 
 
@@ -72,7 +75,9 @@ def test_records_csv_has_stable_field_order_and_escapes_chinese_content():
             "original_name": '合約,第一版\n"簽核".pdf',
             "file_type": "document",
             "standard_date": "2026-05-17",
-            "main_topic": "合約",
+            "main_topic": "document.contract",
+            "summary_status": "failed",
+            "summary_error": "boom",
             "all_tags": "重要,中文",
             "status": "PROCESSED",
             "manual_override": True,
@@ -92,6 +97,8 @@ def test_records_csv_has_stable_field_order_and_escapes_chinese_content():
         "file_type",
         "standard_date",
         "main_topic",
+        "summary_status",
+        "summary_error",
         "all_tags",
         "status",
         "manual_override",

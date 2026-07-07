@@ -6,6 +6,7 @@ from typing import Any
 
 from core import FileUtils
 from storage_base import SearchContentError
+from topic_taxonomy import normalize_topic_key, topic_display_label
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,8 @@ class StorageSearchMixin:
         score = 0.0
         if q_lower in (str(row_dict.get("original_name") or "")).lower():
             score += self._META_SCORE_ORIGINAL_NAME
-        if q_lower in (str(row_dict.get("main_topic") or "")).lower():
+        main_topic = str(row_dict.get("main_topic") or "")
+        if q_lower in main_topic.lower() or q_lower in topic_display_label(main_topic, locale="en").lower() or q_lower in topic_display_label(main_topic, locale="zh-TW").lower():
             score += self._META_SCORE_MAIN_TOPIC
         if q_lower in (str(row_dict.get("summary") or "")).lower():
             score += self._META_SCORE_SUMMARY
@@ -33,6 +35,7 @@ class StorageSearchMixin:
 
     def search_content(self: Any, query: str, limit: int = 50):
         q = (query or "").strip()
+        topic_query = normalize_topic_key(q)
         safe_query = FileUtils.escape_fts_query(q)
 
         if not safe_query or not safe_query.strip():
@@ -109,6 +112,7 @@ class StorageSearchMixin:
                     logger.warning("FTS tags 補查失敗（不影響主結果）: %s", tag_err)
 
             like = f"%{self._escape_like(q)}%"
+            topic_like = f"%{self._escape_like(topic_query)}%" if topic_query else like
             cursor.execute(
                 """
                 SELECT
@@ -126,7 +130,7 @@ class StorageSearchMixin:
                 ORDER BY f.created_at DESC
                 LIMIT ?
                 """,
-                (like, like, like, like, int(limit)),
+                (like, like, topic_like, topic_like, int(limit)),
             )
 
             q_lower = q.lower()

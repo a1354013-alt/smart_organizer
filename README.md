@@ -27,7 +27,7 @@ Upload limits:
 ## Recommended Python Version
 
 - Recommended: Python `3.11`
-- Supported and validated in CI: Python `3.11`, `3.12`, `3.13`
+- Supported and validated in CI: Python `3.11`, `3.12`
 
 ## Core Workflow
 
@@ -45,7 +45,7 @@ flowchart LR
 - Local-first safety model: review signals before any move, quarantine instead of delete, and keep restore available.
 - Explainable organization: stale-file heuristics, duplicate-name detection, topic classification, and audit-friendly reports.
 - Resilient degraded fallback: missing `ffmpeg`, `poppler`, or `tesseract` should reduce optional capabilities, not crash the app.
-- Portfolio-ready engineering hygiene: typed Python, targeted tests, release validation, and CI coverage across Python `3.11`, `3.12`, and `3.13`.
+- Portfolio-ready engineering hygiene: typed Python, targeted tests, release validation, and CI coverage across Python `3.11` and `3.12`.
 
 ## Safe Organization Flow
 
@@ -215,7 +215,7 @@ python -m mypy --cache-dir=/dev/null
 python -m pytest -q
 ```
 
-GitHub Actions already validates the repository on Python `3.11`, `3.12`, and `3.13`.
+GitHub Actions already validates the repository on Python `3.11` and `3.12`.
 For the full source-repository validation flow, including cache-safe compilation and release packaging, follow `RUN_RELEASE.md` from the source repository before packaging an official release.
 
 ## Source Repository Release Validation

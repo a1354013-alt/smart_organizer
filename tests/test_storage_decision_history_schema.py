@@ -20,6 +20,8 @@ def test_fresh_db_has_decision_history_columns(tmp_path: Path):
     assert "decision_updated_at" in cols
     assert "last_manual_topic" in cols
     assert "last_manual_reason" in cols
+    assert "summary_status" in cols
+    assert "summary_error" in cols
 
 
 def test_migration_creates_repeatable_query_indexes(tmp_path: Path):

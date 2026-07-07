@@ -135,7 +135,12 @@ def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monk
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    preview, error = processor._generate_video_thumbnail(str(video_path), timeout_seconds=7)
+    preview, error = processor._generate_video_thumbnail(
+        str(video_path),
+        timeout_seconds=7,
+        thumb_percent=0.5,
+        duration_seconds=20.0,
+    )
 
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
@@ -144,10 +149,12 @@ def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monk
     assert cmd == [
         "ffmpeg",
         "-y",
+        "-ss",
+        "10.000",
         "-i",
         str(video_path),
         "-vf",
-        "thumbnail,scale=320:-1",
+        "scale=320:-1",
         "-frames:v",
         "1",
         "-q:v",
@@ -161,6 +168,39 @@ def test_generate_video_thumbnail_ffmpeg_command_uses_input_and_output_once(monk
     assert captured["encoding"] == "utf-8"
     assert captured["errors"] == "replace"
     assert captured["shell"] is False
+
+
+def test_generate_video_thumbnail_clamps_thumb_percent(monkeypatch, tmp_path: Path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake-video")
+    preview_base_path = tmp_path / "preview.png"
+    expected_preview_path = tmp_path / "preview.jpg"
+    processor = FileProcessor()
+    captured: list[list[str]] = []
+
+    core_processor.is_ffmpeg_available.cache_clear()
+    monkeypatch.setattr(core_processor, "is_ffmpeg_available", lambda: True)
+    monkeypatch.setattr(
+        core_processor.FileUtils,
+        "build_preview_path",
+        staticmethod(lambda _path: str(preview_base_path)),
+    )
+
+    def fake_run(cmd, capture_output, timeout, text, encoding, errors, shell):
+        del capture_output, timeout, text, encoding, errors, shell
+        captured.append(cmd)
+        expected_preview_path.write_bytes(b"jpg")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    processor._generate_video_thumbnail(str(video_path), thumb_percent=-1, duration_seconds=10.0)
+    processor._generate_video_thumbnail(str(video_path), thumb_percent=0.9, duration_seconds=10.0)
+    processor._generate_video_thumbnail(str(video_path), thumb_percent=9, duration_seconds=10.0)
+
+    assert captured[0][captured[0].index("-ss") + 1] == "0.000"
+    assert captured[1][captured[1].index("-ss") + 1] == "9.000"
+    assert captured[2][captured[2].index("-ss") + 1] == "10.000"
 
 
 def test_generate_video_thumbnail_falls_back_when_ffmpeg_unavailable(monkeypatch, tmp_path: Path):

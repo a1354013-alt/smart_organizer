@@ -52,6 +52,12 @@ def test_apply_manual_topic_override_updates_decision_fields_consistently():
 
 def test_generate_summary_suggestion_uses_service_boundary():
     class StubProcessor:
+        def get_llm_summary_result(self, text, file_type, enabled=True):
+            assert text == "invoice"
+            assert file_type == "document"
+            assert enabled is True
+            return {"summary": "short summary", "tags": ["invoice"], "status": "ok", "error": None}
+
         def get_llm_summary(self, text, file_type, enabled=True):
             assert text == "invoice"
             assert file_type == "document"
@@ -77,6 +83,43 @@ def test_generate_summary_suggestion_uses_service_boundary():
 
     assert suggestion.summary == "short summary"
     assert suggestion.llm_tags == ["invoice"]
+    assert suggestion.status == "ok"
+    assert suggestion.error is None
+
+
+def test_generate_summary_suggestion_preserves_failure_state_without_fake_summary():
+    class StubProcessor:
+        def get_llm_summary_result(self, text, file_type, enabled=True):
+            assert text == "invoice"
+            assert file_type == "document"
+            assert enabled is True
+            return {
+                "summary": None,
+                "tags": [],
+                "status": "failed",
+                "error": "AI summary generation failed.",
+            }
+
+    result = AnalysisResult(
+        file_id=4,
+        original_name="invoice.pdf",
+        file_type="document",
+        standard_date="2026-01-01",
+        main_topic="invoice",
+        suggested_main_topic="invoice",
+        tag_scores={"invoice": 1.0},
+        classification_reason="rule",
+        final_decision_reason="rule decision",
+        metadata=_metadata(),
+        preview_path=None,
+        is_scanned=False,
+    )
+
+    suggestion = generate_summary_suggestion(result, processor=StubProcessor())
+
+    assert suggestion.summary == ""
+    assert suggestion.status == "failed"
+    assert suggestion.error == "AI summary generation failed."
 
 
 def test_apply_manual_topic_override_preserves_analysis_diagnostics():

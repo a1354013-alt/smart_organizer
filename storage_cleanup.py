@@ -8,6 +8,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+CURRENT_TEMP_NAME_PREFIXES = ("preview_",)
+
 
 class StorageCleanupMixin:
     def refresh_file_locations(self: Any, fix_moving: bool = True):
@@ -105,8 +107,6 @@ class StorageCleanupMixin:
         if self._mem_files is not None:
             return []
 
-        import re
-
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -124,10 +124,13 @@ class StorageCleanupMixin:
             valid_hash_prefixes: set[str] = set()
             for temp_path, _final_path, preview_path, file_hash in cursor.fetchall():
                 if temp_path:
-                    valid_temp_paths.add(temp_path)
+                    normalized_temp = self._normalize_preview_path(temp_path) if str(temp_path).endswith((".png", ".jpg", ".jpeg")) else str(temp_path)
+                    valid_temp_paths.add(str(normalized_temp or temp_path))
                     valid_temp_names.add(Path(temp_path).name)
                 if preview_path:
-                    valid_preview_paths.add(preview_path)
+                    normalized_preview = self._normalize_preview_path(preview_path)
+                    if normalized_preview:
+                        valid_preview_paths.add(normalized_preview)
                 if file_hash:
                     valid_hash_prefixes.add(file_hash[:8].lower())
         except Exception as exc:
@@ -140,8 +143,6 @@ class StorageCleanupMixin:
         now = time.time()
         ttl_sec = preview_ttl_days * 24 * 3600
         actions: list[dict[str, object]] = []
-        temp_pattern = re.compile(r"^[a-f0-9]{8}_.+")
-
         for temp_file in self.upload_dir.glob("*"):
             if not temp_file.is_file():
                 continue
@@ -151,7 +152,23 @@ class StorageCleanupMixin:
             except OSError:
                 age_sec = 0
 
-            if age_sec <= 300 or not temp_pattern.match(temp_file.name) or temp_path in valid_temp_paths:
+            within_uploads = self._normalize_preview_path(temp_path)
+            is_current_temp_name = (
+                len(temp_file.name.split("_", 2)) >= 3
+                and len(temp_file.name.split("_", 2)[0]) == 64
+                and len(temp_file.name.split("_", 2)[1]) == 32
+            )
+            is_legacy_temp_name = (
+                "_" in temp_file.name
+                and len(temp_file.name.split("_", 1)[0]) == 8
+            )
+            if (
+                age_sec <= 300
+                or temp_path in valid_temp_paths
+                or within_uploads is None
+                or temp_file.name.startswith(CURRENT_TEMP_NAME_PREFIXES)
+                or not (is_current_temp_name or is_legacy_temp_name)
+            ):
                 continue
 
             if dry_run:
@@ -189,7 +206,9 @@ class StorageCleanupMixin:
         if preview_dir.exists():
             for pattern in ("*.png", "*.jpg", "*.jpeg"):
                 for preview_file in preview_dir.glob(pattern):
-                    preview_path = str(preview_file)
+                    preview_path = self._normalize_preview_path(preview_file)
+                    if preview_path is None:
+                        continue
                     try:
                         too_old = (now - preview_file.stat().st_mtime) > ttl_sec
                     except OSError:
