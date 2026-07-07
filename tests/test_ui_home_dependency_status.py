@@ -11,6 +11,7 @@ from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
     _candidate_row,
     _duplicate_type_label,
+    _render_candidate_editor,
     cache_dependency_status,
     get_cached_dependency_status,
     limit_candidate_rows,
@@ -277,3 +278,59 @@ def test_merge_visible_selection_clears_only_visible_rows():
     )
 
     assert merged == {"C:/scan/hidden.txt"}
+
+
+def test_candidate_editor_filters_not_scanned_when_malware_scan_enabled(monkeypatch):
+    session_state = {
+        "folder_selected_paths": ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"],
+    }
+    fake_st = SimpleNamespace(
+        session_state=session_state,
+        info=lambda *args, **kwargs: None,
+        caption=lambda *args, **kwargs: None,
+        columns=lambda *args, **kwargs: [_Column(), _Column(), _Column(), _Column()],
+        button=lambda *args, **kwargs: False,
+        markdown=lambda *args, **kwargs: None,
+        multiselect=lambda *args, **kwargs: ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"],
+        dataframe=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr("ui_home.st", fake_st)
+
+    selected = _render_candidate_editor(
+        SimpleNamespace(pandas=None),
+        [
+            {"path": "C:/scan/not-scanned.txt", "name": "not-scanned.txt", "malware_status": "not_scanned"},
+            {"path": "C:/scan/clean.txt", "name": "clean.txt", "malware_status": "clean"},
+        ],
+        enable_malware_scan=True,
+    )
+
+    assert selected == ["C:/scan/clean.txt"]
+
+
+def test_candidate_editor_allows_not_scanned_when_malware_scan_disabled(monkeypatch):
+    session_state = {
+        "folder_selected_paths": ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"],
+    }
+    fake_st = SimpleNamespace(
+        session_state=session_state,
+        info=lambda *args, **kwargs: None,
+        caption=lambda *args, **kwargs: None,
+        columns=lambda *args, **kwargs: [_Column(), _Column(), _Column(), _Column()],
+        button=lambda *args, **kwargs: False,
+        markdown=lambda *args, **kwargs: None,
+        multiselect=lambda *args, **kwargs: ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"],
+        dataframe=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr("ui_home.st", fake_st)
+
+    selected = _render_candidate_editor(
+        SimpleNamespace(pandas=None),
+        [
+            {"path": "C:/scan/not-scanned.txt", "name": "not-scanned.txt", "malware_status": "not_scanned"},
+            {"path": "C:/scan/clean.txt", "name": "clean.txt", "malware_status": "clean"},
+        ],
+        enable_malware_scan=False,
+    )
+
+    assert selected == ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"]

@@ -130,7 +130,8 @@ def test_quarantine_move_restore_and_report(tmp_path: Path):
     preview = run_folder_organizer(scan, selected, dry_run=True)
     preview_summary = preview["summary"]
     assert isinstance(preview_summary, dict)
-    assert preview_summary["skipped"] == 1
+    assert preview_summary["preview"] == 1
+    assert preview["results"][0]["status"] == "PREVIEW"
 
     moved = run_folder_organizer(scan, selected, dry_run=False)
     moved_summary = moved["summary"]
@@ -180,7 +181,8 @@ def test_folder_dry_run_preserves_nested_quarantine_path_without_moving(tmp_path
     assert isinstance(rows, list)
     operation_id = cast(str, preview["operation_id"])
     expected = tmp_path / QUARANTINE_DIRNAME / operation_id / "sub" / "old.txt"
-    assert preview["summary"]["skipped"] == 1
+    assert preview["summary"]["preview"] == 1
+    assert rows[0]["status"] == "PREVIEW"
     assert rows[0]["new_path"] == str(expected)
     assert target.exists()
     assert not expected.exists()

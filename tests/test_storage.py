@@ -5,6 +5,7 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,101 @@ def test_create_temp_file_does_not_collide_when_hash_prefix_matches(tmp_path: Pa
     first_info = _require_record(storage.get_file_by_id(first["file_id"]))
     second_info = _require_record(storage.get_file_by_id(second["file_id"]))
     assert first_info["temp_path"] != second_info["temp_path"]
+
+
+def test_update_metadata_allows_preview_under_explicit_safe_roots(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    payload = _minimal_pdf_bytes()
+    created = storage.create_temp_file("safe-preview.pdf", payload, _sha256(payload), "document")
+    file_id = int(created["file_id"])
+
+    upload_preview = tmp_path / "uploads" / "previews" / "preview.png"
+    upload_preview.parent.mkdir(parents=True, exist_ok=True)
+    upload_preview.write_bytes(b"preview")
+
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-01-01",
+            "main_topic": "Docs",
+            "summary": "",
+            "is_scanned": False,
+            "preview_path": str(upload_preview),
+        },
+    )
+
+    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] == str(upload_preview)
+
+    repo_preview = tmp_path / "repo" / "previews" / "preview.png"
+    repo_preview.parent.mkdir(parents=True, exist_ok=True)
+    repo_preview.write_bytes(b"preview")
+
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-01-01",
+            "main_topic": "Docs",
+            "summary": "",
+            "is_scanned": False,
+            "preview_path": str(repo_preview),
+        },
+    )
+
+    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] == str(repo_preview)
+
+
+def test_update_metadata_rejects_preview_under_project_sibling_and_traversal(tmp_path: Path):
+    storage = StorageManager(str(tmp_path / "test.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    payload = _minimal_pdf_bytes()
+    created = storage.create_temp_file("unsafe-preview.pdf", payload, _sha256(payload), "document")
+    file_id = int(created["file_id"])
+
+    sibling_preview = tmp_path / "logs" / "preview.png"
+    sibling_preview.parent.mkdir(parents=True, exist_ok=True)
+    sibling_preview.write_bytes(b"preview")
+
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-01-01",
+            "main_topic": "Docs",
+            "summary": "",
+            "is_scanned": False,
+            "preview_path": str(sibling_preview),
+        },
+    )
+
+    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] in (None, "")
+
+    traversal_preview = tmp_path / "uploads" / ".." / "logs" / "preview.png"
+    storage.update_file_metadata(
+        file_id,
+        {
+            "standard_date": "2026-01-01",
+            "main_topic": "Docs",
+            "summary": "",
+            "is_scanned": False,
+            "preview_path": str(traversal_preview),
+        },
+    )
+
+    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] in (None, "")
+
+
+def test_mem_storage_file_map_operations_are_thread_safe():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    storage._mem_files["mem://uploads/source.bin"] = b"payload"
+
+    def worker(index: int) -> None:
+        dst = f"mem://repo/copy-{index}.bin"
+        storage._copy_path("mem://uploads/source.bin", dst)
+        assert storage._path_exists(dst)
+        storage._remove_path(dst)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(worker, range(32)))
+
+    assert storage._path_exists("mem://uploads/source.bin")
 
 
 def test_create_temp_file_keeps_temp_path_inside_upload_dir(tmp_path: Path):

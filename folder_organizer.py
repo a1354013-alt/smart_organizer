@@ -802,7 +802,7 @@ def run_folder_organizer(
                         FolderOperationRow(
                             original_path=str(original_path),
                             new_path=str(preview_destination),
-                            status="SKIPPED",
+                            status="PREVIEW",
                             reason=reasons,
                             duplicate_type=str(record.get("duplicate_type") or "") or None,
                             duplicate_reason=str(record.get("duplicate_reason") or "") or None,
@@ -923,6 +923,7 @@ def run_folder_organizer(
             success=sum(1 for item in results if item.status == "SUCCESS"),
             failed=sum(1 for item in results if item.status == "FAILED"),
             skipped=sum(1 for item in results if item.status == "SKIPPED"),
+            preview=sum(1 for item in results if item.status == "PREVIEW"),
         ),
     ).to_dict()
 

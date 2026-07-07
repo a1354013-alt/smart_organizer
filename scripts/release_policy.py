@@ -41,6 +41,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "logging_config.py",
         "version.py",
         "i18n.py",
+        "i18n_core.py",
     ),
     "storage_modules": (
         "storage.py",

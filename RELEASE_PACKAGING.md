@@ -30,7 +30,10 @@ It includes these runtime categories:
 - UI modules: `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_labels.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`
 - folder organizer modules: `folder_models.py`, `folder_organizer.py`, `folder_service.py`, `folder_report.py`
 - report export modules: `report_exports.py`
-- docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`
+- malware scanning and folder safety helpers: `malware_scanner.py`
+- upload validation, supported-format, and topic-classification helpers: `supported_formats.py`, `core_classification.py`, `ui_upload.py`
+- i18n runtime files: `i18n.py`, `i18n_core.py`, `locales/zh-TW.json`, `locales/en.json`
+- docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`, `docs/PORTFOLIO_CASE_STUDY.md`
 - requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
 - demo helper scripts: `scripts/create_demo_folder.py`
 - supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`

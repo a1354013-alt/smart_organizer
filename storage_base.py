@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import threading
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -49,6 +50,7 @@ class StorageBase:
         self.upload_dir = Path(upload_dir)
 
         self._mem_files: dict[str, bytes] | None = None
+        self._mem_files_lock = threading.RLock()
         if str(repo_root) == ":memory:" or str(upload_dir) == ":memory:":
             self._mem_files = {}
             self.repo_root = Path("mem://repo")
@@ -114,24 +116,28 @@ class StorageBase:
         if not path_value:
             return False
         if self._mem_files is not None and self._is_mem_path(path_value):
-            return str(path_value) in self._mem_files
+            with self._mem_files_lock:
+                return str(path_value) in self._mem_files
         return os.path.exists(str(path_value))
 
     def _move_path(self, src: str, dst: str) -> None:
         if self._mem_files is not None and self._is_mem_path(src) and self._is_mem_path(dst):
-            self._mem_files[dst] = self._mem_files.pop(src)
+            with self._mem_files_lock:
+                self._mem_files[dst] = self._mem_files.pop(src)
             return
         shutil.move(src, dst)
 
     def _copy_path(self, src: str, dst: str) -> None:
         if self._mem_files is not None and self._is_mem_path(src) and self._is_mem_path(dst):
-            self._mem_files[dst] = bytes(self._mem_files.get(src, b""))
+            with self._mem_files_lock:
+                self._mem_files[dst] = bytes(self._mem_files.get(src, b""))
             return
         shutil.copy2(src, dst)
 
     def _remove_path(self, path_value: str) -> None:
         if self._mem_files is not None and self._is_mem_path(path_value):
-            self._mem_files.pop(path_value, None)
+            with self._mem_files_lock:
+                self._mem_files.pop(path_value, None)
             return
         try:
             os.remove(path_value)

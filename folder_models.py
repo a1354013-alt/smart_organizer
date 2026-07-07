@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import socket
 import sys
@@ -18,7 +19,9 @@ from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 QUARANTINE_DIRNAME = ".smart_organizer_quarantine"
 QUARANTINE_MANIFEST = "manifest.json"
 
-FolderActionStatus = Literal["SUCCESS", "FAILED", "SKIPPED"]
+FolderActionStatus = Literal["SUCCESS", "FAILED", "SKIPPED", "PREVIEW"]
+
+logger = logging.getLogger(__name__)
 
 
 class QuarantineStatus(StrEnum):
@@ -191,6 +194,7 @@ class FolderOperationSummary:
     success: int
     failed: int
     skipped: int
+    preview: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -387,8 +391,12 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
             already_held = False
 
     if already_held:
+        primary_error = False
         try:
             yield
+        except BaseException:
+            primary_error = True
+            raise
         finally:
             with _MANIFEST_LOCKS:
                 owner = _MANIFEST_LOCK_OWNERS.get(lock_key, (thread_id, 1))
@@ -402,6 +410,7 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
     handle_fd: int | None = None
+    primary_error = False
     try:
         while True:
             try:
@@ -424,6 +433,9 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
             except OSError as exc:
                 raise ManifestCompatibilityError(f"Failed to create manifest lock: {exc}") from exc
         yield
+    except BaseException:
+        primary_error = True
+        raise
     finally:
         if handle_fd is not None:
             with suppress(OSError):
@@ -433,7 +445,10 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
             except FileNotFoundError:
                 pass
             except OSError as exc:
-                raise ManifestCompatibilityError(f"Failed to release manifest lock: {exc}") from exc
+                if primary_error:
+                    logger.warning("Failed to release manifest lock after primary error: %s", exc)
+                else:
+                    raise ManifestCompatibilityError(f"Failed to release manifest lock: {exc}") from exc
         with _MANIFEST_LOCKS:
             owner = _MANIFEST_LOCK_OWNERS.get(lock_key, (thread_id, 1))
             remaining = owner[1] - 1

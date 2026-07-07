@@ -72,7 +72,8 @@ def test_reclassify_preserves_existing_preview_when_new_metadata_has_none(tmp_pa
     storage = StorageManager(str(tmp_path / "t.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
     created = storage.create_temp_file("Screenshot_1.png", b"\x89PNG\r\n\x1a\n" + (b"0" * 16), "a" * 64, "photo")
     file_id = int(created["file_id"])
-    preview = tmp_path / "preview.png"
+    preview = tmp_path / "uploads" / "preview.png"
+    preview.parent.mkdir(parents=True, exist_ok=True)
     preview.write_bytes(b"preview")
     storage.update_file_metadata(
         file_id,
@@ -115,8 +116,9 @@ def test_reclassify_updates_preview_when_new_metadata_provides_one(tmp_path: Pat
     storage = StorageManager(str(tmp_path / "t.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
     created = storage.create_temp_file("Screenshot_2.png", b"\x89PNG\r\n\x1a\n" + (b"1" * 16), "b" * 64, "photo")
     file_id = int(created["file_id"])
-    old_preview = tmp_path / "old-preview.png"
-    new_preview = tmp_path / "new-preview.png"
+    old_preview = tmp_path / "uploads" / "old-preview.png"
+    new_preview = tmp_path / "uploads" / "new-preview.png"
+    old_preview.parent.mkdir(parents=True, exist_ok=True)
     old_preview.write_bytes(b"old")
     new_preview.write_bytes(b"new")
     storage.update_file_metadata(
@@ -160,7 +162,7 @@ def test_reclassify_clears_missing_preview_when_no_valid_replacement_exists(tmp_
     storage = StorageManager(str(tmp_path / "t.db"), str(tmp_path / "repo"), str(tmp_path / "uploads"))
     created = storage.create_temp_file("Screenshot_3.png", b"\x89PNG\r\n\x1a\n" + (b"2" * 16), "c" * 64, "photo")
     file_id = int(created["file_id"])
-    missing_preview = tmp_path / "missing-preview.png"
+    missing_preview = tmp_path / "uploads" / "missing-preview.png"
     storage.update_file_metadata(
         file_id,
         {

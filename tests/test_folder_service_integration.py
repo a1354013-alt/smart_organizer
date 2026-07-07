@@ -42,8 +42,8 @@ def test_folder_service_end_to_end_quarantine_restore_and_report(tmp_path: Path)
     assert records[str(old_log)]["recommendation"] in {"Safe to review", "Needs manual check"}
 
     preview = preview_selected_actions(scan_result, selected_paths)
-    assert preview["summary"]["skipped"] == 2
-    assert all(row["status"] == "SKIPPED" for row in preview["results"])
+    assert preview["summary"]["preview"] == 2
+    assert all(row["status"] == "PREVIEW" for row in preview["results"])
 
     operation_result, refreshed_scan, report_snapshot = quarantine_selected_files(
         scan_result,

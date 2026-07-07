@@ -26,6 +26,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "core.py",
         "storage.py",
         "config.py",
+        "i18n_core.py",
         "supported_formats.py",
         "ui_common.py",
         "ui_home.py",

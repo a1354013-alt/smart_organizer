@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as st_components
 
 
 def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
@@ -18,8 +19,7 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
     # Streamlit 1.56+ supports inline HTML with JavaScript via st.html.
     # Keeping this script inline limits scope to local UI-state cleanup without
     # adding remote scripts, CDN dependencies, or broader browser privileges.
-    st.html(
-        """
+    body = """
         <div style="display:none"></div>
         <script>
         (function () {
@@ -97,7 +97,12 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
           try { sanitizeStorage(window.sessionStorage, "sessionStorage"); } catch (_) {}
         })();
         </script>
-        """,
-        width="content",
-        unsafe_allow_javascript=True,
-    )
+        """
+    try:
+        st.html(
+            body,
+            width="content",
+            unsafe_allow_javascript=True,
+        )
+    except TypeError:
+        st_components.html(body, height=0, width=0)

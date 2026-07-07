@@ -218,3 +218,42 @@ def test_manifest_guard_writes_lock_owner_metadata(tmp_path: Path):
         assert "command" in metadata
 
     assert not lock_path.exists()
+
+
+def test_manifest_guard_preserves_primary_error_when_lock_release_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == quarantine_manifest_lock_path(tmp_path):
+            raise OSError("release failed")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    with pytest.raises(ValueError, match="primary failure"), quarantine_manifest_guard(tmp_path):
+        raise ValueError("primary failure")
+
+    assert "Failed to release manifest lock after primary error" in caplog.text
+
+
+def test_manifest_guard_reports_release_error_without_primary_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == quarantine_manifest_lock_path(tmp_path):
+            raise OSError("release failed")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    with pytest.raises(ManifestCompatibilityError, match="Failed to release manifest lock"), quarantine_manifest_guard(
+        tmp_path
+    ):
+        pass

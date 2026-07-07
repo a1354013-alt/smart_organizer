@@ -17,6 +17,14 @@ from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 logger = logging.getLogger(__name__)
 
 
+def _is_relative_to(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 class CreateTempFileResult(TypedDict, total=False):
     success: bool
     reason: str
@@ -122,14 +130,40 @@ class StorageRepositoryMixin:
     ) -> str | None:
         normalized_preview = str(requested_preview_path).strip() if requested_preview_path not in (None, "") else ""
         if normalized_preview:
-            return normalized_preview
+            return normalized_preview if self._is_allowed_preview_path(normalized_preview) else None
 
         cursor.execute("SELECT preview_path FROM files WHERE file_id = ?", (int(file_id),))
         existing_row = cursor.fetchone()
         existing_preview = str(existing_row[0]).strip() if existing_row and existing_row[0] else ""
-        if existing_preview and self.path_exists(existing_preview):
+        if existing_preview and self._is_allowed_preview_path(existing_preview) and self.path_exists(existing_preview):
             return existing_preview
         return None
+
+    def _allowed_preview_roots(self: Any) -> tuple[Path, ...]:
+        if self._mem_files is not None:
+            return ()
+        roots = (self.upload_dir, self.repo_root, self.repo_root / "previews")
+        resolved: list[Path] = []
+        for root in roots:
+            try:
+                candidate = Path(root).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if candidate not in resolved:
+                resolved.append(candidate)
+        return tuple(resolved)
+
+    def _is_allowed_preview_path(self: Any, preview_path: object) -> bool:
+        normalized = str(preview_path or "").strip()
+        if not normalized:
+            return False
+        if self._mem_files is not None:
+            return self._is_mem_path(normalized)
+        try:
+            candidate = Path(normalized).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return False
+        return any(_is_relative_to(candidate, root) for root in self._allowed_preview_roots())
 
     def create_temp_file(
         self: Any,
@@ -171,9 +205,10 @@ class StorageRepositoryMixin:
                 part_path = self.upload_dir / f"{unique_temp_name}.{uuid.uuid4().hex}.part"
 
             if self._mem_files is not None:
-                if temp_path not in self._mem_files:
-                    self._mem_files[temp_path] = payload
-                    temp_created = True
+                with self._mem_files_lock:
+                    if temp_path not in self._mem_files:
+                        self._mem_files[temp_path] = payload
+                        temp_created = True
             elif isinstance(temp_path, Path) and not temp_path.exists():
                 try:
                     assert part_path is not None

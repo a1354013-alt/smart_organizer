@@ -145,9 +145,9 @@ def _malware_scan_label(value: object) -> str:
     return t(label_key) if label_key else status
 
 
-def _blocked_candidate_warning(item: dict[str, object]) -> str | None:
+def _blocked_candidate_warning(item: dict[str, object], *, enable_malware_scan: bool = False) -> str | None:
     status = str(item.get("malware_status") or "")
-    if not is_malware_blocked_status(status):
+    if not is_malware_blocked_status(status, enable_malware_scan=enable_malware_scan):
         return None
     if status == "infected":
         return t("malware.infected_warning")
@@ -527,7 +527,10 @@ def _render_candidate_editor(
             path
             for path in candidate_paths
             if path in merged_selected
-            and not is_malware_blocked_status(candidate_by_path.get(path, {}).get("malware_status"))
+            and not is_malware_blocked_status(
+                candidate_by_path.get(path, {}).get("malware_status"),
+                enable_malware_scan=enable_malware_scan,
+            )
         ]
         hidden_selected_count = sum(1 for path in selected_paths if path not in visible_paths)
         if hidden_selected_count:
@@ -554,7 +557,10 @@ def _render_candidate_editor(
         path
         for path in candidate_paths
         if path in merged_selected
-        and not is_malware_blocked_status(candidate_by_path.get(path, {}).get("malware_status"))
+        and not is_malware_blocked_status(
+            candidate_by_path.get(path, {}).get("malware_status"),
+            enable_malware_scan=enable_malware_scan,
+        )
     ]
     hidden_selected_count = sum(1 for path in selected if path not in visible_paths)
     if hidden_selected_count:
@@ -913,17 +919,28 @@ def _render_results_panel(
             candidates,
             enable_malware_scan=enable_malware_scan,
         )
-        blocked_candidates = [item for item in candidates if is_malware_blocked_status(item.get("malware_status"))]
+        blocked_candidates = [
+            item
+            for item in candidates
+            if is_malware_blocked_status(
+                item.get("malware_status"),
+                enable_malware_scan=enable_malware_scan,
+            )
+        ]
         for item in blocked_candidates[:10]:
             threat_name = str(item.get("malware_threat_name") or "").strip()
             suffix = f" ({threat_name})" if threat_name else ""
-            warning = _blocked_candidate_warning(item)
+            warning = _blocked_candidate_warning(item, enable_malware_scan=enable_malware_scan)
             if warning:
                 st.warning(f"{item.get('name')}{suffix}: {warning}")
         blocked_selected = [
             str(item.get("name") or item.get("path") or "")
             for item in candidates
-            if str(item.get("path") or "") in selected_paths and is_malware_blocked_status(item.get("malware_status"))
+            if str(item.get("path") or "") in selected_paths
+            and is_malware_blocked_status(
+                item.get("malware_status"),
+                enable_malware_scan=enable_malware_scan,
+            )
         ]
         if blocked_selected:
             st.warning(

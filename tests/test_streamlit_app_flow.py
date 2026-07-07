@@ -52,7 +52,7 @@ def test_streamlit_folder_quarantine_restore_report_flow(tmp_path: Path):
 
     _find_button(app, t("home.candidates.preview_button")).click().run()
     preview = app.session_state["folder_last_operation_result"]
-    assert preview["summary"]["skipped"] == 1
+    assert preview["summary"]["preview"] == 1
     assert candidate.exists()
 
     app.checkbox[0].set_value(True)
