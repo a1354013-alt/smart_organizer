@@ -22,6 +22,7 @@ from scripts.validate_release_source import (
     _format_timeout_message,
     _handle_output_chunk,
     _tail_lines,
+    check_conflict_markers,
     run_step,
 )
 from scripts.verify_release_zip import default_zip_path_arg, resolve_zip_paths, verify_release_zip
@@ -37,6 +38,19 @@ def _wait_for_path(path: Path, *, timeout_seconds: float = HANDSHAKE_WAIT_SECOND
             return
         time.sleep(0.02)
     raise AssertionError(f"Timed out waiting for {path}")
+
+
+def _build_release_zip_with_overrides(
+    tmp_path: Path,
+    zip_name: str,
+    overrides: dict[str, str | bytes],
+) -> Path:
+    zip_path = tmp_path / zip_name
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry in RELEASE_ALLOWLIST:
+            payload = overrides.get(entry, "placeholder\n")
+            archive.writestr(entry, payload)
+    return zip_path
 
 
 def _write_timeout_probe_script(
@@ -254,6 +268,57 @@ def test_verify_release_zip_rejects_runtime_artifacts_in_zip(tmp_path: Path):
         assert "dist/runtime.zip" in str(exc) or "coverage/index.html" in str(exc)
     else:
         raise AssertionError("Expected runtime artifacts to fail verification")
+
+
+def test_verify_release_zip_rejects_invalid_python_file(tmp_path: Path):
+    zip_path = _build_release_zip_with_overrides(
+        tmp_path,
+        "runtime-invalid-python.zip",
+        {"app.py": "def broken(:\n"},
+    )
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "invalid Python files" in str(exc)
+        assert "app.py" in str(exc)
+    else:
+        raise AssertionError("Expected invalid Python in release zip to fail verification")
+
+
+def test_verify_release_zip_rejects_conflict_markers(tmp_path: Path):
+    zip_path = _build_release_zip_with_overrides(
+        tmp_path,
+        "runtime-conflict-markers.zip",
+        {"README.md": "before\n" + "<" * 7 + " branch\n"},
+    )
+
+    try:
+        verify_release_zip(zip_path)
+    except ValueError as exc:
+        assert "conflict markers" in str(exc)
+        assert "README.md" in str(exc)
+    else:
+        raise AssertionError("Expected conflict markers in release zip to fail verification")
+
+
+def test_validate_release_source_conflict_marker_check_passes_normal_files(tmp_path: Path):
+    (tmp_path / "normal.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "binary.bin").write_bytes(b"\0" + b"<" * 7)
+
+    check_conflict_markers(tmp_path)
+
+
+def test_validate_release_source_conflict_marker_check_fails_text_file(tmp_path: Path):
+    (tmp_path / "bad.py").write_text("value = 1\n" + ">" * 7 + " branch\n", encoding="utf-8")
+
+    try:
+        check_conflict_markers(tmp_path)
+    except ValueError as exc:
+        assert "conflict markers" in str(exc)
+        assert "bad.py" in str(exc)
+    else:
+        raise AssertionError("Expected source conflict marker check to fail")
 
 
 def test_validate_release_output_chunk_uses_utf8_replace_for_invalid_bytes(capsys):

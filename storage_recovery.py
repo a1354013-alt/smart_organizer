@@ -121,20 +121,21 @@ class StorageRecoveryMixin:
             final_name = FileUtils.sanitize_filename(f"{normalized_date}_{main_topic}_{safe_name}")
 
             if self._mem_files is not None:
-                base_target = f"mem://repo/{year}/{month}/{final_name}"
-                if base_target not in self._mem_files:
-                    target_path = base_target
-                else:
-                    stem, ext = os.path.splitext(final_name)
-                    counter = 1
-                    while True:
-                        candidate_name = f"{stem}_{counter}{ext}"
-                        candidate_path = f"mem://repo/{year}/{month}/{candidate_name}"
-                        if candidate_path not in self._mem_files:
-                            target_path = candidate_path
-                            final_name = candidate_name
-                            break
-                        counter += 1
+                with self._mem_files_lock:
+                    base_target = f"mem://repo/{year}/{month}/{final_name}"
+                    if base_target not in self._mem_files:
+                        target_path = base_target
+                    else:
+                        stem, ext = os.path.splitext(final_name)
+                        counter = 1
+                        while True:
+                            candidate_name = f"{stem}_{counter}{ext}"
+                            candidate_path = f"mem://repo/{year}/{month}/{candidate_name}"
+                            if candidate_path not in self._mem_files:
+                                target_path = candidate_path
+                                final_name = candidate_name
+                                break
+                            counter += 1
             else:
                 target_path = str(FileUtils.get_unique_path(target_dir / final_name))
 

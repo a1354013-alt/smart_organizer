@@ -46,6 +46,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
     for source_only_path in (
         "scripts/build_release_zip.py",
         "scripts/check_workspace_clean.py",
+        "scripts/conflict_markers.py",
         "scripts/create_release_zip.py",
         "scripts/release_policy.py",
         "scripts/safe_compileall.py",
@@ -121,6 +122,7 @@ def test_release_validation_dry_run_lists_expected_commands(capsys):
 
     output = capsys.readouterr().out
     expected_commands = [
+        "python scripts/validate_release_source.py --check-conflicts-only",
         "python scripts/safe_compileall.py -q .",
         "python -m ruff check --no-cache .",
         "python -m mypy --cache-dir=/dev/null",

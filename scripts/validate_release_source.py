@@ -19,11 +19,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.dont_write_bytecode = True
 
+from scripts.conflict_markers import find_conflict_markers_in_files
 from scripts.release_policy import DEFAULT_RELEASE_OUTPUT_DIR, VALIDATION_ZIP_NAME
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 90
 LONG_COMMAND_TIMEOUT_SECONDS = 180
 COMMAND_TIMEOUTS_SECONDS = {
+    "conflict-marker-scan": 30,
     "scripts/safe_compileall.py": 60,
     "ruff": 60,
     "mypy": LONG_COMMAND_TIMEOUT_SECONDS,
@@ -93,6 +95,7 @@ def _tail_lines(lines: deque[str], *, limit: int) -> list[str]:
 def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> list[list[str]]:
     validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
+        [sys.executable, "scripts/validate_release_source.py", "--check-conflicts-only"],
         [sys.executable, "scripts/safe_compileall.py", "-q", "."],
         [sys.executable, "-m", "ruff", "check", "--no-cache", "."],
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],
@@ -140,7 +143,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TIMEOUT_TAIL_LINES,
         help="Number of recent output lines to print when a step times out.",
     )
+    parser.add_argument(
+        "--check-conflicts-only",
+        action="store_true",
+        help="Only scan source files for unresolved merge conflict markers.",
+    )
     return parser.parse_args(argv)
+
+
+def iter_source_text_candidates(project_root: Path = PROJECT_ROOT) -> list[Path]:
+    candidates: list[Path] = []
+    for path in project_root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(project_root)
+        except ValueError:
+            continue
+        parts = relative.parts
+        if any(part in {".git", ".venv", "venv", "node_modules", "__pycache__"} for part in parts):
+            continue
+        if parts and parts[0].startswith("release_ci"):
+            continue
+        candidates.append(path)
+    return candidates
+
+
+def check_conflict_markers(project_root: Path = PROJECT_ROOT) -> None:
+    hits = find_conflict_markers_in_files(iter_source_text_candidates(project_root))
+    if hits:
+        display = [str(Path(hit).relative_to(project_root)) for hit in hits]
+        raise ValueError(f"Source files contain conflict markers: {display}")
 
 
 def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
@@ -461,6 +494,9 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.check_conflicts_only:
+        check_conflict_markers(PROJECT_ROOT)
+        return 0
     commands = build_validation_commands(str(args.output_dir))
 
     for command in commands:

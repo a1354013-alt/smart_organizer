@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.conflict_markers import find_conflict_markers_in_zip
 from scripts.create_release_zip import RELEASE_ALLOWLIST, zip_contains_forbidden_entries
 from scripts.release_policy import (
     DEFAULT_RELEASE_OUTPUT_DIR,
@@ -28,6 +29,11 @@ def verify_release_zip(zip_path: Path) -> None:
         raise ValueError(f"Release zip contains forbidden paths: {forbidden}")
     with ZipFile(zip_path) as archive:
         names = set(archive.namelist())
+        python_sources = {
+            name: archive.read(name).decode("utf-8")
+            for name in names
+            if name.endswith(".py")
+        }
 
     expected = {path.replace("\\", "/") for path in RELEASE_ALLOWLIST}
     missing = sorted(expected - names)
@@ -41,6 +47,17 @@ def verify_release_zip(zip_path: Path) -> None:
         raise ValueError(f"Release zip contains non-allowlisted files: {extra}")
     if source_only_hits:
         raise ValueError(f"Release zip contains source-only files: {source_only_hits}")
+    conflict_hits = find_conflict_markers_in_zip(zip_path)
+    if conflict_hits:
+        raise ValueError(f"Release zip contains conflict markers: {conflict_hits}")
+    syntax_errors: list[str] = []
+    for name, source in python_sources.items():
+        try:
+            compile(source, name, "exec", dont_inherit=True, optimize=0)
+        except SyntaxError as exc:
+            syntax_errors.append(f"{name}: {exc.msg} (line {exc.lineno})")
+    if syntax_errors:
+        raise ValueError(f"Release zip contains invalid Python files: {syntax_errors}")
 
 
 def resolve_zip_paths(zip_path_arg: str) -> list[Path]:

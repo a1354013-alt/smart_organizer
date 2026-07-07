@@ -74,16 +74,15 @@ class StorageBase:
         except ValueError:
             return False
 
-    def _allowed_preview_roots(self) -> list[Path]:
+    def _allowed_preview_roots(self) -> tuple[Path, ...]:
         roots: list[Path] = []
-        for root in (self.upload_dir, self.repo_root):
+        for root in (self.upload_dir, self.repo_root, self.repo_root / "previews"):
             if str(root).startswith("mem://"):
                 continue
-            roots.append(root.resolve(strict=False))
-        if len(roots) >= 2:
-            common_parent = Path(os.path.commonpath([str(root) for root in roots]))
-            roots.append(common_parent.resolve(strict=False))
-        return roots
+            resolved = root.resolve(strict=False)
+            if resolved not in roots:
+                roots.append(resolved)
+        return tuple(roots)
 
     def _normalize_preview_path(self, path_value: object) -> str | None:
         if path_value in (None, ""):

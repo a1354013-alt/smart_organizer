@@ -127,8 +127,7 @@ class StorageRepositoryMixin:
 
         cursor.execute("SELECT preview_path FROM files WHERE file_id = ?", (int(file_id),))
         existing_row = cursor.fetchone()
-<<<<<<< HEAD
-        existing_preview = str(existing_row[0]).strip() if existing_row and existing_row[0] else ""
+        existing_preview = cast(Any, self)._normalize_preview_path(existing_row[0] if existing_row else None)
         if existing_preview and self._is_allowed_preview_path(existing_preview) and self.path_exists(existing_preview):
             return existing_preview
         return None
@@ -158,11 +157,6 @@ class StorageRepositoryMixin:
         except (OSError, RuntimeError, ValueError):
             return False
         return any(_is_relative_to(candidate, root) for root in self._allowed_preview_roots())
-=======
-        existing_preview = cast(Any, self)._normalize_preview_path(existing_row[0] if existing_row else None)
-        if existing_preview and self.path_exists(existing_preview):
-            return existing_preview
-        return None
 
     def _normalize_record_row(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
@@ -171,7 +165,6 @@ class StorageRepositoryMixin:
         normalized["summary_status"] = str(normalized.get("summary_status") or "").strip() or None
         normalized["summary_error"] = str(normalized.get("summary_error") or "").strip() or None
         return normalized
->>>>>>> a81b394617dc86d3db6c03f0963509f472d6cf4f
 
     def create_temp_file(
         self: Any,
