@@ -26,6 +26,9 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "core.py",
         "storage.py",
         "config.py",
+        "runtime_config.py",
+        "startup.py",
+        "requirements.lock.txt",
         "i18n_core.py",
         "supported_formats.py",
         "ui_common.py",
@@ -46,10 +49,12 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
     for source_only_path in (
         "scripts/build_release_zip.py",
         "scripts/check_workspace_clean.py",
+        "scripts/cleanup_validation_artifacts.py",
         "scripts/conflict_markers.py",
         "scripts/create_release_zip.py",
         "scripts/release_policy.py",
         "scripts/safe_compileall.py",
+        "scripts/validate_dependency_locks.py",
         "scripts/validate_release_source.py",
         "scripts/verify_release_zip.py",
     ):
@@ -64,16 +69,25 @@ def test_release_packaging_docs_match_current_policy():
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     ps1 = (PROJECT_ROOT / "create_release_zip.ps1").read_text(encoding="utf-8-sig")
 
-    for expected in ["app.py", "app_main.py", "config.py", "docs/KNOWN_LIMITATIONS.md", "requirements.txt"]:
+    for expected in [
+        "app.py",
+        "app_main.py",
+        "config.py",
+        "runtime_config.py",
+        "startup.py",
+        "docs/KNOWN_LIMITATIONS.md",
+        "requirements.txt",
+        "requirements.lock.txt",
+    ]:
         assert expected in allowlist
         assert expected in packaging
 
     assert "python scripts/validate_release_source.py" in run_release
-    assert "python -m pip install -r requirements.txt" in readme
+    assert "python -m pip install -r requirements.lock.txt" in readme
     assert "requirements-dev.txt" not in readme
     assert "Source Repository Release Validation" in readme
     assert "RUN_RELEASE.md" in readme
-    assert "python -m pip install -r requirements.txt" in run_release
+    assert "python -m pip install -r requirements.lock.txt" in run_release
     assert "streamlit run app.py" in readme
     assert "streamlit run app.py" in run_release
     assert "$includePaths" not in ps1
@@ -91,12 +105,15 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
     ]
     command_text = "\n".join(" ".join(command[1:]) for command in build_validation_commands())
     required_commands = [
+        "scripts/validate_dependency_locks.py",
         "scripts/safe_compileall.py -q .",
         "-m ruff check --no-cache .",
         "-m mypy --cache-dir=/dev/null",
-        "-m pytest -q",
+        "-m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml",
+        "-m pip_audit -r requirements.lock.txt",
         "scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
         "scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
+        "scripts/cleanup_validation_artifacts.py",
         "scripts/check_workspace_clean.py --project-root .",
     ]
 
@@ -123,12 +140,15 @@ def test_release_validation_dry_run_lists_expected_commands(capsys):
     output = capsys.readouterr().out
     expected_commands = [
         "python scripts/validate_release_source.py --check-conflicts-only",
+        "python scripts/validate_dependency_locks.py",
         "python scripts/safe_compileall.py -q .",
         "python -m ruff check --no-cache .",
         "python -m mypy --cache-dir=/dev/null",
-        "python -m pytest -q",
+        "python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml",
+        "python -m pip_audit -r requirements.lock.txt",
         "python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
         "python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
+        "python scripts/cleanup_validation_artifacts.py",
         "python scripts/check_workspace_clean.py --project-root .",
     ]
 

@@ -29,6 +29,7 @@ TEST_TMP.mkdir(parents=True, exist_ok=True)
 os.environ["TMP"] = str(TEST_TMP)
 os.environ["TEMP"] = str(TEST_TMP)
 os.environ["PYTEST_DEBUG_TEMPROOT"] = str(TEST_TMP)
+os.environ["SMART_ORGANIZER_DATA_DIR"] = str(TEST_TMP / "runtime-data")
 tempfile.tempdir = str(TEST_TMP)
 
 _ORIG_CLEANUP_DEAD_SYMLINKS = pytest_pathlib.cleanup_dead_symlinks
@@ -62,7 +63,7 @@ def _cleanup_repo_caches() -> None:
         for path in PROJECT_ROOT.glob(pattern):
             with suppress(PermissionError):
                 shutil.rmtree(path, ignore_errors=True)
-    for path in (PROJECT_ROOT / "repo", PROJECT_ROOT / "uploads"):
+    for path in (PROJECT_ROOT / "repo", PROJECT_ROOT / "uploads", TEST_TMP / "runtime-data"):
         with suppress(PermissionError):
             shutil.rmtree(path, ignore_errors=True)
     for path in (PROJECT_ROOT / "smart_organizer.db",):

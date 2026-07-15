@@ -36,7 +36,8 @@ class StorageRecoveryMixin:
                 conn = self._get_connection()
                 conn.execute(
                     """
-                    UPDATE files SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED'
+                    UPDATE files
+                    SET final_path = ?, temp_path = NULL, moving_target_path = NULL, status = 'COMPLETED', updated_at = datetime('now')
                     WHERE file_id = ?
                     """,
                     (moving_target, file_id),
@@ -63,12 +64,12 @@ class StorageRecoveryMixin:
                     )
                     merged = self._merge_last_error(existing_last_error, diag)
                     conn.execute(
-                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ?, updated_at = datetime('now') WHERE file_id = ?",
                         (merged, file_id),
                     )
                 else:
                     conn.execute(
-                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL WHERE file_id = ?",
+                        "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, updated_at = datetime('now') WHERE file_id = ?",
                         (file_id,),
                     )
                 conn.commit()
@@ -81,7 +82,7 @@ class StorageRecoveryMixin:
             )
             merged = self._merge_last_error(existing_last_error, diag)
             conn.execute(
-                "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ?, updated_at = datetime('now') WHERE file_id = ?",
                 (merged, file_id),
             )
             conn.commit()
@@ -146,7 +147,7 @@ class StorageRecoveryMixin:
             conn = self._get_connection()
             try:
                 conn.execute(
-                    "UPDATE files SET status = 'MOVING', moving_target_path = ? WHERE file_id = ?",
+                    "UPDATE files SET status = 'MOVING', moving_target_path = ?, updated_at = datetime('now') WHERE file_id = ?",
                     (target_path, file_id),
                 )
                 conn.commit()
@@ -169,7 +170,7 @@ class StorageRecoveryMixin:
                         if len(msg) > 400:
                             msg = msg[:400] + "..."
                         conn.execute(
-                            "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                            "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ?, updated_at = datetime('now') WHERE file_id = ?",
                             (msg, file_id),
                         )
                         conn.commit()
@@ -182,7 +183,7 @@ class StorageRecoveryMixin:
                         if len(msg) > 400:
                             msg = msg[:400] + "..."
                         conn.execute(
-                            "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ? WHERE file_id = ?",
+                            "UPDATE files SET status = 'PROCESSED', moving_target_path = NULL, last_error = ?, updated_at = datetime('now') WHERE file_id = ?",
                             (msg, file_id),
                         )
                         conn.commit()
@@ -196,6 +197,7 @@ class StorageRecoveryMixin:
                         temp_path = NULL,
                         moving_target_path = NULL,
                         last_error = NULL,
+                        updated_at = datetime('now'),
                         status = 'COMPLETED'
                     WHERE file_id = ?
                     """,
@@ -217,7 +219,7 @@ class StorageRecoveryMixin:
                     msg = str(exc)
                     if len(msg) > 400:
                         msg = msg[:400] + "..."
-                    conn2.execute("UPDATE files SET last_error = ? WHERE file_id = ?", (msg, file_id))
+                    conn2.execute("UPDATE files SET last_error = ?, updated_at = datetime('now') WHERE file_id = ?", (msg, file_id))
                     conn2.commit()
                 finally:
                     conn2.close()

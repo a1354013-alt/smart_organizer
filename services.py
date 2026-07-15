@@ -12,6 +12,11 @@ from services_finalize import (
     persist_confirmed_metadata,
     reclassify_record,
 )
+from services_lifecycle import (
+    discard_unfinished_record,
+    reanalyze_unfinished_record,
+    resume_unfinished_record,
+)
 from services_models import (
     AnalysisResult,
     BatchAnalysisOutcome,
@@ -43,5 +48,8 @@ __all__ = [
     "finalize_one_file",
     "finalize_batch",
     "reclassify_record",
+    "resume_unfinished_record",
+    "reanalyze_unfinished_record",
+    "discard_unfinished_record",
 ]
 

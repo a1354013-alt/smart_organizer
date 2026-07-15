@@ -4,7 +4,7 @@ import hashlib
 
 from i18n import t
 from storage import StorageManager
-from ui_records import build_records_maintenance_actions
+from ui_records import build_records_maintenance_actions, build_unfinished_record_actions
 
 
 def _sha256(data: bytes) -> str:
@@ -65,6 +65,15 @@ def test_records_maintenance_actions_visible_without_rows():
     assert t("search_records.maintenance_reclassify") in labels
     reclassify = next(action for action in actions if action["label"] == t("search_records.maintenance_reclassify"))
     assert reclassify["enabled"] is False
+
+
+def test_unfinished_action_visibility_depends_on_record_state():
+    assert build_unfinished_record_actions({"status": "PROCESSED", "available_actions": ["resume", "reanalyze", "discard"]}) == [
+        "resume",
+        "reanalyze",
+        "discard",
+    ]
+    assert build_unfinished_record_actions({"status": "COMPLETED", "available_actions": []}) == []
 
 
 def test_records_page_filters_pagination_and_stable_sorting():

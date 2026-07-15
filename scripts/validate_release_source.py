@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.dont_write_bytecode = True
 
+from runtime_preflight import require_supported_python
 from scripts.conflict_markers import find_conflict_markers_in_files
 from scripts.release_policy import DEFAULT_RELEASE_OUTPUT_DIR, VALIDATION_ZIP_NAME
 
@@ -27,9 +28,12 @@ LONG_COMMAND_TIMEOUT_SECONDS = 180
 COMMAND_TIMEOUTS_SECONDS = {
     "conflict-marker-scan": 30,
     "scripts/safe_compileall.py": 60,
+    "scripts/validate_dependency_locks.py": 180,
+    "scripts/cleanup_validation_artifacts.py": 30,
     "ruff": 60,
     "mypy": LONG_COMMAND_TIMEOUT_SECONDS,
     "pytest": LONG_COMMAND_TIMEOUT_SECONDS,
+    "pip_audit": LONG_COMMAND_TIMEOUT_SECONDS,
     "scripts/create_release_zip.py": 120,
     "scripts/verify_release_zip.py": 60,
     "scripts/check_workspace_clean.py": 60,
@@ -96,10 +100,21 @@ def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> l
     validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
         [sys.executable, "scripts/validate_release_source.py", "--check-conflicts-only"],
+        [sys.executable, "scripts/validate_dependency_locks.py"],
         [sys.executable, "scripts/safe_compileall.py", "-q", "."],
         [sys.executable, "-m", "ruff", "check", "--no-cache", "."],
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],
-        [sys.executable, "-m", "pytest", "-q"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--cov=.",
+            "--cov-branch",
+            "--cov-report=term-missing",
+            "--cov-report=xml",
+        ],
+        [sys.executable, "-m", "pip_audit", "-r", "requirements.lock.txt"],
         [
             sys.executable,
             "scripts/create_release_zip.py",
@@ -109,6 +124,7 @@ def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> l
             VALIDATION_ZIP_NAME,
         ],
         [sys.executable, "scripts/verify_release_zip.py", validation_zip_path],
+        [sys.executable, "scripts/cleanup_validation_artifacts.py"],
         [sys.executable, "scripts/check_workspace_clean.py", "--project-root", "."],
     ]
 
@@ -186,6 +202,47 @@ def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
         except subprocess.TimeoutExpired:
             continue
     return True
+
+
+def _linux_process_state(pid: int) -> str | None:
+    stat_path = Path("/proc") / str(pid) / "stat"
+    try:
+        raw = stat_path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ""
+    marker = raw.rfind(")")
+    remainder = raw[marker + 1 :].strip() if marker >= 0 else raw.strip()
+    return remainder.split(" ", 1)[0] if remainder else ""
+
+
+def is_process_actively_running(pid: int) -> bool:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return f'"{pid}"' in result.stdout
+    state = _linux_process_state(pid)
+    if state is not None:
+        return state != "Z"
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def wait_for_process_not_running(pid: int, *, timeout_seconds: float = 3.0) -> bool:
+    deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+    while time.monotonic() < deadline:
+        if not is_process_actively_running(pid):
+            return True
+        time.sleep(0.02)
+    return not is_process_actively_running(pid)
 
 
 def _start_process(command: list[str]) -> subprocess.Popen[Any]:
@@ -493,6 +550,7 @@ def run_step(command: list[str], *, timeout_seconds: int, timeout_tail_lines: in
 
 
 def main(argv: list[str] | None = None) -> int:
+    require_supported_python()
     args = parse_args(argv)
     if args.check_conflicts_only:
         check_conflict_markers(PROJECT_ROOT)

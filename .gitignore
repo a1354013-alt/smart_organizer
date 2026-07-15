@@ -40,10 +40,13 @@ release_ci*/
 *.zip
 uploads/
 repo/
+repository/
 smart_organizer.db
 demo_files/
 .compileall_cache/
 previews/
+quarantine/
+manifests/
 tmp/
 tmp_*/
 *.onnx
@@ -63,6 +66,7 @@ tmp_*/
 # Coverage
 .coverage
 coverage/
+coverage.xml
 htmlcov/
 
 # MyPy

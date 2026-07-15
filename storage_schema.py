@@ -71,7 +71,8 @@ class StorageSchemaMixin:
                     is_scanned INTEGER DEFAULT 0,
                     last_error TEXT,
                     status TEXT DEFAULT 'PENDING',
-                    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+                    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+                    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
                 )
             """
             )
@@ -146,6 +147,7 @@ class StorageSchemaMixin:
                 ("decision_updated_at", "TEXT"),
                 ("last_manual_topic", "TEXT"),
                 ("last_manual_reason", "TEXT"),
+                ("updated_at", "TEXT"),
             ]
             for col_name, col_type in new_cols:
                 if col_name not in columns:
@@ -185,6 +187,15 @@ class StorageSchemaMixin:
                         UPDATE files
                         SET decision_updated_at = REPLACE(decision_updated_at, ' ', 'T') || '+00:00'
                         WHERE decision_updated_at GLOB '????-??-?? ??:??:??'
+                        """
+                    )
+
+                if version < 16:
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET updated_at = COALESCE(updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+                        WHERE updated_at IS NULL OR updated_at = ''
                         """
                     )
 

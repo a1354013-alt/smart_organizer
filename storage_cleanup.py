@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from storage_lifecycle import STALE_UNFINISHED_AGE_SECONDS, UNFINISHED_STATUSES
+
 logger = logging.getLogger(__name__)
 
 CURRENT_TEMP_NAME_PREFIXES = ("preview_",)
@@ -103,7 +105,12 @@ class StorageCleanupMixin:
             entry["error"] = f"{type(error).__name__}: {error}"
         actions.append(entry)
 
-    def cleanup_orphaned_uploads(self: Any, preview_ttl_days: int = 7, dry_run: bool = True):
+    def cleanup_orphaned_uploads(
+        self: Any,
+        preview_ttl_days: int = 7,
+        dry_run: bool = True,
+        stale_unfinished_age_seconds: int = STALE_UNFINISHED_AGE_SECONDS,
+    ):
         if self._mem_files is not None:
             return []
 
@@ -113,7 +120,7 @@ class StorageCleanupMixin:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT temp_path, final_path, preview_path, file_hash
+                SELECT file_id, status, temp_path, final_path, preview_path, file_hash
                 FROM files
                 WHERE temp_path IS NOT NULL OR final_path IS NOT NULL OR preview_path IS NOT NULL
                 """
@@ -122,11 +129,16 @@ class StorageCleanupMixin:
             valid_temp_names: set[str] = set()
             valid_preview_paths: set[str] = set()
             valid_hash_prefixes: set[str] = set()
-            for temp_path, _final_path, preview_path, file_hash in cursor.fetchall():
+            db_temp_status: dict[str, tuple[int, str]] = {}
+            missing_unfinished: list[tuple[int, str, str]] = []
+            for file_id, status, temp_path, _final_path, preview_path, file_hash in cursor.fetchall():
                 if temp_path:
                     normalized_temp = self._normalize_preview_path(temp_path) if str(temp_path).endswith((".png", ".jpg", ".jpeg")) else str(temp_path)
                     valid_temp_paths.add(str(normalized_temp or temp_path))
                     valid_temp_names.add(Path(temp_path).name)
+                    db_temp_status[str(normalized_temp or temp_path)] = (int(file_id), str(status or ""))
+                    if str(status or "").upper() in UNFINISHED_STATUSES and not self._path_exists(str(temp_path)):
+                        missing_unfinished.append((int(file_id), str(status or ""), str(temp_path)))
                 if preview_path:
                     normalized_preview = self._normalize_preview_path(preview_path)
                     if normalized_preview:
@@ -143,6 +155,17 @@ class StorageCleanupMixin:
         now = time.time()
         ttl_sec = preview_ttl_days * 24 * 3600
         actions: list[dict[str, object]] = []
+        if dry_run:
+            for file_id, status, temp_path in missing_unfinished:
+                actions.append(
+                    {
+                        "type": "unfinished",
+                        "file_id": file_id,
+                        "path": temp_path,
+                        "status": "missing_temp",
+                        "reason": f"database-backed unfinished record ({status}) has no temporary file",
+                    }
+                )
         for temp_file in self.upload_dir.glob("*"):
             if not temp_file.is_file():
                 continue
@@ -162,9 +185,23 @@ class StorageCleanupMixin:
                 "_" in temp_file.name
                 and len(temp_file.name.split("_", 1)[0]) == 8
             )
+            if temp_path in valid_temp_paths:
+                file_id, db_status = db_temp_status.get(temp_path, (0, ""))
+                if dry_run and str(db_status).upper() in UNFINISHED_STATUSES:
+                    actions.append(
+                        {
+                            "type": "unfinished",
+                            "file_id": file_id,
+                            "path": temp_path,
+                            "status": "stale" if age_sec > stale_unfinished_age_seconds else "active",
+                            "reason": "database-backed unfinished record requires explicit discard",
+                            "age_sec": int(age_sec),
+                        }
+                    )
+                continue
+
             if (
                 age_sec <= 300
-                or temp_path in valid_temp_paths
                 or within_uploads is None
                 or temp_file.name.startswith(CURRENT_TEMP_NAME_PREFIXES)
                 or not (is_current_temp_name or is_legacy_temp_name)

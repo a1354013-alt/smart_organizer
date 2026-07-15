@@ -26,7 +26,7 @@ and packaged by `scripts/create_release_zip.py`.
 It includes these runtime categories:
 
 - app entry: `app.py`, `app_main.py`
-- core/storage/config: `core*.py`, `storage*.py`, `config.py`
+- core/storage/config: `core*.py`, `storage*.py`, `config.py`, `runtime_config.py`, `startup.py`
 - UI modules: `ui_common.py`, `ui_state.py`, `ui_home.py`, `ui_labels.py`, `ui_upload.py`, `ui_review.py`, `ui_execute.py`, `ui_search.py`, `ui_records.py`, `ui_renderers.py`
 - folder organizer modules: `folder_models.py`, `folder_organizer.py`, `folder_service.py`, `folder_report.py`
 - report export modules: `report_exports.py`
@@ -34,7 +34,7 @@ It includes these runtime categories:
 - upload validation, supported-format, and topic-classification helpers: `supported_formats.py`, `core_classification.py`, `ui_upload.py`
 - i18n runtime files: `i18n.py`, `i18n_core.py`, `locales/zh-TW.json`, `locales/en.json`
 - docs/runtime notes: `docs/KNOWN_LIMITATIONS.md`, `docs/PORTFOLIO_CASE_STUDY.md`
-- requirements / README / run scripts: `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- requirements / README / run scripts: `requirements.txt`, `requirements.lock.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
 - demo helper scripts: `scripts/create_demo_folder.py`
 - supporting runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
@@ -78,6 +78,7 @@ These must stay out of the release zip:
 - `*.sqlite`
 - `*.sqlite3`
 - `.coverage`
+- `coverage.xml`
 - `htmlcov/`
 - large model files such as `*.onnx`, `*.pt`, `*.pth`, `*.bin`
 - test temporary directories such as `tests/_tmp*/`
@@ -117,7 +118,7 @@ cannot affect the result.
 After unpacking the release zip:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock.txt
 python scripts/create_demo_folder.py
 streamlit run app.py
 ```

@@ -1,6 +1,8 @@
 {
   "common": {
-    "close": "Close"
+    "close": "Close",
+    "yes": "Yes",
+    "no": "No"
   },
   "app": {
     "page_title": "Smart Organizer",
@@ -362,7 +364,22 @@
     "reclassify_unavailable": "Reclassify becomes available after records are loaded. Refresh and rebuild remain available.",
     "refresh_failed": "Failed to refresh file locations.",
     "rebuild_failed": "Failed to rebuild FTS rows.",
-    "reclassify_failed": "Failed to reclassify record."
+    "reclassify_failed": "Failed to reclassify record.",
+    "unfinished_title": "Unfinished Uploads",
+    "unfinished_empty": "No unfinished uploads need recovery.",
+    "unfinished_select": "Unfinished file_id",
+    "unfinished_no_actions": "No recovery actions are available for this record.",
+    "unfinished_resume": "Resume",
+    "unfinished_reanalyze": "Re-analyze",
+    "unfinished_discard": "Discard",
+    "unfinished_discard_confirm": "I understand this will remove the unfinished database record and approved temporary files.",
+    "unfinished_resume_success": "Resumed {name}. Review it before organizing.",
+    "unfinished_reanalyze_success": "Re-analyzed {name}. Review it before organizing.",
+    "unfinished_discard_success": "Unfinished record discarded.",
+    "unfinished_discard_partial": "Record was removed, but some temporary cleanup failed: {errors}",
+    "unfinished_resume_failed": "Failed to resume unfinished record.",
+    "unfinished_reanalyze_failed": "Failed to re-analyze unfinished record.",
+    "unfinished_discard_failed": "Failed to discard unfinished record."
   },
   "renderers": {
     "dependencies": {

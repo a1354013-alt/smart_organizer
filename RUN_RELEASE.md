@@ -43,7 +43,7 @@ Key runtime groups:
 - core/storage/config: `core*.py`, `storage*.py`, `config.py`
 - UI modules: `ui_*.py`
 - folder organizer/report modules: `folder_*.py`, `report_exports.py`
-- docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
+- docs/runtime files: `docs/KNOWN_LIMITATIONS.md`, `requirements.txt`, `requirements.lock.txt`, `README.md`, `RELEASE_PACKAGING.md`, `RUN_RELEASE.md`
 - demo helper: `scripts/create_demo_folder.py`
 - runtime helpers: `services*.py`, `async_processor.py`, `contracts.py`, `frontend_safety.py`, `logging_config.py`, `version.py`
 
@@ -73,7 +73,7 @@ Source-only scripts stay in the source repository and are not shipped in the run
 After extracting the official release zip, use it only as a runtime/demo package:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock.txt
 python scripts/create_demo_folder.py
 streamlit run app.py
 ```
@@ -179,9 +179,12 @@ Equivalent explicit commands:
 python scripts/safe_compileall.py -q .
 python -m ruff check --no-cache .
 python -m mypy --cache-dir=/dev/null
-python -m pytest -q
+python scripts/validate_dependency_locks.py
+python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
+python -m pip_audit -r requirements.lock.txt
 python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
 python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
+python scripts/cleanup_validation_artifacts.py
 python scripts/check_workspace_clean.py --project-root .
 python scripts/validate_release_source.py --timeout-tail-lines 20
 ```

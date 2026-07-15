@@ -12,6 +12,7 @@ from core import FileProcessor
 from frontend_safety import inject_browser_storage_sanitizer
 from i18n import DEFAULT_LANGUAGE, t
 from logging_config import setup_logging
+from startup import initialize_startup
 from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES, StorageManager
 from ui_common import UIContext, inject_global_css
 from ui_execute import render_execute
@@ -89,6 +90,8 @@ def get_main_tab_labels() -> list[str]:
 
 
 def main() -> None:
+    startup_state = initialize_startup(PROJECT_ROOT)
+    del startup_state
     _configure_page()
     context = _build_context()
     inject_global_css()

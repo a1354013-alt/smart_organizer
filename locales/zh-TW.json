@@ -1,6 +1,8 @@
 {
   "common": {
-    "close": "關閉"
+    "close": "關閉",
+    "yes": "是",
+    "no": "否"
   },
   "app": {
     "page_title": "智慧檔案整理助理",
@@ -362,7 +364,22 @@
     "reclassify_unavailable": "載入紀錄後即可使用重新分類；重新整理與重建索引仍可單獨使用。",
     "refresh_failed": "重新整理檔案位置失敗。",
     "rebuild_failed": "重建 FTS 索引失敗。",
-    "reclassify_failed": "重新分類紀錄失敗。"
+    "reclassify_failed": "重新分類紀錄失敗。",
+    "unfinished_title": "未完成的上傳",
+    "unfinished_empty": "目前沒有需要復原的未完成上傳。",
+    "unfinished_select": "未完成 file_id",
+    "unfinished_no_actions": "這筆紀錄目前沒有可用的復原動作。",
+    "unfinished_resume": "繼續處理",
+    "unfinished_reanalyze": "重新分析",
+    "unfinished_discard": "捨棄",
+    "unfinished_discard_confirm": "我了解這會移除未完成的資料庫紀錄與核准的暫存檔。",
+    "unfinished_resume_success": "已繼續處理 {name}。整理前請先檢視。",
+    "unfinished_reanalyze_success": "已重新分析 {name}。整理前請先檢視。",
+    "unfinished_discard_success": "已捨棄未完成紀錄。",
+    "unfinished_discard_partial": "紀錄已移除，但部分暫存清理失敗：{errors}",
+    "unfinished_resume_failed": "繼續處理未完成紀錄失敗。",
+    "unfinished_reanalyze_failed": "重新分析未完成紀錄失敗。",
+    "unfinished_discard_failed": "捨棄未完成紀錄失敗。"
   },
   "renderers": {
     "dependencies": {

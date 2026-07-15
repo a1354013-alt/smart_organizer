@@ -7,7 +7,12 @@ import streamlit as st
 
 from i18n import t
 from report_exports import export_records_csv, export_records_markdown
-from services import reclassify_record
+from services import (
+    discard_unfinished_record,
+    reanalyze_unfinished_record,
+    reclassify_record,
+    resume_unfinished_record,
+)
 from ui_common import (
     UIContext,
     format_timestamp_for_display,
@@ -30,6 +35,106 @@ def build_records_maintenance_actions(file_id_options: list[object]) -> list[dic
             "enabled": bool(file_id_options),
         },
     ]
+
+
+def build_unfinished_record_actions(record: dict[str, object]) -> list[str]:
+    actions = record.get("available_actions")
+    return [str(action) for action in actions] if isinstance(actions, list) else []
+
+
+def _render_unfinished_records(context: UIContext) -> None:
+    get_unfinished_records = getattr(context.storage, "get_unfinished_records", None)
+    if get_unfinished_records is None:
+        return
+    st.subheader(t("search_records.unfinished_title"))
+    records = get_unfinished_records(limit=50)
+    if not records:
+        st.caption(t("search_records.unfinished_empty"))
+        return
+
+    display_records: list[dict[str, object]] = []
+    for record in records:
+        display_records.append(
+            {
+                "file_id": record.get("file_id"),
+                "original_name": record.get("original_name"),
+                "status": record.get("status"),
+                "created_at": format_timestamp_for_display(record.get("created_at")),
+                "updated_at": format_timestamp_for_display(record.get("updated_at")),
+                "temp_exists": t("common.yes") if record.get("temp_exists") else t("common.no"),
+                "last_error": record.get("last_error") or "",
+            }
+        )
+    st.dataframe(display_records, use_container_width=True)
+
+    options = [int(record["file_id"]) for record in records if record.get("file_id") is not None]
+    selected_file_id = st.selectbox(t("search_records.unfinished_select"), options, key="unfinished_file_id")
+    selected = next((dict(record) for record in records if int(record.get("file_id") or -1) == int(selected_file_id)), {})
+    actions = build_unfinished_record_actions(selected)
+    if not actions:
+        st.caption(t("search_records.unfinished_no_actions"))
+        return
+
+    cols = st.columns(3)
+    if "resume" in actions:
+        with cols[0]:
+            if st.button(t("search_records.unfinished_resume"), key=f"unfinished_resume_{selected_file_id}"):
+                try:
+                    resumed = resume_unfinished_record(
+                        storage=context.storage,
+                        processor=context.processor,
+                        file_id=int(selected_file_id),
+                        processing_options=st.session_state.get("processing_options"),
+                    )
+                    st.session_state.analysis_results = [resumed]
+                    st.success(t("search_records.unfinished_resume_success", name=safe_display_text(resumed.original_name)))
+                except Exception as exc:
+                    handle_ui_exception(t("search_records.unfinished_resume_failed"), exc)
+    if "reanalyze" in actions:
+        with cols[1]:
+            if st.button(t("search_records.unfinished_reanalyze"), key=f"unfinished_reanalyze_{selected_file_id}"):
+                try:
+                    reanalyzed = reanalyze_unfinished_record(
+                        storage=context.storage,
+                        processor=context.processor,
+                        file_id=int(selected_file_id),
+                        processing_options=st.session_state.get("processing_options"),
+                    )
+                    st.session_state.analysis_results = [reanalyzed]
+                    st.success(t("search_records.unfinished_reanalyze_success", name=safe_display_text(reanalyzed.original_name)))
+                except Exception as exc:
+                    handle_ui_exception(t("search_records.unfinished_reanalyze_failed"), exc)
+    if "discard" in actions:
+        with cols[2]:
+            confirm = st.checkbox(
+                t("search_records.unfinished_discard_confirm"),
+                key=f"unfinished_discard_confirm_{selected_file_id}",
+            )
+            if st.button(
+                t("search_records.unfinished_discard"),
+                key=f"unfinished_discard_{selected_file_id}",
+                disabled=not confirm,
+            ):
+                try:
+                    discard_result = discard_unfinished_record(storage=context.storage, file_id=int(selected_file_id))
+                    if discard_result.get("success"):
+                        st.success(t("search_records.unfinished_discard_success"))
+                    else:
+                        cleanup_errors = discard_result.get("cleanup_errors")
+                        cleanup_error_text = (
+                            "; ".join(str(error) for error in cleanup_errors)
+                            if isinstance(cleanup_errors, list)
+                            else ""
+                        )
+                        st.warning(
+                            t(
+                                "search_records.unfinished_discard_partial",
+                                errors=safe_display_text(cleanup_error_text),
+                            )
+                        )
+                    st.rerun()
+                except Exception as exc:
+                    handle_ui_exception(t("search_records.unfinished_discard_failed"), exc)
 
 
 def render_records(context: UIContext, *, show_header: bool = True) -> None:
@@ -202,3 +307,5 @@ def render_records(context: UIContext, *, show_header: bool = True) -> None:
                 handle_ui_exception(t("search_records.reclassify_failed"), exc)
     else:
         st.caption(t("search_records.reclassify_unavailable"))
+
+    _render_unfinished_records(context)

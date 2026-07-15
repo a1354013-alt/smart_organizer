@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from runtime_config import build_runtime_config
+
 PROJECT_ROOT = Path(__file__).resolve().parent
-UPLOAD_DIR = PROJECT_ROOT / "uploads"
-REPO_ROOT = PROJECT_ROOT / "repo"
-DB_PATH = PROJECT_ROOT / "smart_organizer.db"
+RUNTIME_CONFIG = build_runtime_config(PROJECT_ROOT)
+UPLOAD_DIR = RUNTIME_CONFIG.upload_dir
+REPO_ROOT = RUNTIME_CONFIG.repo_root
+DB_PATH = RUNTIME_CONFIG.db_path
+PREVIEW_DIR = RUNTIME_CONFIG.preview_dir
+QUARANTINE_DIR = RUNTIME_CONFIG.quarantine_dir
+LOG_DIR = RUNTIME_CONFIG.log_dir
+MANIFEST_DIR = RUNTIME_CONFIG.manifest_dir
 
 UPLOAD_MAX_FILE_MB = 25
 UPLOAD_MAX_BATCH_MB = 50

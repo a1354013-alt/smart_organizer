@@ -23,7 +23,9 @@ from scripts.validate_release_source import (
     _handle_output_chunk,
     _tail_lines,
     check_conflict_markers,
+    is_process_actively_running,
     run_step,
+    wait_for_process_not_running,
 )
 from scripts.verify_release_zip import default_zip_path_arg, resolve_zip_paths, verify_release_zip
 
@@ -102,20 +104,8 @@ def _run_step_in_thread(
     return result, thread
 
 
-def _pid_exists(pid: int) -> bool:
-    if os.name == "nt":
-        result = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return f'"{pid}"' in result.stdout
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+def _process_actively_running(pid: int) -> bool:
+    return is_process_actively_running(pid)
 
 
 def test_python_release_script_builds_clean_zip(tmp_path):
@@ -568,8 +558,25 @@ def test_validate_release_run_step_timeout_does_not_leave_process(capsys, tmp_pa
     assert child_ready_file.exists()
     assert "parent partial stdout" in captured.out
     assert "parent partial stderr" in captured.err
-    assert not _pid_exists(int(parent_pid_file.read_text(encoding="utf-8")))
-    assert not _pid_exists(int(child_pid_file.read_text(encoding="utf-8")))
+    assert wait_for_process_not_running(int(parent_pid_file.read_text(encoding="utf-8")), timeout_seconds=3)
+    assert wait_for_process_not_running(int(child_pid_file.read_text(encoding="utf-8")), timeout_seconds=3)
+
+
+def test_wait_for_process_not_running_accepts_briefly_defunct_child(monkeypatch):
+    states = iter([True, False])
+    monkeypatch.setattr("scripts.validate_release_source.is_process_actively_running", lambda pid: next(states))
+
+    assert wait_for_process_not_running(12345, timeout_seconds=1)
+
+
+def test_wait_for_process_not_running_fails_for_active_child(monkeypatch):
+    monkeypatch.setattr("scripts.validate_release_source.is_process_actively_running", lambda pid: True)
+
+    assert not wait_for_process_not_running(12345, timeout_seconds=0.1)
+
+
+def test_process_actively_running_reports_current_process():
+    assert _process_actively_running(os.getpid())
 
 
 def test_validate_release_run_step_collects_success_stdout_and_stderr(capsys):

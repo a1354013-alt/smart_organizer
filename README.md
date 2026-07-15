@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.4)
+# Smart Organizer (v2.8.5rc2)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -27,7 +27,8 @@ Upload limits:
 ## Recommended Python Version
 
 - Recommended: Python `3.11`
-- Supported and validated in CI: Python `3.11`, `3.12`
+- Supported and validated: Python `3.11`, `3.12`
+- Unsupported versions fail preflight at startup and release validation. Python `3.10` and `3.13+` are not supported.
 
 ## Core Workflow
 
@@ -45,7 +46,7 @@ flowchart LR
 - Local-first safety model: review signals before any move, quarantine instead of delete, and keep restore available.
 - Explainable organization: stale-file heuristics, duplicate-name detection, topic classification, and audit-friendly reports.
 - Resilient degraded fallback: missing `ffmpeg`, `poppler`, or `tesseract` should reduce optional capabilities, not crash the app.
-- Portfolio-ready engineering hygiene: typed Python, targeted tests, release validation, and CI coverage across Python `3.11` and `3.12`.
+- Portfolio-ready engineering hygiene: typed Python, targeted tests, coverage gating, dependency audit, and CI coverage across Windows/Linux on Python `3.11` and `3.12`.
 
 ## Safe Organization Flow
 
@@ -108,7 +109,7 @@ This project is intentionally a safe organization assistant, not a direct file d
 ## Quick Start
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock.txt
 streamlit run app.py
 ```
 
@@ -123,7 +124,7 @@ In the source repository, VS Code can launch the Streamlit app directly:
 3. Install dependencies if needed:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock.txt
 ```
 
 4. Press `F5` and choose `Smart Organizer: Streamlit App`.
@@ -132,6 +133,16 @@ python -m pip install -r requirements.txt
 Using the VS Code launch target starts Streamlit directly. The home view opens with the compact dashboard layout, and the top dialog buttons contain the longer explanatory content.
 
 The `.vscode/launch.json`, `.vscode/tasks.json`, and `.vscode/extensions.json` files are source-repository helpers and are not included in the runtime release zip.
+
+## Runtime Data Location
+
+Smart Organizer stores runtime user data outside the source directory by default:
+
+- Windows: `%LOCALAPPDATA%\SmartOrganizer`
+- Linux: `~/.local/share/smart-organizer`
+- macOS: `~/Library/Application Support/SmartOrganizer`
+
+Set `SMART_ORGANIZER_DATA_DIR` to use a different writable data directory. The runtime layout contains `smart_organizer.db`, `uploads/`, `repository/`, `previews/`, `quarantine/`, `logs/`, and `manifests/`. Legacy source-adjacent data is copied conservatively on first startup when the destination is empty; the old source data is left in place.
 
 ## Optional ClamAV Malware Scan
 
@@ -215,7 +226,7 @@ python -m mypy --cache-dir=/dev/null
 python -m pytest -q
 ```
 
-GitHub Actions already validates the repository on Python `3.11` and `3.12`.
+GitHub Actions validates Ubuntu and Windows on Python `3.11` and `3.12`.
 For the full source-repository validation flow, including cache-safe compilation and release packaging, follow `RUN_RELEASE.md` from the source repository before packaging an official release.
 
 ## Source Repository Release Validation
@@ -228,7 +239,9 @@ Release packaging and verification are source-repository workflows. Follow `RUN_
 
 ## CI And Validation Commands
 
-CI and local release validation cover compile, cache-safe compile, lint, type checking, tests, release packaging, release verification, command-plan validation, and full release-validation execution.
+CI and local release validation cover compile, cache-safe compile, lock consistency, Ruff, Mypy, branch coverage with a 75% threshold, pip-audit, release packaging, release verification, command-plan validation, and full release-validation execution.
+
+Dependabot checks Python dependencies and GitHub Actions weekly. CodeQL runs as supplemental security analysis for Python and workflow code.
 
 The extracted runtime package is not the place to run those source-repository commands. Use `RUN_RELEASE.md` from the source repository for the exact command sequence and release-validation workflow.
 
@@ -258,3 +271,4 @@ The source release-validation wrapper keeps the command plan aligned with CI. It
 - Release packaging notes: `RELEASE_PACKAGING.md`
 - Release runbook: `RUN_RELEASE.md`
 - Traditional Chinese quick start: `README.zh-TW.md`
+If a browser or Streamlit session closes after upload analysis but before final organization, the unfinished upload remains recoverable from **Search & Records > Maintenance > Unfinished Uploads**. Use **Resume** to restore persisted review data when available, **Re-analyze** to rebuild analysis from the saved temporary upload, or **Discard** to remove the unfinished database row and approved temporary artifacts. If the temporary file is missing, the record is marked broken and can still be discarded safely.

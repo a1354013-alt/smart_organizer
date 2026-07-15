@@ -78,8 +78,8 @@ def analyze_one_upload(
                     None,
                     DuplicateInfo(
                         filename=uploaded.name,
-                        status="PENDING",
-                        display=f"{uploaded.name} (already queued)",
+                        status=dup_status,
+                        display=f"{uploaded.name} (already {dup_status.lower()}; use Records to resume, re-analyze, or discard)",
                     ),
                     None,
                 )

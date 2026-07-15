@@ -4,6 +4,7 @@ import logging
 
 from storage_base import StorageBase
 from storage_cleanup import StorageCleanupMixin
+from storage_lifecycle import StorageLifecycleMixin
 from storage_recovery import StorageRecoveryMixin
 from storage_repository import StorageRepositoryMixin
 from storage_schema import StorageSchemaMixin
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class StorageManager(
     StorageCleanupMixin,
+    StorageLifecycleMixin,
     StorageRecoveryMixin,
     StorageSearchMixin,
     StorageRepositoryMixin,

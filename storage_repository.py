@@ -263,10 +263,10 @@ class StorageRepositoryMixin:
 
                 cursor.execute(
                     """
-                    INSERT INTO files (original_name, safe_name, temp_path, file_hash, file_type, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
+                    INSERT INTO files (original_name, safe_name, temp_path, file_hash, file_type, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
                     """,
-                    (original_name, safe_name, str(temp_path), file_hash, final_file_type, utc_now_iso()),
+                    (original_name, safe_name, str(temp_path), file_hash, final_file_type, utc_now_iso(), utc_now_iso()),
                 )
                 file_id = int(cursor.lastrowid or 0)
                 conn.commit()
@@ -396,6 +396,7 @@ class StorageRepositoryMixin:
                     last_manual_topic = COALESCE(?, last_manual_topic),
                     last_manual_reason = COALESCE(?, last_manual_reason),
                     is_scanned = ?,
+                    updated_at = ?,
                     status = CASE
                         WHEN status = 'COMPLETED' THEN 'COMPLETED'
                         ELSE 'PROCESSED'
@@ -418,6 +419,7 @@ class StorageRepositoryMixin:
                     last_manual_topic,
                     last_manual_reason,
                     1 if metadata.get("is_scanned") else 0,
+                    utc_now_iso(),
                     self_file_id,
                 ),
             )
