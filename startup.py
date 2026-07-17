@@ -106,17 +106,6 @@ def initialize_startup(project_root: Path | None = None) -> StartupState:
         ) from exc
 
     try:
-        ensure_runtime_directories(config)
-    except RuntimeDirectoryError as exc:
-        raise _startup_error(
-            stage="runtime-directory validation",
-            summary=str(exc),
-            remediation="Choose a writable data directory with SMART_ORGANIZER_DATA_DIR.",
-            config=config,
-        ) from exc
-    os.environ.setdefault("LOG_FILE", str(config.log_dir / "smart_organizer.log"))
-
-    try:
         legacy_status = migrate_legacy_data_if_needed(config)
     except LegacyDataMigrationError as exc:
         raise _startup_error(
@@ -126,6 +115,17 @@ def initialize_startup(project_root: Path | None = None) -> StartupState:
             config=config,
             legacy_detected=True,
         ) from exc
+
+    try:
+        ensure_runtime_directories(config)
+    except RuntimeDirectoryError as exc:
+        raise _startup_error(
+            stage="runtime-directory validation",
+            summary=str(exc),
+            remediation="Choose a writable data directory with SMART_ORGANIZER_DATA_DIR.",
+            config=config,
+        ) from exc
+    os.environ.setdefault("LOG_FILE", str(config.log_dir / "smart_organizer.log"))
 
     return StartupState(config=config, legacy_detected=legacy_status.has_legacy_data)
 

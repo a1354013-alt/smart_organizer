@@ -12,6 +12,7 @@ from core import FileProcessor
 from frontend_safety import inject_browser_storage_sanitizer
 from i18n import DEFAULT_LANGUAGE, t
 from logging_config import setup_logging
+from runtime_config import RuntimeConfig
 from startup import initialize_startup
 from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES, StorageManager
 from ui_common import UIContext, inject_global_css
@@ -63,15 +64,26 @@ def _bootstrap_services(
     return processor, storage
 
 
-def _build_context() -> UIContext:
-    processor, storage = _bootstrap_services()
+def _build_context(runtime_config: RuntimeConfig | None = None) -> UIContext:
+    db_path = runtime_config.db_path if runtime_config is not None else DB_PATH
+    repo_root = runtime_config.repo_root if runtime_config is not None else REPO_ROOT
+    upload_dir = runtime_config.upload_dir if runtime_config is not None else UPLOAD_DIR
+    project_root = runtime_config.project_root if runtime_config is not None else PROJECT_ROOT
+    if runtime_config is None:
+        processor, storage = _bootstrap_services()
+    else:
+        processor, storage = _bootstrap_services(
+            str(db_path),
+            str(repo_root),
+            str(upload_dir),
+        )
     return UIContext(
         processor=processor,
         storage=storage,
-        project_root=PROJECT_ROOT,
-        upload_dir=UPLOAD_DIR,
-        repo_root=REPO_ROOT,
-        db_path=DB_PATH,
+        project_root=project_root,
+        upload_dir=upload_dir,
+        repo_root=repo_root,
+        db_path=db_path,
         max_upload_bytes=MAX_UPLOAD_BYTES,
         max_upload_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
         pandas=_optional_import("pandas"),
@@ -91,9 +103,8 @@ def get_main_tab_labels() -> list[str]:
 
 def main() -> None:
     startup_state = initialize_startup(PROJECT_ROOT)
-    del startup_state
     _configure_page()
-    context = _build_context()
+    context = _build_context(startup_state.config)
     inject_global_css()
     init_session_state()
     render_sidebar(context)

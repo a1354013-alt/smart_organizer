@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc2)
+# Smart Organizer (v2.8.5rc3)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -142,7 +142,11 @@ Smart Organizer stores runtime user data outside the source directory by default
 - Linux: `~/.local/share/smart-organizer`
 - macOS: `~/Library/Application Support/SmartOrganizer`
 
-Set `SMART_ORGANIZER_DATA_DIR` to use a different writable data directory. The runtime layout contains `smart_organizer.db`, `uploads/`, `repository/`, `previews/`, `quarantine/`, `logs/`, and `manifests/`. Legacy source-adjacent data is copied conservatively on first startup when the destination is empty; the old source data is left in place.
+Set `SMART_ORGANIZER_DATA_DIR` to use a different writable data directory. The runtime layout contains `smart_organizer.db`, `uploads/`, `repository/`, `previews/`, `quarantine/`, `logs/`, and `manifests/`. `StartupState.config` is the single runtime path source used by startup validation, migration, and service construction.
+
+Legacy source-adjacent data is copied conservatively on first startup when the destination is clean; the old source data is left in place. Migration first prepares a complete tree under `<destination-parent>/.smart-organizer-migration-<id>/prepared-data/`, writes `migration-state.json` atomically with temp-file + `fsync` + `os.replace`, verifies the SQLite backup and copied artifacts, and only then promotes the prepared tree. A separate `.smart-organizer-migration.lock` prevents concurrent migrations and records PID, hostname, and creation time for diagnostics.
+
+If startup is interrupted during preparation or verification, the next startup resumes or safely rebuilds only known staging data. If both legacy source data and a valid new runtime directory exist, Smart Organizer refuses to overwrite or merge them and shows a recoverable startup conflict. Unknown non-empty destinations are left untouched. Completed migrations write and validate a structured `.smart_organizer_migration.json` marker; malformed markers, missing databases, missing required directories, or conflicting staging directories produce a safe startup error instead of silent reuse. SQLite migration uses the SQLite backup API so committed WAL rows are preserved without requiring legacy WAL/SHM files. Quarantine, manifests, logs, previews, uploads, and repository artifacts are migrated by explicit name mapping; source code, tests, caches, virtual environments, release zips, and other developer-only artifacts are excluded.
 
 ## Optional ClamAV Malware Scan
 

@@ -152,7 +152,7 @@ def test_app_main_renders_tabs_with_mocked_sections(monkeypatch, tmp_path: Path)
         plt=None,
     )
     monkeypatch.setattr(app_main, "st", fake_st)
-    monkeypatch.setattr(app_main, "_build_context", lambda: context)
+    monkeypatch.setattr(app_main, "_build_context", lambda _runtime_config=None: context)
     monkeypatch.setattr(app_main, "inject_browser_storage_sanitizer", _noop)
     monkeypatch.setattr(app_main, "setup_logging", _noop)
     monkeypatch.setattr(app_main, "inject_global_css", lambda: rendered.append("css"))

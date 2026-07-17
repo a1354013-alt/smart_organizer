@@ -65,16 +65,22 @@ def test_startup_error_page_is_safe_and_has_reference_id():
 
 def test_startup_boundary_prevents_normal_render_after_fatal_error():
     fake = FakeStreamlit()
-    rendered_normal = False
+    calls: list[str] = []
 
-    def fail() -> None:
-        nonlocal rendered_normal
-        rendered_normal = True
+    def bootstrap() -> None:
+        calls.append("bootstrap")
         raise StartupError(stage="database initialization", summary="DB failed", remediation="Retry later")
 
-    run_with_startup_boundary(fake, fail)
+    def render_normal() -> None:
+        calls.append("render_normal")
 
-    assert rendered_normal is True
+    def run_app() -> None:
+        bootstrap()
+        render_normal()
+
+    run_with_startup_boundary(fake, run_app)
+
+    assert calls == ["bootstrap"]
     assert any(name == "error" for name, _value in fake.calls)
     assert not any(name == "rerun" for name, _value in fake.calls)
 

@@ -32,7 +32,7 @@ COMMAND_TIMEOUTS_SECONDS = {
     "scripts/cleanup_validation_artifacts.py": 30,
     "ruff": 60,
     "mypy": LONG_COMMAND_TIMEOUT_SECONDS,
-    "pytest": LONG_COMMAND_TIMEOUT_SECONDS,
+    "pytest": 420,
     "pip_audit": LONG_COMMAND_TIMEOUT_SECONDS,
     "scripts/create_release_zip.py": 120,
     "scripts/verify_release_zip.py": 60,

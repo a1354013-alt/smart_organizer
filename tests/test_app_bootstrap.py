@@ -3,9 +3,11 @@ from __future__ import annotations
 import sqlite3
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 
 import app_main
 from core import FileProcessor
+from runtime_config import build_runtime_config
 from storage import StorageManager
 
 
@@ -45,3 +47,23 @@ def test_bootstrap_services_initializes_clean_workspace(tmp_path: Path):
         with suppress(UnboundLocalError):
             storage.close()
         app_main._bootstrap_services.clear()
+
+
+def test_build_context_uses_startup_resolved_runtime_config(monkeypatch, tmp_path: Path):
+    config = build_runtime_config(tmp_path / "source", {"SMART_ORGANIZER_DATA_DIR": str(tmp_path / "runtime data")})
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_bootstrap(db_path: str, repo_root: str, upload_dir: str):
+        calls.append((db_path, repo_root, upload_dir))
+        return SimpleNamespace(), SimpleNamespace()
+
+    monkeypatch.setattr(app_main, "_bootstrap_services", fake_bootstrap)
+    monkeypatch.setattr(app_main, "_optional_import", lambda module_name: None)
+
+    context = app_main._build_context(config)
+
+    assert calls == [(str(config.db_path), str(config.repo_root), str(config.upload_dir))]
+    assert context.project_root == config.project_root
+    assert context.db_path == config.db_path
+    assert context.repo_root == config.repo_root
+    assert context.upload_dir == config.upload_dir

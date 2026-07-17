@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc2)
+# Smart Organizer (v2.8.5rc3)
 
 Smart Organizer 是一個以本機優先為核心的安全檔案整理助手。它能協助你檢視上傳檔案或本機資料夾、說明哪些檔案值得注意、先做 dry-run 預覽，再把你選擇的檔案移入 quarantine，之後也能安全還原並匯出報告。
 
@@ -142,7 +142,11 @@ Smart Organizer 預設會把可變動的 runtime 資料放在 source repository 
 - macOS：`~/Library/Application Support/SmartOrganizer`
 - Linux：`~/.local/share/smart-organizer`
 
-runtime 資料夾包含 `smart_organizer.db`、`uploads/`、`repository/`、`previews/`、`quarantine/`、`logs/`、`manifests/`。首次啟動時，如果偵測到舊版 source-adjacent 資料，會用 SQLite backup 語意複製到 runtime 資料夾並寫入 migration marker；原始資料會保留不刪除。
+runtime 資料夾包含 `smart_organizer.db`、`uploads/`、`repository/`、`previews/`、`quarantine/`、`logs/`、`manifests/`。`StartupState.config` 是 startup validation、migration、service construction 共用的 runtime path single source of truth。
+
+首次啟動時，如果偵測到舊版 source-adjacent 資料且目的地乾淨，會先在 `<destination-parent>/.smart-organizer-migration-<id>/prepared-data/` 建立完整 staging tree，並以 temp file + `fsync` + `os.replace` 原子寫入 `migration-state.json`。完成 SQLite backup 與 artifact 驗證後，才會 promote 到正式 runtime data directory；舊資料會保留不刪除。獨立的 `.smart-organizer-migration.lock` 會記錄 PID、hostname、created time，避免兩個程序同時 migration。
+
+如果 migration 在 preparing、copying、verifying 階段中斷，下次啟動會根據 state file resume 或安全重建已知 staging data。若舊資料與有效的新 runtime 資料同時存在，Smart Organizer 會拒絕覆寫或合併並顯示可復原的 startup conflict；未知的非空目的地不會被刪除。完成後會寫入結構化 `.smart_organizer_migration.json` marker，並在啟動時驗證 marker、database、必要資料夾與 staging 衝突。SQLite migration 使用 SQLite backup API，會保留已 commit 的 WAL rows，不需要依賴舊的 WAL/SHM sidecar。migration 只包含明確映射的 database、uploads、repository/repo、previews、quarantine、manifests、logs；source code、tests、cache、venv、release zip 與 developer-only artifacts 會被排除。
 
 ## 選配 ClamAV 木馬掃描
 
