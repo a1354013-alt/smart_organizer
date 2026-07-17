@@ -192,6 +192,40 @@ def check_conflict_markers(project_root: Path = PROJECT_ROOT) -> None:
         raise ValueError(f"Source files contain conflict markers: {display}")
 
 
+def check_migration_safety_patterns(project_root: Path = PROJECT_ROOT) -> None:
+    runtime_config = project_root / "runtime_config.py"
+    source = runtime_config.read_text(encoding="utf-8")
+    required_helpers = (
+        "validate_migration_staging_root",
+        "safe_remove_migration_staging",
+        "safe_write_migration_state",
+        "_validate_completed_marker",
+        "_classify_existing_lock",
+    )
+    missing = [helper for helper in required_helpers if helper not in source]
+    if missing:
+        raise ValueError(f"Migration safety helpers are missing: {missing}")
+    unsafe_patterns = (
+        "shutil.rmtree(state.staging_root",
+        "shutil.rmtree(_prepared_path(state)",
+        "state.staging_root / \"prepared-data\"",
+    )
+    hits = [pattern for pattern in unsafe_patterns if pattern in source]
+    if hits:
+        raise ValueError(f"Runtime migration contains unsafe path patterns: {hits}")
+    test_source = (project_root / "tests" / "test_runtime_config.py").read_text(encoding="utf-8")
+    required_tests = (
+        "test_tampered_state_staging_root_does_not_delete_unrelated_directory",
+        "test_repeated_migration_startup_is_idempotent",
+        "test_directory_only_uploads_create_valid_database",
+        "test_stale_local_lock_is_recovered",
+        "test_repository_sources_conflicting_file_stops_before_promotion",
+    )
+    missing_tests = [name for name in required_tests if name not in test_source]
+    if missing_tests:
+        raise ValueError(f"Migration release-blocker regression tests are missing: {missing_tests}")
+
+
 def _wait_until(proc: subprocess.Popen[Any], deadline: float) -> bool:
     while proc.poll() is None:
         remaining = deadline - time.perf_counter()
@@ -554,6 +588,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.check_conflicts_only:
         check_conflict_markers(PROJECT_ROOT)
+        check_migration_safety_patterns(PROJECT_ROOT)
         return 0
     commands = build_validation_commands(str(args.output_dir))
 
