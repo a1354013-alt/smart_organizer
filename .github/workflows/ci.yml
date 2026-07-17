@@ -39,7 +39,7 @@ jobs:
 
       - name: Clean release output
         shell: bash
-        run: rm -rf release_ci coverage.xml .coverage
+        run: rm -rf release_ci coverage.xml .coverage .coverage.*
 
       - name: Compile Python files
         run: python scripts/safe_compileall.py -q .
@@ -93,4 +93,4 @@ jobs:
       - name: Cleanup release output
         if: always()
         shell: bash
-        run: rm -rf release_ci coverage.xml .coverage
+        run: rm -rf release_ci coverage.xml .coverage .coverage.*

@@ -40,6 +40,8 @@ REQUIRED_GITIGNORE_RULES = [
     "*.db",
     "*.sqlite",
     ".coverage",
+    ".coverage.*",
+    "coverage.xml",
     "htmlcov/",
 ]
 REQUIRED_GITATTR_RULES = [
@@ -62,6 +64,7 @@ REQUIRED_GITATTR_RULES = [
     "node_modules/ export-ignore",
     "*.db export-ignore",
     "*.sqlite export-ignore",
+    ".coverage.* export-ignore",
 ]
 
 

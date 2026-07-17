@@ -7,12 +7,12 @@ stable for the app, services, tests, and the official runtime/demo release zip.
 """
 
 from storage_base import (
-    CURRENT_SCHEMA_VERSION,
     MAX_UPLOAD_BATCH_BYTES,
     MAX_UPLOAD_BYTES,
     SearchContentError,
     _log_context,
 )
+from storage_db_schema import CURRENT_SCHEMA_VERSION
 from storage_manager import StorageManager
 
 __all__ = [

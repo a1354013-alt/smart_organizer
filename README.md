@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc4)
+# Smart Organizer (v2.8.5rc5)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 

@@ -2,31 +2,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from pathlib import Path
 from typing import Any
 
-from storage_base import CURRENT_SCHEMA_VERSION
+from storage_db_schema import CURRENT_SCHEMA_VERSION, FILE_INDEX_STATEMENTS, upgrade_database_schema
 
 logger = logging.getLogger(__name__)
-
-FILE_INDEX_STATEMENTS = {
-    "idx_files_created_at_file_id": (
-        {"created_at", "file_id"},
-        "CREATE INDEX IF NOT EXISTS idx_files_created_at_file_id ON files(created_at DESC, file_id DESC)",
-    ),
-    "idx_files_status_created_at": (
-        {"status", "created_at", "file_id"},
-        "CREATE INDEX IF NOT EXISTS idx_files_status_created_at ON files(status, created_at DESC, file_id DESC)",
-    ),
-    "idx_files_main_topic_created_at": (
-        {"main_topic", "created_at", "file_id"},
-        "CREATE INDEX IF NOT EXISTS idx_files_main_topic_created_at ON files(main_topic, created_at DESC, file_id DESC)",
-    ),
-    "idx_files_file_type_created_at": (
-        {"file_type", "created_at", "file_id"},
-        "CREATE INDEX IF NOT EXISTS idx_files_file_type_created_at ON files(file_type, created_at DESC, file_id DESC)",
-    ),
-}
-
 
 class StorageSchemaMixin:
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
@@ -114,98 +95,7 @@ class StorageSchemaMixin:
                 conn.close()
 
     def _check_migration(self: Any) -> None:
-        conn: sqlite3.Connection | None = None
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT value FROM sys_config WHERE key = "schema_version"')
-            row = cursor.fetchone()
-            version = int(row[0]) if row else 1
-
-            cursor.execute("PRAGMA table_info(files)")
-            columns = [col[1] for col in cursor.fetchall()]
-            new_cols = [
-                ("safe_name", "TEXT"),
-                ("final_name", "TEXT"),
-                ("classification_reason", "TEXT"),
-                ("final_decision_reason", "TEXT"),
-                ("temp_path", "TEXT"),
-                ("final_path", "TEXT"),
-                ("preview_path", "TEXT"),
-                ("moving_target_path", "TEXT"),
-                ("file_type", "TEXT"),
-                ("standard_date", "TEXT"),
-                ("main_topic", "TEXT"),
-                ("summary", "TEXT"),
-                ("summary_status", "TEXT"),
-                ("summary_error", "TEXT"),
-                ("is_scanned", "INTEGER DEFAULT 0"),
-                ("status", "TEXT DEFAULT 'PENDING'"),
-                ("last_error", "TEXT"),
-                ("manual_override", "INTEGER DEFAULT 0"),
-                ("decision_source", "TEXT"),
-                ("decision_updated_at", "TEXT"),
-                ("last_manual_topic", "TEXT"),
-                ("last_manual_reason", "TEXT"),
-                ("updated_at", "TEXT"),
-            ]
-            for col_name, col_type in new_cols:
-                if col_name not in columns:
-                    cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
-
-            self._ensure_indexes(cursor)
-
-            if version < CURRENT_SCHEMA_VERSION:
-                logger.info("Migration: V%s -> V%s", version, CURRENT_SCHEMA_VERSION)
-
-                if version < 7:
-                    cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
-                    cursor.execute("DROP TABLE IF EXISTS file_tags")
-                    cursor.execute(
-                        """
-                        CREATE TABLE file_tags (
-                            file_id INTEGER, tag_id INTEGER, confidence REAL,
-                            PRIMARY KEY (file_id, tag_id),
-                            FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
-                            FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
-                        )
-                        """
-                    )
-                    cursor.execute("INSERT OR IGNORE INTO file_tags SELECT * FROM file_tags_backup")
-                    cursor.execute("DROP TABLE IF EXISTS file_tags_backup")
-
-                if version < 14:
-                    cursor.execute(
-                        """
-                        UPDATE files
-                        SET created_at = REPLACE(created_at, ' ', 'T') || '+00:00'
-                        WHERE created_at GLOB '????-??-?? ??:??:??'
-                        """
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE files
-                        SET decision_updated_at = REPLACE(decision_updated_at, ' ', 'T') || '+00:00'
-                        WHERE decision_updated_at GLOB '????-??-?? ??:??:??'
-                        """
-                    )
-
-                if version < 16:
-                    cursor.execute(
-                        """
-                        UPDATE files
-                        SET updated_at = COALESCE(updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
-                        WHERE updated_at IS NULL OR updated_at = ''
-                        """
-                    )
-
-                cursor.execute(
-                    "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",
-                    (str(CURRENT_SCHEMA_VERSION),),
-                )
-                conn.commit()
-        except (sqlite3.Error, ValueError) as e:
+            upgrade_database_schema(Path(str(self.db_path)))
+        except RuntimeError as e:
             raise RuntimeError(f"Database migration failed: {e}") from e
-        finally:
-            if conn:
-                conn.close()

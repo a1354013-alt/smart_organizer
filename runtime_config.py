@@ -6,6 +6,7 @@ import os
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import uuid
@@ -13,6 +14,14 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, TypedDict, cast
+
+from storage_db_schema import (
+    CURRENT_SCHEMA_VERSION,
+    SchemaStatus,
+    expected_runtime_tables,
+    inspect_database_schema,
+    upgrade_database_schema,
+)
 
 DATA_DIR_ENV = "SMART_ORGANIZER_DATA_DIR"
 APP_AUTHOR = "SmartOrganizer"
@@ -22,7 +31,6 @@ MIGRATION_MARKER = ".smart_organizer_migration.json"
 MIGRATION_LOCK = ".smart-organizer-migration.lock"
 MIGRATION_STATE = "migration-state.json"
 MIGRATION_VERSION = 1
-CURRENT_SCHEMA_VERSION = 16
 MIGRATION_PREFIX = ".smart-organizer-migration-"
 MIGRATED_ARTIFACTS = (
     "database",
@@ -155,6 +163,9 @@ class MarkerPayload(TypedDict):
     database_source: str
     schema_version: int
     migrated_artifacts: list[str]
+
+
+TERMINAL_RECOVERY_STATES = {"manual_recovery_required", "rollback_required", "completed"}
 
 
 def _utc_now() -> str:
@@ -575,23 +586,28 @@ def _required_runtime_dirs(config: RuntimeConfig) -> tuple[Path, ...]:
 
 
 def _verify_database(db_path: Path, *, require_expected_schema: bool = True) -> int:
-    if not db_path.exists():
-        raise LegacyDataMigrationError(f"Runtime database is missing: {db_path}")
-    try:
-        with sqlite3.connect(db_path) as conn:
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()
-            if not integrity or integrity[0] != "ok":
-                raise LegacyDataMigrationError("SQLite database failed integrity_check")
-            table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if require_expected_schema and "sys_config" not in table_names:
-                raise LegacyDataMigrationError("SQLite database is missing expected Smart Organizer tables")
-            row = conn.execute("SELECT value FROM sys_config WHERE key = 'schema_version'").fetchone()
-    except sqlite3.Error as exc:
-        raise LegacyDataMigrationError("SQLite database could not be verified") from exc
-    try:
-        return int(row[0]) if row else CURRENT_SCHEMA_VERSION
-    except (TypeError, ValueError):
-        return CURRENT_SCHEMA_VERSION
+    inspection = inspect_database_schema(db_path)
+    if inspection.status == SchemaStatus.CORRUPT:
+        raise LegacyDataMigrationError(inspection.details or "SQLite database could not be verified")
+    if inspection.status == SchemaStatus.MISSING:
+        raise LegacyDataMigrationError(inspection.details or "SQLite database schema_version is missing")
+    if inspection.status == SchemaStatus.INVALID:
+        raise LegacyDataMigrationError(inspection.details or "SQLite database schema metadata is invalid")
+    if inspection.status == SchemaStatus.FUTURE:
+        raise LegacyDataMigrationError(inspection.details or "SQLite database uses a future schema version")
+    if require_expected_schema and inspection.status != SchemaStatus.VALID:
+        raise LegacyDataMigrationError(inspection.details or "SQLite database schema does not match the runtime")
+    if require_expected_schema:
+        missing_runtime_tables = sorted(
+            {"sys_config", "files", "tags", "file_tags", "file_content_fts"} - expected_runtime_tables(db_path)
+        )
+        if missing_runtime_tables:
+            raise LegacyDataMigrationError(
+                f"SQLite database is missing expected Smart Organizer tables: {', '.join(missing_runtime_tables)}"
+            )
+    if inspection.version is None:
+        raise LegacyDataMigrationError("SQLite database schema version could not be determined")
+    return inspection.version
 
 
 def _create_new_runtime_database(db_path: Path) -> None:
@@ -671,13 +687,43 @@ def _require_marker_string(raw: dict[object, object], field: str) -> str:
     return value
 
 
-def _validate_completed_marker(config: RuntimeConfig, *, allow_active_lock: bool = False) -> MarkerPayload:
+def _current_lock_owner_token(config: RuntimeConfig) -> str | None:
+    metadata = _read_lock_metadata(config)
+    owner_token = metadata.get("owner_token")
+    return str(owner_token) if isinstance(owner_token, str) and owner_token.strip() else None
+
+
+def _marker_artifacts(raw: dict[object, object]) -> list[str]:
+    artifacts = raw.get("migrated_artifacts")
+    if not isinstance(artifacts, list) or any(not isinstance(item, str) for item in artifacts):
+        raise MigrationMarkerValidationError("Completed migration marker has invalid migrated_artifacts")
+    if len(set(artifacts)) != len(artifacts):
+        raise MigrationMarkerValidationError("Completed migration marker contains duplicate artifacts")
+    unknown_artifacts = set(artifacts) - set(MIGRATED_ARTIFACTS)
+    if unknown_artifacts:
+        raise MigrationMarkerValidationError("Completed migration marker contains unknown artifacts")
+    if "database" not in artifacts:
+        raise MigrationMarkerValidationError("Completed migration marker must record the migrated database artifact")
+    return cast(list[str], artifacts)
+
+
+def _validate_completed_marker(
+    config: RuntimeConfig,
+    *,
+    expected_migration_id: str | None = None,
+    expected_legacy_root: Path | None = None,
+    expected_state: MigrationState | None = None,
+    allowed_lock_owner: str | None = None,
+) -> MarkerPayload:
     marker_path = _safe_marker_path(config)
     if _lock_path(config).exists():
         classification = _classify_existing_lock(config)
         if classification == "stale_local":
             _remove_stale_lock(config)
-        elif not allow_active_lock:
+        elif allowed_lock_owner is not None and classification == "active_local":
+            if _current_lock_owner_token(config) != allowed_lock_owner:
+                raise MigrationMarkerValidationError("Completed migration marker lock owner does not match the active recovery process")
+        else:
             raise MigrationMarkerValidationError("Completed migration marker has an unresolved active migration lock")
     try:
         raw = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -690,8 +736,10 @@ def _validate_completed_marker(config: RuntimeConfig, *, allow_active_lock: bool
     if raw.get("status") != "completed":
         raise MigrationMarkerValidationError("Completed migration marker status is not completed")
     migration_id = _validate_migration_id(raw.get("migration_id"))
+    if expected_migration_id is not None and migration_id != expected_migration_id:
+        raise MigrationMarkerValidationError("Completed migration marker migration ID does not match the recovery state")
     legacy_root = _normalized(Path(_require_marker_string(cast(dict[object, object], raw), "legacy_root")))
-    if legacy_root != _normalized(config.project_root):
+    if legacy_root != _normalized(expected_legacy_root or config.project_root):
         raise MigrationMarkerValidationError("Completed migration marker points at a different legacy root")
     if _normalized(Path(_require_marker_string(cast(dict[object, object], raw), "destination_root"))) != _normalized(
         config.data_root
@@ -705,12 +753,7 @@ def _validate_completed_marker(config: RuntimeConfig, *, allow_active_lock: bool
         raise MigrationMarkerValidationError("Completed migration marker database_source is unsupported")
     if not isinstance(raw.get("schema_version"), int) or raw.get("schema_version") != CURRENT_SCHEMA_VERSION:
         raise MigrationMarkerValidationError("Completed migration marker schema version does not match runtime schema")
-    artifacts = raw.get("migrated_artifacts")
-    if not isinstance(artifacts, list) or any(not isinstance(item, str) for item in artifacts):
-        raise MigrationMarkerValidationError("Completed migration marker has invalid migrated_artifacts")
-    unknown_artifacts = set(artifacts) - set(MIGRATED_ARTIFACTS)
-    if unknown_artifacts:
-        raise MigrationMarkerValidationError("Completed migration marker contains unknown artifacts")
+    artifacts = _marker_artifacts(cast(dict[object, object], raw))
     schema_version = _verify_database(config.db_path, require_expected_schema=True)
     if schema_version != CURRENT_SCHEMA_VERSION:
         raise MigrationMarkerValidationError("Runtime database schema version does not match the completed marker")
@@ -719,6 +762,22 @@ def _validate_completed_marker(config: RuntimeConfig, *, allow_active_lock: bool
         raise MigrationMarkerValidationError(
             f"Completed migration marker is missing required directories: {', '.join(missing_dirs)}"
         )
+    for artifact in artifacts:
+        if artifact == "database":
+            continue
+        artifact_path = config.data_root / artifact
+        if not artifact_path.exists():
+            raise MigrationMarkerValidationError(f"Completed migration marker claims a missing artifact: {artifact}")
+    if expected_state is not None:
+        if expected_state.database_source != raw.get("database_source"):
+            raise MigrationMarkerValidationError("Completed migration marker database_source does not match the migration state")
+        expected_artifacts = {
+            name
+            for name, value in expected_state.artifacts.items()
+            if value in {"verified", "promoted"}
+        }
+        if set(artifacts) != expected_artifacts:
+            raise MigrationMarkerValidationError("Completed migration marker artifacts do not match the migration state")
     active_states = [state for state in _find_migration_states(config) if state.status != "completed"]
     if active_states:
         if any(state.migration_id == migration_id and state.status == "promoting" for state in active_states):
@@ -828,12 +887,64 @@ def _remove_staged_artifact(config: RuntimeConfig, state: MigrationState, destin
         shutil.rmtree(resolved)
 
 
+def _is_windows_reparse_point(path: Path) -> bool:
+    try:
+        st_result = os.lstat(path)
+    except OSError:
+        return False
+    file_attributes = getattr(st_result, "st_file_attributes", 0)
+    return bool(file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def validate_legacy_artifact_tree(
+    source_root: Path,
+    approved_legacy_root: Path,
+    *,
+    artifact_name: str,
+) -> None:
+    approved_root = _normalized(approved_legacy_root)
+    source_root = _normalized(source_root)
+    if not source_root.exists():
+        return
+    if source_root.is_symlink() or _is_windows_reparse_point(source_root):
+        raise LegacyDataMigrationError(f"{artifact_name} migration rejects symlinked or reparse-point source root")
+    stack = [source_root]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                entry_path = Path(entry.path)
+                relative = entry_path.relative_to(source_root)
+                if entry.is_symlink() or _is_windows_reparse_point(entry_path):
+                    raise LegacyDataMigrationError(
+                        f"{artifact_name} migration rejects unsafe linked entry: {relative}"
+                    )
+                if entry.is_dir(follow_symlinks=False):
+                    if not _is_relative_to(_normalized(entry_path), approved_root):
+                        raise LegacyDataMigrationError(f"{artifact_name} migration entry escapes legacy root: {relative}")
+                    stack.append(entry_path)
+
+
+def _copy_directory_contents(source: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    with os.scandir(source) as entries:
+        for entry in entries:
+            source_path = Path(entry.path)
+            target_path = destination / entry.name
+            if entry.is_dir(follow_symlinks=False):
+                _copy_directory_contents(source_path, target_path)
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target_path)
+
+
 def _copy_tree_if_present(source: Path, destination: Path, *, config: RuntimeConfig, state: MigrationState) -> bool:
     if not source.exists():
         return False
+    validate_legacy_artifact_tree(source, config.project_root, artifact_name=source.name)
     if destination.exists():
         _remove_staged_artifact(config, state, destination)
-    shutil.copytree(source, destination)
+    _copy_directory_contents(source, destination)
     return True
 
 
@@ -854,15 +965,19 @@ def _files_identical(left: Path, right: Path) -> bool:
                 return True
 
 
-def _copy_repository_sources(
+def _merge_artifact_sources(
     config: RuntimeConfig,
     state: MigrationState,
     sources: tuple[Path, ...],
     destination: Path,
+    *,
+    artifact_name: str,
 ) -> bool:
     existing = [source for source in sources if source.exists()]
     if not existing:
         return False
+    for source in existing:
+        validate_legacy_artifact_tree(source, config.project_root, artifact_name=artifact_name)
     non_empty = [source for source in existing if _directory_has_entries(source)]
     selected = non_empty or existing[:1]
     if destination.exists():
@@ -876,21 +991,21 @@ def _copy_repository_sources(
             prior = case_seen.get(key)
             if prior is not None and prior != relative:
                 raise LegacyDataMigrationError(
-                    f"Repository migration has a case-only path collision: {prior} and {relative}"
+                    f"{artifact_name.capitalize()} migration has a case-only path collision: {prior} and {relative}"
                 )
             case_seen[key] = relative
             target = destination / relative
             if child.is_dir():
                 if target.exists() and not target.is_dir():
-                    raise LegacyDataMigrationError(f"Repository migration path conflict: {relative}")
+                    raise LegacyDataMigrationError(f"{artifact_name.capitalize()} migration path conflict: {relative}")
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             if child.is_symlink():
-                raise LegacyDataMigrationError(f"Repository migration refuses symlinked source file: {relative}")
+                raise LegacyDataMigrationError(f"{artifact_name.capitalize()} migration refuses symlinked source file: {relative}")
             if target.exists():
                 if target.is_file() and _files_identical(child, target):
                     continue
-                raise LegacyDataMigrationError(f"Repository migration file conflict: {relative}")
+                raise LegacyDataMigrationError(f"{artifact_name.capitalize()} migration file conflict: {relative}")
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(child, target)
     return True
@@ -925,8 +1040,14 @@ def _copy_artifacts_to_staging(config: RuntimeConfig, state: MigrationState) -> 
     _write_state(config, state)
 
     for artifact, sources in _artifact_sources(config.project_root).items():
-        if artifact == "repository":
-            copied = _copy_repository_sources(config, state, sources, prepared / artifact)
+        if artifact in {"repository", "quarantine"}:
+            copied = _merge_artifact_sources(
+                config,
+                state,
+                sources,
+                prepared / artifact,
+                artifact_name=artifact,
+            )
         else:
             copied = False
             for source in sources:
@@ -943,6 +1064,10 @@ def _copy_artifacts_to_staging(config: RuntimeConfig, state: MigrationState) -> 
 def _verify_prepared_data_with_config(config: RuntimeConfig, state: MigrationState) -> None:
     prepared = safe_resolve_prepared_root(config, state)
     _write_state(config, state, status="verifying")
+    try:
+        upgrade_database_schema(prepared / "smart_organizer.db")
+    except RuntimeError as exc:
+        raise LegacyDataMigrationError(str(exc)) from exc
     _verify_database(prepared / "smart_organizer.db", require_expected_schema=True)
     state.database_verified = True
     state.artifacts["database"] = "verified"
@@ -999,7 +1124,7 @@ def _verify_promotion_identity(config: RuntimeConfig, state: MigrationState, roo
         raise MigrationRecoveryError("Promoted destination root does not match active RuntimeConfig")
 
 
-def _finalize_promoted_destination(config: RuntimeConfig, state: MigrationState) -> None:
+def _finalize_promoted_destination(config: RuntimeConfig, state: MigrationState, *, lock_owner: str | None) -> None:
     _verify_promotion_identity(config, state, config.data_root)
     schema_version = _verify_database(config.db_path, require_expected_schema=True)
     for directory in _required_runtime_dirs(config):
@@ -1012,23 +1137,35 @@ def _finalize_promoted_destination(config: RuntimeConfig, state: MigrationState)
     state.database_verified = True
     state.status = "completed"
     _atomic_write_json(_safe_marker_path(config), cast(dict[str, object], _build_marker(state, schema_version)))
-    _validate_completed_marker(config, allow_active_lock=True)
+    _validate_completed_marker(
+        config,
+        expected_migration_id=state.migration_id,
+        expected_legacy_root=state.legacy_root,
+        expected_state=state,
+        allowed_lock_owner=lock_owner,
+    )
     _write_state(config, state, status="completed")
     with suppress(OSError):
         state.state_path.unlink()
     safe_remove_migration_staging(config, state)
 
 
-def _promote_prepared_data(config: RuntimeConfig, state: MigrationState) -> None:
+def _promote_prepared_data(config: RuntimeConfig, state: MigrationState, *, lock_owner: str | None) -> None:
     prepared = safe_resolve_prepared_root(config, state)
     marker_exists = _marker_path(config).exists()
     if marker_exists and config.data_root.exists():
-        _validate_completed_marker(config)
-        _finalize_promoted_destination(config, state)
+        _validate_completed_marker(
+            config,
+            expected_migration_id=state.migration_id,
+            expected_legacy_root=state.legacy_root,
+            expected_state=state,
+            allowed_lock_owner=lock_owner,
+        )
+        _finalize_promoted_destination(config, state, lock_owner=lock_owner)
         return
     if not prepared.exists() and config.data_root.exists():
         try:
-            _finalize_promoted_destination(config, state)
+            _finalize_promoted_destination(config, state, lock_owner=lock_owner)
             return
         except LegacyDataMigrationError as exc:
             _write_state(config, state, status="manual_recovery_required", error=_clean_error(exc))
@@ -1067,7 +1204,7 @@ def _promote_prepared_data(config: RuntimeConfig, state: MigrationState) -> None
         except OSError:
             shutil.rmtree(promotion_tmp, ignore_errors=True)
             raise
-    _finalize_promoted_destination(config, state)
+    _finalize_promoted_destination(config, state, lock_owner=lock_owner)
 
 
 def _new_state(config: RuntimeConfig) -> MigrationState:
@@ -1171,7 +1308,7 @@ def _write_lock_metadata(fd: int) -> None:
         os.fsync(lock_file.fileno())
 
 
-def _acquire_migration_lock(config: RuntimeConfig) -> Path:
+def _acquire_migration_lock(config: RuntimeConfig) -> tuple[Path, str]:
     parent = _staging_parent(config)
     parent.mkdir(parents=True, exist_ok=True)
     legacy_lock = config.data_root / ".smart_organizer_migration.lock"
@@ -1193,10 +1330,13 @@ def _acquire_migration_lock(config: RuntimeConfig) -> Path:
     except FileExistsError as exc:
         raise MigrationLockError(f"Legacy data migration is already in progress: {lock_path}") from exc
     _write_lock_metadata(fd)
-    return lock_path
+    owner_token = _current_lock_owner_token(config)
+    if owner_token is None:
+        raise MigrationLockError("Migration lock owner token is missing")
+    return lock_path, owner_token
 
 
-def _run_state_machine(config: RuntimeConfig, state: MigrationState) -> None:
+def _run_state_machine(config: RuntimeConfig, state: MigrationState, *, lock_owner: str) -> None:
     try:
         if state.status == "failed":
             if state.staging_root.exists():
@@ -1215,10 +1355,13 @@ def _run_state_machine(config: RuntimeConfig, state: MigrationState) -> None:
         if state.status in {"copying", "verifying"}:
             _verify_prepared_data_with_config(config, state)
         if state.status in {"verifying", "promoting"}:
-            _promote_prepared_data(config, state)
+            _promote_prepared_data(config, state, lock_owner=lock_owner)
     except Exception as exc:
         with suppress(Exception):
-            _write_state(config, state, status="failed", error=_clean_error(exc))
+            if state.status in TERMINAL_RECOVERY_STATES:
+                _write_state(config, state, error=_clean_error(exc))
+            else:
+                _write_state(config, state, status="failed", error=_clean_error(exc))
         if isinstance(exc, LegacyDataMigrationError):
             raise
         raise LegacyDataMigrationError("Legacy data migration failed; source data was left untouched") from exc
@@ -1255,14 +1398,14 @@ def migrate_legacy_data_if_needed(config: RuntimeConfig) -> LegacyDataStatus:
             f"({status.destination_state}). Choose a different SMART_ORGANIZER_DATA_DIR or migrate manually."
         )
 
-    lock_path = _acquire_migration_lock(config)
+    lock_path, lock_owner = _acquire_migration_lock(config)
     try:
         states = _find_migration_states(config)
         active = next((state for state in states if state.status != "completed"), None)
         state = active or _new_state(config)
         if not state.state_path.exists():
             _write_state(config, state, status="preparing")
-        _run_state_machine(config, state)
+        _run_state_machine(config, state, lock_owner=lock_owner)
     finally:
         if _normalized(lock_path) == _safe_lock_path(config) and not lock_path.is_symlink():
             lock_path.unlink(missing_ok=True)

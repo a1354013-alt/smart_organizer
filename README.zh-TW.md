@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc4)
+# Smart Organizer (v2.8.5rc5)
 
 Smart Organizer 是一個以本機優先為核心的安全檔案整理助手。它能協助你檢視上傳檔案或本機資料夾、說明哪些檔案值得注意、先做 dry-run 預覽，再把你選擇的檔案移入 quarantine，之後也能安全還原並匯出報告。
 

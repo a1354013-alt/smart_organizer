@@ -17,6 +17,9 @@ from pathlib import Path
 
 FORBIDDEN_PATTERNS = [
     ".coverage",
+    ".coverage.*",
+    "coverage.xml",
+    "htmlcov/",
     "__pycache__",
     "*.pyc",
     "tests/_tmp_pytest/",
@@ -107,6 +110,7 @@ class TestReleaseHygiene:
         required_patterns = [
             "__pycache__",
             ".coverage",
+            ".coverage.*",
             "*.pyc",
         ]
         

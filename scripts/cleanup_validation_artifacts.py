@@ -11,11 +11,14 @@ sys.dont_write_bytecode = True
 
 def cleanup_validation_artifacts(project_root: Path = PROJECT_ROOT) -> list[Path]:
     removed: list[Path] = []
-    for relative in (".coverage", "coverage.xml"):
-        path = project_root / relative
-        if path.exists() and path.is_file():
+    for path in sorted(project_root.glob(".coverage*")):
+        if path.is_file() and path.name != ".coveragerc":
             path.unlink()
             removed.append(path)
+    coverage_xml = project_root / "coverage.xml"
+    if coverage_xml.exists() and coverage_xml.is_file():
+        coverage_xml.unlink()
+        removed.append(coverage_xml)
     return removed
 
 

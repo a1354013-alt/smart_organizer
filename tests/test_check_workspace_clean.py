@@ -22,6 +22,16 @@ def test_find_workspace_pollution_detects_forbidden_runtime_artifacts(monkeypatc
     assert tmp_path / "runtime.zip" in pollution
 
 
+def test_find_workspace_pollution_detects_parallel_coverage_files(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(clean_script, "PROJECT_ROOT", tmp_path)
+    parallel_coverage = tmp_path / ".coverage.worker1"
+    parallel_coverage.write_text("coverage", encoding="utf-8")
+
+    pollution = clean_script.find_workspace_pollution()
+
+    assert parallel_coverage in pollution
+
+
 def test_find_workspace_pollution_allows_release_ci_zip_output(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(clean_script, "PROJECT_ROOT", tmp_path)
     release_dir = tmp_path / "release_ci"

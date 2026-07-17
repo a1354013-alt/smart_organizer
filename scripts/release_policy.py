@@ -158,6 +158,7 @@ FORBIDDEN_RELEASE_PATTERNS: tuple[str, ...] = (
     "*.bin",
     "tests/_tmp*/",
     ".coverage",
+    ".coverage.*",
     "coverage.xml",
     "htmlcov/",
 )
@@ -201,6 +202,8 @@ WORKSPACE_FORBIDDEN_FILE_PATTERNS: tuple[str, ...] = (
     "*-shm",
     "*.zip",
     ".coverage",
+    ".coverage.*",
+    "coverage.xml",
 )
 
 CONTROLLED_RELEASE_OUTPUT_ROOT_PATTERNS: tuple[str, ...] = ("release_ci*",)

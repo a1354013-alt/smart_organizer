@@ -12,6 +12,7 @@ __pycache__/ export-ignore
 .mypy_cache/ export-ignore
 .ruff_cache/ export-ignore
 .coverage export-ignore
+.coverage.* export-ignore
 coverage/ export-ignore
 htmlcov/ export-ignore
 tmp_test_write/ export-ignore

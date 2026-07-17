@@ -201,6 +201,8 @@ def check_migration_safety_patterns(project_root: Path = PROJECT_ROOT) -> None:
         "safe_write_migration_state",
         "_validate_completed_marker",
         "_classify_existing_lock",
+        "validate_legacy_artifact_tree",
+        "upgrade_database_schema",
     )
     missing = [helper for helper in required_helpers if helper not in source]
     if missing:
@@ -220,6 +222,9 @@ def check_migration_safety_patterns(project_root: Path = PROJECT_ROOT) -> None:
         "test_directory_only_uploads_create_valid_database",
         "test_stale_local_lock_is_recovered",
         "test_repository_sources_conflicting_file_stops_before_promotion",
+        "test_recovery_after_marker_write_completes_on_next_startup",
+        "test_legacy_upload_symlink_is_rejected_before_promotion",
+        "test_quarantine_aliases_merge_unique_files",
     )
     missing_tests = [name for name in required_tests if name not in test_source]
     if missing_tests:

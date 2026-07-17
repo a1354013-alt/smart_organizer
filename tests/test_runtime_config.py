@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import runtime_config
 from runtime_config import (
     DATA_DIR_ENV,
     LegacyDataMigrationError,
+    MigrationMarkerValidationError,
     RuntimeDirectoryError,
     build_runtime_config,
     detect_legacy_data,
@@ -21,6 +23,29 @@ from runtime_config import (
 def _write_legacy_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE files (
+                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_name TEXT,
+                file_hash TEXT UNIQUE,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute("CREATE TABLE tags(tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)")
+        conn.execute("CREATE TABLE file_tags(file_id INTEGER, tag_id INTEGER, confidence REAL)")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE file_content_fts USING fts5(
+                original_filename,
+                title,
+                summary,
+                content,
+                tokenize='unicode61'
+            )
+            """
+        )
         conn.execute("INSERT INTO sys_config VALUES('schema_version', '16')")
 
 
@@ -69,9 +94,7 @@ def test_legacy_migration_copies_data_without_deleting_source(tmp_path: Path):
     legacy_repo.mkdir()
     (legacy_uploads / "old.pdf").write_bytes(b"%PDF-old")
     (legacy_repo / "organized.pdf").write_text("organized", encoding="utf-8")
-    with sqlite3.connect(source / "smart_organizer.db") as conn:
-        conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT INTO sys_config VALUES('schema_version', '16')")
+    _write_legacy_db(source / "smart_organizer.db")
 
     config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
     status = migrate_legacy_data_if_needed(config)
@@ -127,9 +150,7 @@ def test_legacy_migration_failure_during_staging_retries_cleanly(
     source.mkdir()
     (source / "uploads").mkdir()
     (source / "uploads" / "old.pdf").write_bytes(b"%PDF-old")
-    with sqlite3.connect(source / "smart_organizer.db") as conn:
-        conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT INTO sys_config VALUES('schema_version', '16')")
+    _write_legacy_db(source / "smart_organizer.db")
     config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
 
     original = runtime_config._copy_tree_if_present
@@ -166,8 +187,21 @@ def test_legacy_migration_preserves_committed_wal_rows(tmp_path: Path):
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE files(file_id INTEGER PRIMARY KEY, original_name TEXT)")
+        conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("CREATE TABLE tags(tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)")
+        conn.execute("CREATE TABLE file_tags(file_id INTEGER, tag_id INTEGER, confidence REAL)")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE file_content_fts USING fts5(
+                original_filename,
+                title,
+                summary,
+                content,
+                tokenize='unicode61'
+            )
+            """
+        )
         conn.execute("INSERT INTO sys_config VALUES('schema_version', '16')")
         conn.execute("INSERT INTO files(original_name) VALUES('wal-backed.pdf')")
         conn.commit()
@@ -201,9 +235,7 @@ def test_repeated_migration_startup_is_idempotent(tmp_path: Path):
     source.mkdir()
     (source / "uploads").mkdir()
     (source / "uploads" / "old.pdf").write_bytes(b"%PDF-old")
-    with sqlite3.connect(source / "smart_organizer.db") as conn:
-        conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT INTO sys_config VALUES('schema_version', '16')")
+    _write_legacy_db(source / "smart_organizer.db")
     config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
 
     first = migrate_legacy_data_if_needed(config)
@@ -364,3 +396,115 @@ def test_data_root_is_independent_of_cwd(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert config.project_root == source.resolve()
     assert config.data_root != other.resolve()
+
+
+def test_recovery_after_marker_write_completes_on_next_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "uploads").mkdir()
+    (source / "uploads" / "old.pdf").write_bytes(b"%PDF-old")
+    _write_legacy_db(source / "smart_organizer.db")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+
+    original_write_state = runtime_config._write_state
+    failed_once = {"done": False}
+
+    def fail_after_marker(active_config: object, state: object, *, status: object = None, error: object = None) -> None:
+        if (
+            not failed_once["done"]
+            and active_config == config
+            and status == "completed"
+            and (config.data_root / ".smart_organizer_migration.json").exists()
+        ):
+            failed_once["done"] = True
+            raise OSError("simulated completed-state persistence failure")
+        original_write_state(active_config, state, status=status, error=error)
+
+    monkeypatch.setattr(runtime_config, "_write_state", fail_after_marker)
+
+    with pytest.raises(LegacyDataMigrationError, match="source data was left untouched|failed"):
+        migrate_legacy_data_if_needed(config)
+
+    monkeypatch.setattr(runtime_config, "_write_state", original_write_state)
+    status = migrate_legacy_data_if_needed(config)
+
+    assert failed_once["done"] is True
+    assert status.destination_state == "valid_completed_migration"
+    assert (config.upload_dir / "old.pdf").exists()
+
+
+def test_completed_marker_rejects_unrelated_active_lock_owner(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_legacy_db(source / "smart_organizer.db")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+    migrate_legacy_data_if_needed(config)
+
+    lock_path = config.data_root.parent / ".smart-organizer-migration.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "hostname": runtime_config.socket.gethostname(),
+                "created_at": runtime_config._utc_now(),
+                "owner_token": "someone-else",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MigrationMarkerValidationError, match="lock owner"):
+        runtime_config._validate_completed_marker(config, allowed_lock_owner="current-owner")
+
+
+def test_legacy_upload_symlink_is_rejected_before_promotion(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    uploads = source / "uploads"
+    uploads.mkdir()
+    sentinel = tmp_path / "outside.txt"
+    sentinel.write_text("sentinel", encoding="utf-8")
+    try:
+        (uploads / "escape.txt").symlink_to(sentinel)
+    except OSError:
+        pytest.skip("symlink creation is not available on this host")
+    _write_legacy_db(source / "smart_organizer.db")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+
+    with pytest.raises(LegacyDataMigrationError, match="unsafe linked entry|symlinked"):
+        migrate_legacy_data_if_needed(config)
+
+    assert sentinel.read_text(encoding="utf-8") == "sentinel"
+    assert not config.data_root.exists()
+
+
+def test_quarantine_aliases_merge_unique_files(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_legacy_db(source / "smart_organizer.db")
+    (source / "quarantine").mkdir()
+    (source / ".smart_organizer_quarantine").mkdir()
+    (source / "quarantine" / "a.txt").write_text("a", encoding="utf-8")
+    (source / ".smart_organizer_quarantine" / "b.txt").write_text("b", encoding="utf-8")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+
+    migrate_legacy_data_if_needed(config)
+
+    assert (config.quarantine_dir / "a.txt").read_text(encoding="utf-8") == "a"
+    assert (config.quarantine_dir / "b.txt").read_text(encoding="utf-8") == "b"
+
+
+def test_quarantine_alias_conflict_stops_before_promotion(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_legacy_db(source / "smart_organizer.db")
+    (source / "quarantine").mkdir()
+    (source / ".smart_organizer_quarantine").mkdir()
+    (source / "quarantine" / "same.txt").write_text("old", encoding="utf-8")
+    (source / ".smart_organizer_quarantine" / "same.txt").write_text("new", encoding="utf-8")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+
+    with pytest.raises(LegacyDataMigrationError, match="Quarantine migration file conflict"):
+        migrate_legacy_data_if_needed(config)
+
+    assert not config.data_root.exists()
