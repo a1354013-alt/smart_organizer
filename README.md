@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc7)
+# Smart Organizer (v2.8.5rc8)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -267,9 +267,9 @@ Release packaging and verification are source-repository workflows. Follow `RUN_
 
 CI and local release validation cover compile, cache-safe compile, lock consistency, Ruff, Mypy, branch coverage with a 75% threshold, pip-audit, release packaging, release verification, command-plan validation, and full release-validation execution.
 
-Dependency lock regeneration is canonicalized to Windows plus Python `3.11`. GitHub Actions runs one dedicated regeneration job in that environment, while the Ubuntu/Windows test matrix installs from the committed lock files and runs static lock validation only.
+Dependency lock validation is intentionally split between cross-platform static checks, canonical seeded no-upgrade regeneration, and an explicit manual upgrade path. Canonical regeneration stays pinned to Windows plus Python `3.11`, while the Ubuntu/Windows test matrix installs from the committed locks and runs static checks only.
 
-The exact source-repository commands for canonical lock regeneration and cross-platform static lock validation live in `RUN_RELEASE.md`. The runtime zip keeps that document for reference, but the validation scripts themselves remain source-only files.
+Newly published compatible packages should no longer break CI because canonical validation reuses the committed pins before regenerating temporary lock output. Exact source-repository commands, lock-diff interpretation, and the explicit upgrade workflow live in `RUN_RELEASE.md`. The runtime zip keeps that document for reference, but the validation scripts themselves remain source-only files.
 
 Focused SQLite lifecycle validation command:
 

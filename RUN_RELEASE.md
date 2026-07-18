@@ -63,6 +63,7 @@ Source-only scripts stay in the source repository and are not shipped in the run
 - `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
 - `scripts/create_release_zip.py`
+- `scripts/regenerate_dependency_locks.py`
 - `scripts/release_policy.py`
 - `scripts/safe_compileall.py`
 - `scripts/validate_release_source.py`
@@ -176,10 +177,10 @@ CI keeps both levels of coverage:
 Equivalent explicit commands:
 
 ```bash
+python scripts/validate_dependency_locks.py --mode static
 python scripts/safe_compileall.py -q .
 python -m ruff check --no-cache .
 python -m mypy --cache-dir=/dev/null
-python scripts/validate_dependency_locks.py --mode static
 python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
 python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 python -m pip_audit -r requirements.lock.txt
@@ -196,4 +197,13 @@ Canonical dependency lock regeneration is intentionally separate from the cross-
 python scripts/validate_dependency_locks.py --mode regenerate
 ```
 
-Use `--mode static` on non-canonical environments when you want source validation without platform-specific pip-compile output drift.
+Static validation never upgrades packages. Canonical regenerate validation seeds the temporary lock from the committed lock first and then runs `pip-compile --no-upgrade`, so newly published compatible packages do not create false CI drift.
+
+Manual lock commands:
+
+```bash
+python scripts/regenerate_dependency_locks.py
+python scripts/regenerate_dependency_locks.py --upgrade
+```
+
+Use `scripts/regenerate_dependency_locks.py` in the canonical Windows + Python `3.11` environment. The default command refreshes committed locks while preserving compatible pins; `--upgrade` is the explicit opt-in path for newer compatible versions. After either command, review the printed package diff and rerun the full validation workflow.

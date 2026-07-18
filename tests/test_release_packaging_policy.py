@@ -52,6 +52,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
         "scripts/cleanup_validation_artifacts.py",
         "scripts/conflict_markers.py",
         "scripts/create_release_zip.py",
+        "scripts/regenerate_dependency_locks.py",
         "scripts/release_policy.py",
         "scripts/safe_compileall.py",
         "scripts/validate_dependency_locks.py",

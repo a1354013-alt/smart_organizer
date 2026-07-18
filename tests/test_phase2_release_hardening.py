@@ -10,7 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    assert "dependency-lock-regeneration:" in workflow
+    assert "dependency-lock-determinism:" in workflow
+    assert "Dependency Lock Determinism" in workflow
     assert "ubuntu-latest" in workflow
     assert "windows-latest" in workflow
     assert '"3.11"' in workflow
@@ -20,6 +21,7 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "requirements-dev.lock.txt" in workflow
     assert "validate_dependency_locks.py --mode regenerate" in workflow
     assert "validate_dependency_locks.py --mode static" in workflow
+    assert "Repository unchanged check" in workflow
     assert "error::ResourceWarning" in workflow
     assert "pip_audit" in workflow
     assert "--cov-branch" in workflow

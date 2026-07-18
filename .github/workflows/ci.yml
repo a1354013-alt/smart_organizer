@@ -5,7 +5,8 @@ on:
   pull_request:
 
 jobs:
-  dependency-lock-regeneration:
+  dependency-lock-determinism:
+    name: Dependency Lock Determinism
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +27,21 @@ jobs:
       - name: Python runtime preflight
         run: python -c "from runtime_preflight import require_supported_python; require_supported_python()"
 
-      - name: Validate dependency locks via canonical regeneration
+      - name: Static lock validation
+        run: python scripts/validate_dependency_locks.py --mode static
+
+      - name: Seeded no-upgrade regeneration
         run: python scripts/validate_dependency_locks.py --mode regenerate
 
+      - name: Repository unchanged check
+        run: git diff --exit-code
+
+      - name: Workspace clean check
+        run: python scripts/check_workspace_clean.py --project-root .
+
   test:
-    needs: dependency-lock-regeneration
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs: dependency-lock-determinism
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

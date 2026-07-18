@@ -107,6 +107,7 @@ SOURCE_ONLY_RELEASE_FILES: tuple[str, ...] = (
     "scripts/cleanup_validation_artifacts.py",
     "scripts/conflict_markers.py",
     "scripts/create_release_zip.py",
+    "scripts/regenerate_dependency_locks.py",
     "scripts/validate_dependency_locks.py",
     "scripts/release_policy.py",
     "scripts/safe_compileall.py",

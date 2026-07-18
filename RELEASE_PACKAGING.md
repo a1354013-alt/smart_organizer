@@ -45,6 +45,7 @@ Source-only scripts stay in the source repository and are never included in the 
 - `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
 - `scripts/create_release_zip.py`
+- `scripts/regenerate_dependency_locks.py`
 - `scripts/release_policy.py`
 - `scripts/safe_compileall.py`
 - `scripts/validate_release_source.py`
