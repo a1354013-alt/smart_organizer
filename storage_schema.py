@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 from storage_db_schema import CURRENT_SCHEMA_VERSION, FILE_INDEX_STATEMENTS, upgrade_database_schema
@@ -96,6 +95,6 @@ class StorageSchemaMixin:
 
     def _check_migration(self: Any) -> None:
         try:
-            upgrade_database_schema(Path(str(self.db_path)))
+            upgrade_database_schema(self.db_path)
         except RuntimeError as e:
             raise RuntimeError(f"Database migration failed: {e}") from e

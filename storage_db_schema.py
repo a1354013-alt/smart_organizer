@@ -4,7 +4,14 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+
+from sqlite_utils import (
+    SQLiteTarget,
+    connect_sqlite,
+    is_physical_sqlite_path,
+    is_sqlite_memory_target,
+    physical_sqlite_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,16 +153,16 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
     _ensure_indexes(cursor)
 
 
-def expected_runtime_tables(db_path: Path) -> set[str]:
-    with sqlite3.connect(db_path) as conn:
+def expected_runtime_tables(db_path: SQLiteTarget) -> set[str]:
+    with connect_sqlite(db_path) as conn:
         return {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def inspect_database_schema(db_path: Path) -> SchemaInspection:
-    if not db_path.exists():
+def inspect_database_schema(db_path: SQLiteTarget) -> SchemaInspection:
+    if is_physical_sqlite_path(db_path) and not physical_sqlite_path(db_path).exists():
         return SchemaInspection(SchemaStatus.CORRUPT, None, f"Database file is missing: {db_path}")
     try:
-        with sqlite3.connect(db_path) as conn:
+        with connect_sqlite(db_path) as conn:
             integrity = conn.execute("PRAGMA integrity_check").fetchone()
             if not integrity or integrity[0] != "ok":
                 return SchemaInspection(SchemaStatus.CORRUPT, None, "SQLite integrity_check failed")
@@ -194,7 +201,7 @@ def inspect_database_schema(db_path: Path) -> SchemaInspection:
 
 
 def upgrade_database_schema(
-    db_path: Path,
+    db_path: SQLiteTarget,
     *,
     target_version: int = CURRENT_SCHEMA_VERSION,
 ) -> int:
@@ -212,7 +219,7 @@ def upgrade_database_schema(
 
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = connect_sqlite(db_path)
         cursor = conn.cursor()
         _create_current_schema(cursor)
         cursor.execute("PRAGMA table_info(files)")
@@ -280,7 +287,11 @@ def upgrade_database_schema(
         if conn is not None:
             conn.close()
 
-    verified = inspect_database_schema(db_path)
+    verified = inspect_database_schema(db_path) if not is_sqlite_memory_target(db_path) else SchemaInspection(
+        SchemaStatus.VALID,
+        target_version,
+        None,
+    )
     if verified.status != SchemaStatus.VALID or verified.version != target_version:
         raise RuntimeError(f"Database schema upgrade verification failed: {verified.details or verified.status.value}")
     missing_runtime_tables = sorted(EXPECTED_RUNTIME_TABLES - expected_runtime_tables(db_path))

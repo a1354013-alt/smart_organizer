@@ -13,6 +13,8 @@ sys.dont_write_bytecode = True
 
 from runtime_preflight import SUPPORTED_PYTHON_RANGE, require_supported_python
 
+CANONICAL_LOCK_OS = "Windows"
+CANONICAL_LOCK_PYTHON = "3.11"
 RUNTIME_INPUT = PROJECT_ROOT / "requirements.in"
 DEV_INPUT = PROJECT_ROOT / "requirements-dev.in"
 RUNTIME_LOCK = PROJECT_ROOT / "requirements.lock.txt"
@@ -62,7 +64,7 @@ def _package_names(lock_path: Path) -> set[str]:
     return names
 
 
-def validate_locks(*, regenerate_check: bool = True) -> None:
+def validate_locks(*, mode: str = "regenerate") -> None:
     require_supported_python()
     for path in (RUNTIME_INPUT, DEV_INPUT, RUNTIME_LOCK, DEV_LOCK):
         if not path.exists():
@@ -77,8 +79,10 @@ def validate_locks(*, regenerate_check: bool = True) -> None:
     if f'requires-python = "{SUPPORTED_PYTHON_RANGE}"' not in pyproject:
         raise RuntimeError("pyproject.toml Python range does not match runtime preflight")
 
-    if not regenerate_check:
+    if mode == "static":
         return
+    if mode != "regenerate":
+        raise ValueError(f"Unsupported validation mode: {mode}")
 
     with tempfile.TemporaryDirectory(prefix="smart-lock-check-") as tmp:
         tmp_path = Path(tmp)
@@ -94,14 +98,25 @@ def validate_locks(*, regenerate_check: bool = True) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate checked-in dependency lock files.")
-    parser.add_argument("--no-regenerate-check", action="store_true", help="Skip pip-compile comparison.")
+    parser.add_argument(
+        "--mode",
+        choices=("static", "regenerate"),
+        default="regenerate",
+        help="Validation mode: static checks only, or canonical pip-compile regeneration comparison.",
+    )
+    parser.add_argument(
+        "--no-regenerate-check",
+        action="store_true",
+        help="Deprecated alias for --mode static.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    validate_locks(regenerate_check=not args.no_regenerate_check)
-    print("Dependency locks are current.")
+    mode = "static" if args.no_regenerate_check else args.mode
+    validate_locks(mode=mode)
+    print(f"Dependency locks are current ({mode} mode).")
     return 0
 
 

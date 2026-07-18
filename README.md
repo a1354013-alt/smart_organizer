@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc5)
+# Smart Organizer (v2.8.5rc6)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -105,6 +105,19 @@ Important safety note:
 This means Smart Organizer preserves a review trail and a recovery path instead of silently removing data.
 
 This project is intentionally a safe organization assistant, not a direct file deletion utility.
+
+## SQLite Targets And Path Identity
+
+Smart Organizer accepts both physical SQLite files and SQLite connection targets:
+
+- relative and absolute database paths
+- Windows paths, spaces, and Unicode paths
+- `:memory:`
+- shared-memory SQLite URIs such as `file:smart_organizer_memdb_<id>?mode=memory&cache=shared`
+
+Schema inspection and schema upgrade treat SQLite URIs and `:memory:` as database targets instead of filesystem paths. Physical existence checks remain strict for real on-disk databases only.
+
+For file selection and quarantine flows, Smart Organizer preserves the original display path for UI/reporting while using one canonical internal path key for dictionary/set membership, selected-record lookup, duplicate maps, quarantine lookup, and manifest-lock ownership. This keeps Windows short-path, long-path, case-only, slash, and `.` / `..` aliases aligned without weakening containment or symlink safety.
 
 ## Quick Start
 
@@ -246,6 +259,10 @@ Release packaging and verification are source-repository workflows. Follow `RUN_
 ## CI And Validation Commands
 
 CI and local release validation cover compile, cache-safe compile, lock consistency, Ruff, Mypy, branch coverage with a 75% threshold, pip-audit, release packaging, release verification, command-plan validation, and full release-validation execution.
+
+Dependency lock regeneration is canonicalized to Windows plus Python `3.11`. GitHub Actions runs one dedicated regeneration job in that environment, while the Ubuntu/Windows test matrix installs from the committed lock files and runs static lock validation only.
+
+The exact source-repository commands for canonical lock regeneration and cross-platform static lock validation live in `RUN_RELEASE.md`. The runtime zip keeps that document for reference, but the validation scripts themselves remain source-only files.
 
 Dependabot checks Python dependencies and GitHub Actions weekly. CodeQL runs as supplemental security analysis for Python and workflow code.
 

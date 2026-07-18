@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -257,3 +260,67 @@ def test_manifest_guard_reports_release_error_without_primary_error(
         tmp_path
     ):
         pass
+
+
+def test_manifest_guard_reentrant_alias_cleans_owner_map(tmp_path: Path):
+    alias_root = tmp_path / "." / "subdir" / ".."
+
+    with quarantine_manifest_guard(tmp_path), quarantine_manifest_guard(alias_root):
+        assert folder_models._MANIFEST_LOCK_OWNERS
+        assert quarantine_manifest_lock_path(tmp_path).exists()
+
+    assert folder_models._MANIFEST_LOCK_OWNERS == {}
+    assert not quarantine_manifest_lock_path(tmp_path).exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific path alias behavior")
+def test_manifest_guard_case_only_alias_is_reentrant_on_windows(tmp_path: Path):
+    case_alias = Path(str(tmp_path).swapcase())
+
+    with quarantine_manifest_guard(tmp_path), quarantine_manifest_guard(case_alias):
+        assert quarantine_manifest_lock_path(tmp_path).exists()
+
+    assert folder_models._MANIFEST_LOCK_OWNERS == {}
+
+
+def test_manifest_guard_blocks_other_process(tmp_path: Path):
+    ready = tmp_path / "ready.txt"
+    release = tmp_path / "release.txt"
+    child_script = tmp_path / "hold_lock.py"
+    child_script.write_text(
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "sys.path.insert(0, sys.argv[4])\n"
+        "from folder_models import quarantine_manifest_guard\n"
+        "root = Path(sys.argv[1])\n"
+        "ready = Path(sys.argv[2])\n"
+        "release = Path(sys.argv[3])\n"
+        "with quarantine_manifest_guard(root):\n"
+        "    ready.write_text('ready', encoding='utf-8')\n"
+        "    deadline = time.time() + 10\n"
+        "    while not release.exists() and time.time() < deadline:\n"
+        "        time.sleep(0.05)\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [sys.executable, str(child_script), str(tmp_path), str(ready), str(release), str(Path(__file__).resolve().parents[1])],
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    try:
+        deadline = time.time() + 10
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        assert ready.exists()
+
+        with pytest.raises(
+            ManifestCompatibilityError,
+            match="Timed out waiting for manifest lock",
+        ), quarantine_manifest_guard(tmp_path, timeout_seconds=0.1, poll_seconds=0.01):
+            pass
+    finally:
+        release.write_text("release", encoding="utf-8")
+        proc.wait(timeout=10)
+
+    assert proc.returncode == 0
+    assert folder_models._MANIFEST_LOCK_OWNERS == {}

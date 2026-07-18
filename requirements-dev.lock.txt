@@ -62,7 +62,7 @@ distro==1.9.0
     # via openai
 exifread==3.5.1
     # via -r requirements.in
-filelock==3.30.2
+filelock==3.31.0
     # via cachecontrol
 fonttools==4.63.0
     # via matplotlib
@@ -109,7 +109,7 @@ markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
     # via jinja2
-matplotlib==3.11.0
+matplotlib==3.11.1
     # via -r requirements.in
 mdurl==0.1.2
     # via markdown-it-py
@@ -167,7 +167,7 @@ pip-requirements-parser==32.0.1
     # via pip-audit
 pip-tools==7.5.3
     # via -r requirements-dev.in
-platformdirs==4.10.0
+platformdirs==4.10.1
     # via
     #   -r requirements.in
     #   pip-audit
@@ -254,7 +254,7 @@ tomli==2.4.1
     # via pip-audit
 tomli-w==1.2.0
     # via pip-audit
-tqdm==4.68.4
+tqdm==4.69.0
     # via openai
 typing-extensions==4.16.0
     # via
@@ -279,7 +279,7 @@ uvicorn==0.51.0
     # via streamlit
 watchdog==6.0.0
     # via streamlit
-websockets==16.1
+websockets==16.1.1
     # via streamlit
 wheel==0.47.0
     # via pip-tools

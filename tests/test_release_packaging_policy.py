@@ -105,7 +105,7 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
     ]
     command_text = "\n".join(" ".join(command[1:]) for command in build_validation_commands())
     required_commands = [
-        "scripts/validate_dependency_locks.py",
+        "scripts/validate_dependency_locks.py --mode static",
         "scripts/safe_compileall.py -q .",
         "-m ruff check --no-cache .",
         "-m mypy --cache-dir=/dev/null",
@@ -140,7 +140,7 @@ def test_release_validation_dry_run_lists_expected_commands(capsys):
     output = capsys.readouterr().out
     expected_commands = [
         "python scripts/validate_release_source.py --check-conflicts-only",
-        "python scripts/validate_dependency_locks.py",
+        "python scripts/validate_dependency_locks.py --mode static",
         "python scripts/safe_compileall.py -q .",
         "python -m ruff check --no-cache .",
         "python -m mypy --cache-dir=/dev/null",

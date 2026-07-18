@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 from typing import cast
+
+import pytest
 
 import folder_organizer
 from folder_models import QUARANTINE_DIRNAME, ScanPathError
@@ -16,6 +19,7 @@ from folder_organizer import (
     scan_local_folder,
 )
 from folder_report import export_folder_report_csv, export_folder_report_markdown
+from path_utils import canonical_path_key
 
 
 def test_scan_local_folder_marks_stale_and_large_candidates(tmp_path: Path):
@@ -681,3 +685,36 @@ def test_duplicate_hashing_only_hashes_same_size_groups(monkeypatch, tmp_path: P
     scan_local_folder(str(tmp_path), recursive=True, max_files=100, stale_days=0, large_file_bytes=10**9)
 
     assert sorted(hashed_paths) == sorted([str(first), str(second)])
+
+
+def test_run_folder_organizer_matches_alias_selected_path_without_keyerror(tmp_path: Path):
+    target = tmp_path / "nested" / "report.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("payload", encoding="utf-8")
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=50, stale_days=0, large_file_bytes=1)
+    alias_path = str(target.parent / "." / target.name)
+
+    preview = run_folder_organizer(scan, [alias_path], dry_run=True)
+    moved = run_folder_organizer(scan, [alias_path], dry_run=False)
+
+    assert preview["summary"]["preview"] == 1
+    assert preview["results"][0]["original_path"] == str(target)
+    assert moved["summary"]["success"] == 1
+    assert moved["results"][0]["original_path"] == str(target)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific path alias behavior")
+def test_restore_quarantined_items_matches_case_only_alias(tmp_path: Path):
+    target = tmp_path / "nested" / "report.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("payload", encoding="utf-8")
+    scan = scan_local_folder(str(tmp_path), recursive=True, max_files=50, stale_days=0, large_file_bytes=1)
+    moved = run_folder_organizer(scan, [str(target)], dry_run=False)
+    quarantined_path = str(moved["results"][0]["new_path"])
+    alias_quarantined_path = quarantined_path.swapcase()
+
+    restored = restore_quarantined_items(str(tmp_path), [alias_quarantined_path])
+
+    assert canonical_path_key(quarantined_path) == canonical_path_key(alias_quarantined_path)
+    assert restored["summary"]["success"] == 1
+    assert target.exists()

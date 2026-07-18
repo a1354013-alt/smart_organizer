@@ -48,6 +48,7 @@ from malware_scanner import (
     is_malware_blocked_status,
     scan_files,
 )
+from path_utils import canonical_path_key, paths_refer_to_same_location
 
 LOW_RISK_SUFFIXES = {".txt", ".log", ".tmp", ".cache", ".bak", ".old", ".fake"}
 MANUAL_REVIEW_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -148,9 +149,9 @@ def load_quarantine_items_with_warnings(folder_path: str) -> tuple[list[dict[str
 
 
 def _find_active_original(manifest_items: list[dict[str, object]], original_path: Path) -> dict[str, object] | None:
-    resolved = str(original_path.resolve())
+    resolved = canonical_path_key(original_path)
     for item in manifest_items:
-        if _is_active_manifest_item(item) and str(item.get("original_path") or "") == resolved:
+        if _is_active_manifest_item(item) and canonical_path_key(str(item.get("original_path") or "")) == resolved:
             return item
     return None
 
@@ -840,8 +841,9 @@ def run_folder_organizer(
     root = _scan_root_path(scan_result)
     quarantine_root = quarantine_dir(root).resolve()
     records = {
-        str(dict_object(item).get("path")): dict_object(item)
+        canonical_path_key(str(dict_object(item).get("path") or "")): dict_object(item)
         for item in object_list(scan_result.get("records"))
+        if str(dict_object(item).get("path") or "").strip()
     }
     operation_id = uuid.uuid4().hex
     results: list[FolderOperationRow] = []
@@ -851,7 +853,8 @@ def run_folder_organizer(
         manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
 
         for selected_path in selected_paths:
-            record = records.get(selected_path)
+            selected_key = canonical_path_key(selected_path)
+            record = records.get(selected_key)
             if not record:
                 results.append(
                     FolderOperationRow(
@@ -872,6 +875,7 @@ def run_folder_organizer(
                 continue
 
             original_path = Path(selected_path)
+            display_original_path = str(record.get("path") or selected_path)
             reasons = _operation_reason_text(record)
             file_size = safe_int(record.get("size_bytes"))
             last_modified = record.get("mtime")
@@ -884,7 +888,7 @@ def run_folder_organizer(
             if malware_block_message is not None:
                 results.append(
                     FolderOperationRow(
-                        original_path=str(original_path),
+                        original_path=display_original_path,
                         new_path=None,
                         status="SKIPPED",
                         reason=reasons,
@@ -911,7 +915,7 @@ def run_folder_organizer(
                     )
                     results.append(
                         FolderOperationRow(
-                            original_path=str(original_path),
+                            original_path=display_original_path,
                             new_path=str(preview_destination),
                             status="PREVIEW",
                             reason=reasons,
@@ -928,7 +932,7 @@ def run_folder_organizer(
                 except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
                     results.append(
                         FolderOperationRow(
-                            original_path=str(original_path),
+                            original_path=display_original_path,
                             new_path=None,
                             status="FAILED",
                             reason=reasons,
@@ -986,7 +990,7 @@ def run_folder_organizer(
                 save_manifest(root, manifest)
                 results.append(
                     FolderOperationRow(
-                        original_path=str(resolved_original),
+                        original_path=display_original_path,
                         new_path=str(destination),
                         status="SUCCESS",
                         reason=reasons,
@@ -1002,7 +1006,10 @@ def run_folder_organizer(
                 )
             except (FileNotFoundError, PermissionError, OSError, ValueError, RuntimeError) as exc:
                 for item in reversed(manifest_items):
-                    if str(item.get("original_path") or "") == str(original_path) and str(item.get("status") or "") == QuarantineStatus.MOVING.value:
+                    if (
+                        str(item.get("status") or "") == QuarantineStatus.MOVING.value
+                        and paths_refer_to_same_location(str(item.get("original_path") or ""), original_path)
+                    ):
                         item["status"] = QuarantineStatus.FAILED.value
                         item["last_error"] = str(exc) or type(exc).__name__
                         manifest["items"] = manifest_items
@@ -1010,7 +1017,7 @@ def run_folder_organizer(
                         break
                 results.append(
                     FolderOperationRow(
-                        original_path=str(original_path),
+                        original_path=display_original_path,
                         new_path=None,
                         status="FAILED",
                         reason=reasons,
@@ -1056,11 +1063,15 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
     with quarantine_manifest_guard(root):
         manifest = recover_quarantine_manifest(str(root))
         items = [dict_object(item) for item in object_list(manifest.get("items"))]
-        lookup = {str(item.get("quarantine_path")): item for item in items}
+        lookup = {
+            canonical_path_key(str(item.get("quarantine_path") or "")): item
+            for item in items
+            if str(item.get("quarantine_path") or "").strip()
+        }
         results: list[FolderOperationRow] = []
 
         for quarantine_path in quarantine_paths:
-            item = lookup.get(quarantine_path)
+            item = lookup.get(canonical_path_key(quarantine_path))
             if item is None:
                 results.append(
                     FolderOperationRow(

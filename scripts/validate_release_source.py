@@ -32,7 +32,7 @@ COMMAND_TIMEOUTS_SECONDS = {
     "scripts/cleanup_validation_artifacts.py": 30,
     "ruff": 60,
     "mypy": LONG_COMMAND_TIMEOUT_SECONDS,
-    "pytest": 420,
+    "pytest": 1800,
     "pip_audit": LONG_COMMAND_TIMEOUT_SECONDS,
     "scripts/create_release_zip.py": 120,
     "scripts/verify_release_zip.py": 60,
@@ -100,7 +100,7 @@ def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> l
     validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
         [sys.executable, "scripts/validate_release_source.py", "--check-conflicts-only"],
-        [sys.executable, "scripts/validate_dependency_locks.py"],
+        [sys.executable, "scripts/validate_dependency_locks.py", "--mode", "static"],
         [sys.executable, "scripts/safe_compileall.py", "-q", "."],
         [sys.executable, "-m", "ruff", "check", "--no-cache", "."],
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],

@@ -56,8 +56,12 @@ def _cleanup_test_tmp() -> None:
 
 
 def _cleanup_repo_caches() -> None:
-    for path in PROJECT_ROOT.rglob("__pycache__"):
-        with suppress(PermissionError):
+    try:
+        pycache_paths = list(PROJECT_ROOT.rglob("__pycache__"))
+    except FileNotFoundError:
+        pycache_paths = []
+    for path in pycache_paths:
+        with suppress(PermissionError, FileNotFoundError):
             shutil.rmtree(path, ignore_errors=True)
     for pattern in (".mypy_cache", ".ruff_cache", ".pytest_runtime_tmp*"):
         for path in PROJECT_ROOT.glob(pattern):
@@ -70,7 +74,11 @@ def _cleanup_repo_caches() -> None:
         with suppress(FileNotFoundError, PermissionError):
             path.unlink()
     for pattern in ("*.pyc", "*.pyc.*"):
-        for path in PROJECT_ROOT.rglob(pattern):
+        try:
+            compiled_paths = list(PROJECT_ROOT.rglob(pattern))
+        except FileNotFoundError:
+            compiled_paths = []
+        for path in compiled_paths:
             with suppress(FileNotFoundError, PermissionError):
                 path.unlink()
 

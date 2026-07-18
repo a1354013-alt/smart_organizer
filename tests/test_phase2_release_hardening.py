@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
+    assert "dependency-lock-regeneration:" in workflow
     assert "ubuntu-latest" in workflow
     assert "windows-latest" in workflow
     assert '"3.11"' in workflow
@@ -17,6 +18,8 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "fail-fast: false" in workflow
     assert "continue-on-error" not in workflow
     assert "requirements-dev.lock.txt" in workflow
+    assert "validate_dependency_locks.py --mode regenerate" in workflow
+    assert "validate_dependency_locks.py --mode static" in workflow
     assert "pip_audit" in workflow
     assert "--cov-branch" in workflow
 
@@ -55,3 +58,9 @@ def test_coverage_configuration_enforces_branch_threshold():
     assert "fail_under = 75" in coverage
     assert "tests/*" in coverage
     assert "runtime_config.py" not in coverage
+
+
+def test_pytest_configuration_does_not_use_unknown_asyncio_setting():
+    pytest_ini = (PROJECT_ROOT / "pytest.ini").read_text(encoding="utf-8")
+
+    assert "asyncio_default_fixture_loop_scope" not in pytest_ini

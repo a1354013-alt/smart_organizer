@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from sqlite_utils import is_physical_sqlite_path, physical_sqlite_path
 from storage_base import StorageBase
 from storage_cleanup import StorageCleanupMixin
 from storage_db_schema import upgrade_database_schema
@@ -31,7 +32,7 @@ class StorageManager(
             self._check_migration()
             return
 
-        resolved_db_path = Path(str(self.db_path))
+        resolved_db_path = physical_sqlite_path(self.db_path) if is_physical_sqlite_path(self.db_path) else Path(str(self.db_path))
         if not resolved_db_path.exists():
             self._init_db()
         upgrade_database_schema(resolved_db_path)

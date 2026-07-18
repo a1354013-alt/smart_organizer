@@ -5,7 +5,32 @@ on:
   pull_request:
 
 jobs:
+  dependency-lock-regeneration:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock.txt
+            requirements-dev.lock.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.lock.txt
+
+      - name: Python runtime preflight
+        run: python -c "from runtime_preflight import require_supported_python; require_supported_python()"
+
+      - name: Validate dependency locks via canonical regeneration
+        run: python scripts/validate_dependency_locks.py --mode regenerate
+
   test:
+    needs: dependency-lock-regeneration
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +70,7 @@ jobs:
         run: python scripts/safe_compileall.py -q .
 
       - name: Validate dependency locks
-        run: python scripts/validate_dependency_locks.py
+        run: python scripts/validate_dependency_locks.py --mode static
 
       - name: Ruff
         run: python -m ruff check --no-cache .

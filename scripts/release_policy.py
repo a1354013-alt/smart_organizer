@@ -52,6 +52,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
     "storage_modules": (
         "storage.py",
         "storage_base.py",
+        "storage_db_schema.py",
         "storage_schema.py",
         "storage_repository.py",
         "storage_recovery.py",
@@ -59,6 +60,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "storage_search.py",
         "storage_cleanup.py",
         "storage_manager.py",
+        "sqlite_utils.py",
         "config.py",
     ),
     "ui_modules": (
@@ -78,6 +80,7 @@ RUNTIME_RELEASE_ALLOWLIST_GROUPS: dict[str, tuple[str, ...]] = {
         "folder_organizer.py",
         "folder_service.py",
         "folder_report.py",
+        "path_utils.py",
         "report_exports.py",
         "malware_scanner.py",
     ),

@@ -82,7 +82,7 @@ kiwisolver==1.5.0
     # via matplotlib
 markupsafe==3.0.3
     # via jinja2
-matplotlib==3.11.0
+matplotlib==3.11.1
     # via -r requirements.in
 narwhals==2.24.0
     # via altair
@@ -115,7 +115,7 @@ pillow==12.3.0
     #   pdf2image
     #   pytesseract
     #   streamlit
-platformdirs==4.10.0
+platformdirs==4.10.1
     # via -r requirements.in
 protobuf==7.35.1
     # via streamlit
@@ -165,7 +165,7 @@ tenacity==9.1.4
     # via streamlit
 toml==0.10.2
     # via streamlit
-tqdm==4.68.4
+tqdm==4.69.0
     # via openai
 typing-extensions==4.16.0
     # via
@@ -188,5 +188,5 @@ uvicorn==0.51.0
     # via streamlit
 watchdog==6.0.0
     # via streamlit
-websockets==16.1
+websockets==16.1.1
     # via streamlit

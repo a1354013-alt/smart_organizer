@@ -14,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
+from path_utils import canonical_path_key
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 
 QUARANTINE_DIRNAME = ".smart_organizer_quarantine"
@@ -382,7 +383,7 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
 @contextmanager
 def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_seconds: float = 0.05):
     lock_path = quarantine_manifest_lock_path(root)
-    lock_key = str(lock_path)
+    lock_key = canonical_path_key(lock_path)
     thread_id = threading.get_ident()
 
     with _MANIFEST_LOCKS:
@@ -414,6 +415,7 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
     handle_fd: int | None = None
     primary_error = False
+    release_error: OSError | None = None
     try:
         while True:
             try:
@@ -448,10 +450,7 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
             except FileNotFoundError:
                 pass
             except OSError as exc:
-                if primary_error:
-                    logger.warning("Failed to release manifest lock after primary error: %s", exc)
-                else:
-                    raise ManifestCompatibilityError(f"Failed to release manifest lock: {exc}") from exc
+                release_error = exc
         with _MANIFEST_LOCKS:
             owner = _MANIFEST_LOCK_OWNERS.get(lock_key, (thread_id, 1))
             remaining = owner[1] - 1
@@ -459,6 +458,11 @@ def quarantine_manifest_guard(root: Path, *, timeout_seconds: float = 5.0, poll_
                 _MANIFEST_LOCK_OWNERS.pop(lock_key, None)
             else:
                 _MANIFEST_LOCK_OWNERS[lock_key] = (thread_id, remaining)
+        if release_error is not None:
+            if primary_error:
+                logger.warning("Failed to release manifest lock after primary error: %s", release_error)
+            else:
+                raise ManifestCompatibilityError(f"Failed to release manifest lock: {release_error}") from release_error
 
 
 def load_manifest(root: Path) -> dict[str, object]:

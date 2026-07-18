@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Self
 
 from config import UPLOAD_MAX_BATCH_BYTES, UPLOAD_MAX_FILE_BYTES
+from sqlite_utils import connect_sqlite
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class StorageBase:
 
         if self._db_uri and "mode=memory" in str(self.db_path):
             try:
-                self._keepalive_conn = sqlite3.connect(self.db_path, uri=True)
+                self._keepalive_conn = connect_sqlite(self.db_path)
             except sqlite3.Error as e:
                 logger.warning("in-memory keepalive connection failed: %s", e)
                 self._keepalive_conn = None
@@ -145,7 +146,7 @@ class StorageBase:
         if self._closed:
             raise RuntimeError("StorageManager is closed. Create a new instance before continuing.")
         try:
-            conn = sqlite3.connect(self.db_path, timeout=timeout / 1000, uri=self._db_uri)
+            conn = connect_sqlite(self.db_path, timeout=timeout / 1000)
             try:
                 conn.execute("PRAGMA journal_mode=WAL;")
             except sqlite3.OperationalError as e:

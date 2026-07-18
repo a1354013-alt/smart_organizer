@@ -268,6 +268,24 @@ def test_storage_manager_context_manager_closes_keepalive_connection():
         storage.get_file_by_id(1)
 
 
+def test_two_storage_managers_can_share_a_memory_uri(tmp_path: Path):
+    shared_db = f"file:smart_organizer_shared_{uuid.uuid4().hex}?mode=memory&cache=shared"
+    repo_root = str(tmp_path / "repo")
+    upload_dir = str(tmp_path / "uploads")
+    payload = _minimal_pdf_bytes()
+    file_hash = _sha256(payload + b"shared")
+
+    first = StorageManager(shared_db, repo_root, upload_dir)
+    second = StorageManager(shared_db, repo_root, upload_dir)
+
+    created = first.create_temp_file("shared.pdf", payload, file_hash, "document")
+    record = second.get_file_by_id(int(created["file_id"]))
+
+    assert created["success"] is True
+    assert record is not None
+    assert record["original_name"] == "shared.pdf"
+
+
 def test_get_records_page_escapes_like_wildcards():
     storage = StorageManager(":memory:", ":memory:", ":memory:")
     payload = _minimal_pdf_bytes()

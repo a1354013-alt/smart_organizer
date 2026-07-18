@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 
+from sqlite_utils import connect_sqlite
 from storage_db_schema import (
     CURRENT_SCHEMA_VERSION,
     SchemaStatus,
+    expected_runtime_tables,
     inspect_database_schema,
     upgrade_database_schema,
 )
@@ -75,3 +78,101 @@ def test_inspect_database_schema_flags_missing_schema_version(tmp_path: Path):
 
     assert inspection.status == SchemaStatus.MISSING
     assert inspection.version is None
+
+
+def test_inspect_database_schema_rejects_missing_physical_file(tmp_path: Path):
+    missing = tmp_path / "missing.db"
+
+    inspection = inspect_database_schema(missing)
+
+    assert inspection.status == SchemaStatus.CORRUPT
+    assert "missing" in str(inspection.details).lower()
+
+
+def test_inspect_database_schema_supports_memory_target_without_missing_file_error():
+    inspection = inspect_database_schema(":memory:")
+
+    assert inspection.status != SchemaStatus.CORRUPT
+    assert "Database file is missing" not in str(inspection.details or "")
+
+
+def test_shared_memory_uri_connections_share_the_same_database():
+    uri = f"file:smart_organizer_schema_share_{uuid.uuid4().hex}?mode=memory&cache=shared"
+
+    with connect_sqlite(uri) as first:
+        first.execute("CREATE TABLE shared_table(value TEXT)")
+        first.execute("INSERT INTO shared_table(value) VALUES('ready')")
+        first.commit()
+
+        with connect_sqlite(uri) as second:
+            value = second.execute("SELECT value FROM shared_table").fetchone()
+
+    assert value == ("ready",)
+
+
+def test_schema_inspection_upgrade_and_expected_tables_support_shared_memory_uri():
+    uri = f"file:smart_organizer_schema_upgrade_{uuid.uuid4().hex}?mode=memory&cache=shared"
+
+    with connect_sqlite(uri) as conn:
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
+        cursor.execute(
+            """
+            CREATE TABLE files (
+                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_name TEXT,
+                file_hash TEXT UNIQUE,
+                created_at TEXT
+            )
+            """
+        )
+        cursor.execute("CREATE TABLE tags (tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)")
+        cursor.execute("CREATE TABLE file_tags (file_id INTEGER, tag_id INTEGER, confidence REAL)")
+        cursor.execute(
+            """
+            CREATE VIRTUAL TABLE file_content_fts USING fts5(
+                original_filename,
+                title,
+                summary,
+                content,
+                tokenize='unicode61'
+            )
+            """
+        )
+        cursor.execute("INSERT INTO sys_config(key, value) VALUES('schema_version', ?)", ("15",))
+        conn.commit()
+
+        before = inspect_database_schema(uri)
+        upgraded = upgrade_database_schema(uri)
+        after = inspect_database_schema(uri)
+        tables = expected_runtime_tables(uri)
+
+    assert before.status == SchemaStatus.LEGACY
+    assert upgraded == CURRENT_SCHEMA_VERSION
+    assert after.status == SchemaStatus.VALID
+    assert "files" in tables
+    assert "file_content_fts" in tables
+
+
+def test_expected_runtime_tables_supports_uri_with_query_parameters():
+    uri = (
+        f"file:smart_organizer_schema_query_{uuid.uuid4().hex}"
+        "?mode=memory&cache=shared&immutable=0"
+    )
+
+    with connect_sqlite(uri) as conn:
+        conn.execute("CREATE TABLE sample(value TEXT)")
+        conn.commit()
+        table_names = expected_runtime_tables(uri)
+
+    assert "sample" in table_names
+
+
+def test_inspect_database_schema_reports_corrupt_physical_database(tmp_path: Path):
+    broken = tmp_path / "broken.db"
+    broken.write_text("not sqlite", encoding="utf-8")
+
+    inspection = inspect_database_schema(broken)
+
+    assert inspection.status == SchemaStatus.CORRUPT
+    assert "could not be opened" in str(inspection.details or "").lower()
