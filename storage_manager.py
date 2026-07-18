@@ -27,13 +27,19 @@ class StorageManager(
 ):
     def __init__(self, db_path: str, repo_root: str, upload_dir: str):
         super().__init__(db_path, repo_root, upload_dir)
-        if self._db_uri:
-            self._init_db()
-            self._check_migration()
-            return
+        try:
+            if self._db_uri:
+                self._init_db()
+                self._check_migration()
+                return
 
-        resolved_db_path = physical_sqlite_path(self.db_path) if is_physical_sqlite_path(self.db_path) else Path(str(self.db_path))
-        if not resolved_db_path.exists():
-            self._init_db()
-        upgrade_database_schema(resolved_db_path)
+            resolved_db_path = (
+                physical_sqlite_path(self.db_path) if is_physical_sqlite_path(self.db_path) else Path(str(self.db_path))
+            )
+            if not resolved_db_path.exists():
+                self._init_db()
+            upgrade_database_schema(resolved_db_path)
+        except Exception:
+            self.close()
+            raise
 

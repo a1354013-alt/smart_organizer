@@ -180,6 +180,7 @@ python scripts/safe_compileall.py -q .
 python -m ruff check --no-cache .
 python -m mypy --cache-dir=/dev/null
 python scripts/validate_dependency_locks.py --mode static
+python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
 python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 python -m pip_audit -r requirements.lock.txt
 python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip

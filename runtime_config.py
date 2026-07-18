@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
+from sqlite_utils import open_sqlite
 from storage_db_schema import (
     CURRENT_SCHEMA_VERSION,
     SchemaStatus,
@@ -613,7 +614,7 @@ def _verify_database(db_path: Path, *, require_expected_schema: bool = True) -> 
 def _create_new_runtime_database(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with sqlite3.connect(db_path) as conn:
+        with open_sqlite(db_path) as conn, conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT)")
             cursor.execute(
@@ -649,7 +650,9 @@ def _create_new_runtime_database(db_path: Path) -> None:
                 )
                 """
             )
-            cursor.execute("CREATE TABLE IF NOT EXISTS tags (tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)")
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS tags (tag_id INTEGER PRIMARY KEY AUTOINCREMENT, tag_name TEXT UNIQUE)"
+            )
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS file_tags (
@@ -675,7 +678,6 @@ def _create_new_runtime_database(db_path: Path) -> None:
                 "INSERT OR REPLACE INTO sys_config (key, value) VALUES (?, ?)",
                 ("schema_version", str(CURRENT_SCHEMA_VERSION)),
             )
-            conn.commit()
     except sqlite3.Error as exc:
         raise LegacyDataMigrationError("Failed to create directory-only migration database") from exc
 
@@ -861,17 +863,10 @@ def _copy_sqlite_database(source_db: Path, target_db: Path) -> None:
     if not source_db.exists():
         return
     try:
-        source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
-        try:
-            destination = sqlite3.connect(target_db)
-            try:
-                source.backup(destination)
-                destination.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                destination.execute("PRAGMA journal_mode=DELETE")
-            finally:
-                destination.close()
-        finally:
-            source.close()
+        with open_sqlite(f"file:{source_db}?mode=ro") as source_conn, open_sqlite(target_db) as destination_conn:
+            source_conn.backup(destination_conn)
+            destination_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            destination_conn.execute("PRAGMA journal_mode=DELETE")
     except sqlite3.Error as exc:
         raise LegacyDataMigrationError("Failed to copy legacy SQLite database safely") from exc
 

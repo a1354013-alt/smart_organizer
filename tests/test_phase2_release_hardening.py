@@ -20,6 +20,7 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "requirements-dev.lock.txt" in workflow
     assert "validate_dependency_locks.py --mode regenerate" in workflow
     assert "validate_dependency_locks.py --mode static" in workflow
+    assert "error::ResourceWarning" in workflow
     assert "pip_audit" in workflow
     assert "--cov-branch" in workflow
 

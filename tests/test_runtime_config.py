@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -18,10 +19,11 @@ from runtime_config import (
     ensure_runtime_directories,
     migrate_legacy_data_if_needed,
 )
+from sqlite_utils import open_sqlite
 
 
 def _write_legacy_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with open_sqlite(path) as conn, conn:
         conn.execute("CREATE TABLE sys_config(key TEXT PRIMARY KEY, value TEXT)")
         conn.execute(
             """
@@ -211,11 +213,60 @@ def test_legacy_migration_preserves_committed_wal_rows(tmp_path: Path):
     finally:
         conn.close()
 
-    with sqlite3.connect(config.db_path) as migrated:
+    with open_sqlite(config.db_path) as migrated:
         row = migrated.execute("SELECT original_name FROM files").fetchone()
 
     assert row == ("wal-backed.pdf",)
     assert not (config.data_root / "smart_organizer.db-wal").exists()
+
+
+def test_migration_releases_legacy_database_for_rename(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "uploads").mkdir()
+    _write_legacy_db(source / "smart_organizer.db")
+    config = build_runtime_config(source, {DATA_DIR_ENV: str(tmp_path / "data")})
+
+    migrate_legacy_data_if_needed(config)
+    renamed_source = source / "smart_organizer-renamed.db"
+    source_db = source / "smart_organizer.db"
+    source_db.rename(renamed_source)
+
+    assert renamed_source.exists()
+
+
+def test_failed_database_copy_releases_source_and_destination_handles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_legacy_db(source)
+
+    class FailingBackupConnection:
+        def __init__(self, real_conn: sqlite3.Connection) -> None:
+            self._real = real_conn
+
+        def backup(self, target: sqlite3.Connection, *args: object, **kwargs: object) -> object:
+            raise sqlite3.OperationalError("forced backup failure")
+
+        def close(self) -> None:
+            self._real.close()
+
+    @contextmanager
+    def failing_open_sqlite(target: object, **kwargs: object):
+        raw_target = str(target)
+        conn = sqlite3.connect(raw_target, uri=raw_target.startswith("file:"), **kwargs)
+        wrapped = FailingBackupConnection(conn) if raw_target == f"file:{source}?mode=ro" else conn
+        try:
+            yield wrapped
+        finally:
+            wrapped.close()
+
+    monkeypatch.setattr(runtime_config, "open_sqlite", failing_open_sqlite)
+    with pytest.raises(LegacyDataMigrationError, match="Failed to copy legacy SQLite database safely"):
+        runtime_config._copy_sqlite_database(source, destination)
+
+    source.rename(tmp_path / "source-renamed.db")
+    if destination.exists():
+        destination.unlink()
 
 
 def test_corrupted_completed_marker_is_rejected(tmp_path: Path):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +12,7 @@ from services import (
     reanalyze_unfinished_record,
     resume_unfinished_record,
 )
+from sqlite_utils import open_sqlite
 from storage import CURRENT_SCHEMA_VERSION, StorageManager
 from storage_lifecycle import MissingTemporaryFileError
 
@@ -183,8 +183,7 @@ def test_completed_duplicate_behavior_is_unchanged(tmp_path: Path):
 
 def test_schema_upgrade_adds_updated_at_without_data_loss(tmp_path: Path):
     db_path = tmp_path / "legacy.db"
-    conn = sqlite3.connect(db_path)
-    try:
+    with open_sqlite(db_path) as conn, conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("INSERT INTO sys_config(key, value) VALUES ('schema_version', '15')")
         conn.execute(
@@ -204,9 +203,6 @@ def test_schema_upgrade_adds_updated_at_without_data_loss(tmp_path: Path):
             "INSERT INTO files(original_name, safe_name, temp_path, file_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             ("legacy.pdf", "legacy.pdf", str(tmp_path / "uploads" / "legacy.pdf"), "legacyhash", "PENDING", "2026-07-15T00:00:00+00:00"),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
     storage = StorageManager(str(db_path), str(tmp_path / "repo"), str(tmp_path / "uploads"))
     record = storage.get_file_by_id(1)

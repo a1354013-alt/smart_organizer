@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
+from sqlite_utils import open_sqlite
 from storage import StorageManager
 
 
@@ -26,7 +26,7 @@ def test_fresh_db_has_decision_history_columns(tmp_path: Path):
 
 def test_migration_creates_repeatable_query_indexes(tmp_path: Path):
     db_path = tmp_path / "legacy.db"
-    with sqlite3.connect(db_path) as conn:
+    with open_sqlite(db_path) as conn, conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("INSERT INTO sys_config(key, value) VALUES ('schema_version', '1')")
         conn.execute(
@@ -40,7 +40,6 @@ def test_migration_creates_repeatable_query_indexes(tmp_path: Path):
             )
             """
         )
-        conn.commit()
 
     expected_indexes = {
         "idx_files_created_at_file_id",
@@ -76,8 +75,7 @@ def test_fresh_and_migrated_files_schema_match(tmp_path: Path):
         fresh_conn.close()
         fresh.close()
 
-    conn = sqlite3.connect(legacy_db)
-    try:
+    with open_sqlite(legacy_db) as conn, conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("INSERT INTO sys_config(key, value) VALUES ('schema_version', '1')")
         conn.execute(
@@ -91,9 +89,6 @@ def test_fresh_and_migrated_files_schema_match(tmp_path: Path):
             )
             """
         )
-        conn.commit()
-    finally:
-        conn.close()
 
     migrated = StorageManager(str(legacy_db), str(tmp_path / "legacy-repo"), str(tmp_path / "legacy-uploads"))
     migrated_conn = migrated._get_connection()

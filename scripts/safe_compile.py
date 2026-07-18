@@ -26,6 +26,11 @@ def _cleanup_new_pycache_dirs(root: Path, before: set[Path]) -> None:
                 child.unlink(missing_ok=True)
         path.rmdir()
 
+
+def _restore_missing_pycache_dirs(before: set[Path]) -> None:
+    for path in sorted(before):
+        path.mkdir(parents=True, exist_ok=True)
+
 if __name__ == "__main__":
     has_target = any(not token.startswith("-") for token in sys.argv[1:])
     if not has_target:
@@ -35,3 +40,4 @@ if __name__ == "__main__":
         main()
     finally:
         _cleanup_new_pycache_dirs(PROJECT_ROOT, pycache_before)
+        _restore_missing_pycache_dirs(pycache_before)

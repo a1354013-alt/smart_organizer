@@ -78,6 +78,10 @@ jobs:
       - name: Mypy
         run: python -m mypy --cache-dir=/dev/null
 
+      - name: Pytest ResourceWarning gate
+        run: |
+          python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
+
       - name: Pytest with coverage
         run: python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 

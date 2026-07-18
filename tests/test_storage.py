@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+import storage_base
+from sqlite_utils import open_sqlite
 from storage import StorageManager
 
 
@@ -243,10 +245,9 @@ def test_search_content_fts_and_fallback():
 
 def test_migration_failure_aborts_startup(tmp_path: Path):
     db_path = os.path.join(str(tmp_path), "bad.db")
-    with sqlite3.connect(db_path) as conn:
+    with open_sqlite(db_path) as conn, conn:
         conn.execute("CREATE TABLE sys_config (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute('INSERT INTO sys_config(key, value) VALUES ("schema_version", "not-an-int")')
-        conn.commit()
 
     with pytest.raises(RuntimeError):
         StorageManager(db_path, ":memory:", ":memory:")
@@ -284,6 +285,59 @@ def test_two_storage_managers_can_share_a_memory_uri(tmp_path: Path):
     assert created["success"] is True
     assert record is not None
     assert record["original_name"] == "shared.pdf"
+
+
+def test_shared_memory_keepalive_preserves_data_until_close(tmp_path: Path):
+    shared_db = f"file:smart_organizer_keepalive_{uuid.uuid4().hex}?mode=memory&cache=shared"
+    storage = StorageManager(shared_db, str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    payload = _minimal_pdf_bytes()
+    created = storage.create_temp_file("persist.pdf", payload, _sha256(payload + b"keepalive"), "document")
+
+    with open_sqlite(shared_db) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM files WHERE file_id = ?", (int(created["file_id"]),)).fetchone()[0]
+
+    assert count == 1
+    storage.close()
+
+
+def test_shared_memory_data_does_not_survive_after_keepalive_close(tmp_path: Path):
+    shared_db = f"file:smart_organizer_lifecycle_{uuid.uuid4().hex}?mode=memory&cache=shared"
+    storage = StorageManager(shared_db, str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    created = storage.create_temp_file("gone.pdf", _minimal_pdf_bytes(), _sha256(b"gone"), "document")
+    assert created["success"] is True
+
+    storage.close()
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"), open_sqlite(shared_db) as conn:
+        conn.execute("SELECT COUNT(*) FROM files").fetchone()
+
+
+def test_initialization_failure_closes_keepalive_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    shared_db = f"file:smart_organizer_init_fail_{uuid.uuid4().hex}?mode=memory&cache=shared"
+    closed = {"count": 0}
+    real_connect = storage_base.connect_sqlite
+
+    class TrackingConnection:
+        def __init__(self, real_conn: sqlite3.Connection) -> None:
+            self._real = real_conn
+
+        def close(self) -> None:
+            closed["count"] += 1
+            self._real.close()
+
+    def tracking_connect(target: object, **kwargs: object) -> TrackingConnection | sqlite3.Connection:
+        conn = real_connect(target, **kwargs)
+        if str(target) == shared_db:
+            return TrackingConnection(conn)
+        return conn
+
+    monkeypatch.setattr(storage_base, "connect_sqlite", tracking_connect)
+    monkeypatch.setattr(StorageManager, "_init_db", lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        StorageManager(shared_db, str(tmp_path / "repo"), str(tmp_path / "uploads"))
+
+    assert closed["count"] == 1
 
 
 def test_get_records_page_escapes_like_wildcards():

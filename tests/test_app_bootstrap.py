@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +7,7 @@ from types import SimpleNamespace
 import app_main
 from core import FileProcessor
 from runtime_config import build_runtime_config
+from sqlite_utils import open_sqlite
 from storage import StorageManager
 
 
@@ -30,7 +30,7 @@ def test_bootstrap_services_initializes_clean_workspace(tmp_path: Path):
         assert repo_root.is_dir()
         assert upload_dir.is_dir()
 
-        with sqlite3.connect(db_path) as conn:
+        with open_sqlite(db_path) as conn:
             table_names = {
                 row[0]
                 for row in conn.execute(

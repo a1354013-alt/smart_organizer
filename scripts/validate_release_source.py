@@ -106,6 +106,18 @@ def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> l
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],
         [
             sys.executable,
+            "-W",
+            "error::ResourceWarning",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/test_storage_db_schema.py",
+            "tests/test_runtime_config.py",
+            "tests/test_storage.py",
+            "tests/test_app_bootstrap.py",
+        ],
+        [
+            sys.executable,
             "-m",
             "pytest",
             "-q",

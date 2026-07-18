@@ -7,9 +7,9 @@ from enum import StrEnum
 
 from sqlite_utils import (
     SQLiteTarget,
-    connect_sqlite,
     is_physical_sqlite_path,
     is_sqlite_memory_target,
+    open_sqlite,
     physical_sqlite_path,
 )
 
@@ -154,7 +154,7 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
 
 
 def expected_runtime_tables(db_path: SQLiteTarget) -> set[str]:
-    with connect_sqlite(db_path) as conn:
+    with open_sqlite(db_path) as conn:
         return {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
@@ -162,7 +162,7 @@ def inspect_database_schema(db_path: SQLiteTarget) -> SchemaInspection:
     if is_physical_sqlite_path(db_path) and not physical_sqlite_path(db_path).exists():
         return SchemaInspection(SchemaStatus.CORRUPT, None, f"Database file is missing: {db_path}")
     try:
-        with connect_sqlite(db_path) as conn:
+        with open_sqlite(db_path) as conn:
             integrity = conn.execute("PRAGMA integrity_check").fetchone()
             if not integrity or integrity[0] != "ok":
                 return SchemaInspection(SchemaStatus.CORRUPT, None, "SQLite integrity_check failed")
@@ -217,75 +217,68 @@ def upgrade_database_schema(
     if inspection.version is None:
         raise RuntimeError("Database schema version could not be determined")
 
-    conn: sqlite3.Connection | None = None
     try:
-        conn = connect_sqlite(db_path)
-        cursor = conn.cursor()
-        _create_current_schema(cursor)
-        cursor.execute("PRAGMA table_info(files)")
-        columns = {str(row[1]) for row in cursor.fetchall()}
-        for col_name, col_type in MIGRATION_COLUMNS:
-            if col_name not in columns:
-                cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
+        with open_sqlite(db_path) as conn, conn:
+            cursor = conn.cursor()
+            _create_current_schema(cursor)
+            cursor.execute("PRAGMA table_info(files)")
+            columns = {str(row[1]) for row in cursor.fetchall()}
+            for col_name, col_type in MIGRATION_COLUMNS:
+                if col_name not in columns:
+                    cursor.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")
 
-        version = inspection.version
-        if version < target_version:
-            logger.info("Migration: V%s -> V%s", version, target_version)
-            if version < 7:
-                cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
-                cursor.execute("DROP TABLE IF EXISTS file_tags")
-                cursor.execute(
-                    """
-                    CREATE TABLE file_tags (
-                        file_id INTEGER, tag_id INTEGER, confidence REAL,
-                        PRIMARY KEY (file_id, tag_id),
-                        FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
-                        FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+            version = inspection.version
+            if version < target_version:
+                logger.info("Migration: V%s -> V%s", version, target_version)
+                if version < 7:
+                    cursor.execute("CREATE TABLE IF NOT EXISTS file_tags_backup AS SELECT * FROM file_tags")
+                    cursor.execute("DROP TABLE IF EXISTS file_tags")
+                    cursor.execute(
+                        """
+                        CREATE TABLE file_tags (
+                            file_id INTEGER, tag_id INTEGER, confidence REAL,
+                            PRIMARY KEY (file_id, tag_id),
+                            FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+                            FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+                        )
+                        """
                     )
-                    """
-                )
-                cursor.execute("INSERT OR IGNORE INTO file_tags SELECT * FROM file_tags_backup")
-                cursor.execute("DROP TABLE IF EXISTS file_tags_backup")
+                    cursor.execute("INSERT OR IGNORE INTO file_tags SELECT * FROM file_tags_backup")
+                    cursor.execute("DROP TABLE IF EXISTS file_tags_backup")
 
-            if version < 14:
+                if version < 14:
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET created_at = REPLACE(created_at, ' ', 'T') || '+00:00'
+                        WHERE created_at GLOB '????-??-?? ??:??:??'
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET decision_updated_at = REPLACE(decision_updated_at, ' ', 'T') || '+00:00'
+                        WHERE decision_updated_at GLOB '????-??-?? ??:??:??'
+                        """
+                    )
+
+                if version < 16:
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET updated_at = COALESCE(updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+                        WHERE updated_at IS NULL OR updated_at = ''
+                        """
+                    )
+
                 cursor.execute(
-                    """
-                    UPDATE files
-                    SET created_at = REPLACE(created_at, ' ', 'T') || '+00:00'
-                    WHERE created_at GLOB '????-??-?? ??:??:??'
-                    """
-                )
-                cursor.execute(
-                    """
-                    UPDATE files
-                    SET decision_updated_at = REPLACE(decision_updated_at, ' ', 'T') || '+00:00'
-                    WHERE decision_updated_at GLOB '????-??-?? ??:??:??'
-                    """
+                    "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",
+                    (str(target_version),),
                 )
 
-            if version < 16:
-                cursor.execute(
-                    """
-                    UPDATE files
-                    SET updated_at = COALESCE(updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
-                    WHERE updated_at IS NULL OR updated_at = ''
-                    """
-                )
-
-            cursor.execute(
-                "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",
-                (str(target_version),),
-            )
-
-        _ensure_indexes(cursor)
-        conn.commit()
+            _ensure_indexes(cursor)
     except sqlite3.Error as exc:
-        if conn is not None:
-            conn.rollback()
         raise RuntimeError(f"Database migration failed: {exc}") from exc
-    finally:
-        if conn is not None:
-            conn.close()
 
     verified = inspect_database_schema(db_path) if not is_sqlite_memory_target(db_path) else SchemaInspection(
         SchemaStatus.VALID,

@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc6)
+# Smart Organizer (v2.8.5rc7)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -116,6 +116,13 @@ Smart Organizer accepts both physical SQLite files and SQLite connection targets
 - shared-memory SQLite URIs such as `file:smart_organizer_memdb_<id>?mode=memory&cache=shared`
 
 Schema inspection and schema upgrade treat SQLite URIs and `:memory:` as database targets instead of filesystem paths. Physical existence checks remain strict for real on-disk databases only.
+
+SQLite connection ownership is explicit:
+
+- `connect_sqlite(...)` returns an open caller-owned connection.
+- `open_sqlite(...)` owns and closes a short-lived connection in `finally`.
+- Helpers that accept an existing `sqlite3.Connection` borrow it and do not close it.
+- `StorageManager` keeps its shared-memory keepalive connection open until `StorageManager.close()`, and `close()` is idempotent.
 
 For file selection and quarantine flows, Smart Organizer preserves the original display path for UI/reporting while using one canonical internal path key for dictionary/set membership, selected-record lookup, duplicate maps, quarantine lookup, and manifest-lock ownership. This keeps Windows short-path, long-path, case-only, slash, and `.` / `..` aliases aligned without weakening containment or symlink safety.
 
@@ -263,6 +270,12 @@ CI and local release validation cover compile, cache-safe compile, lock consiste
 Dependency lock regeneration is canonicalized to Windows plus Python `3.11`. GitHub Actions runs one dedicated regeneration job in that environment, while the Ubuntu/Windows test matrix installs from the committed lock files and runs static lock validation only.
 
 The exact source-repository commands for canonical lock regeneration and cross-platform static lock validation live in `RUN_RELEASE.md`. The runtime zip keeps that document for reference, but the validation scripts themselves remain source-only files.
+
+Focused SQLite lifecycle validation command:
+
+```bash
+python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
+```
 
 Dependabot checks Python dependencies and GitHub Actions weekly. CodeQL runs as supplemental security analysis for Python and workflow code.
 
