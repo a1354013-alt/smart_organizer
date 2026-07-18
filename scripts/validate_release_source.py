@@ -29,6 +29,7 @@ COMMAND_TIMEOUTS_SECONDS = {
     "conflict-marker-scan": 30,
     "scripts/safe_compileall.py": 60,
     "scripts/validate_dependency_locks.py": 180,
+    "scripts/cleanup_workspace.py": 30,
     "scripts/cleanup_validation_artifacts.py": 30,
     "ruff": 60,
     "mypy": LONG_COMMAND_TIMEOUT_SECONDS,
@@ -99,9 +100,9 @@ def _tail_lines(lines: deque[str], *, limit: int) -> list[str]:
 def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> list[list[str]]:
     validation_zip_path = f"{output_dir}/{VALIDATION_ZIP_NAME}"
     return [
-        [sys.executable, "scripts/validate_release_source.py", "--check-conflicts-only"],
-        [sys.executable, "scripts/validate_dependency_locks.py", "--mode", "static"],
-        [sys.executable, "scripts/safe_compileall.py", "-q", "."],
+        [sys.executable, "-B", "scripts/validate_release_source.py", "--check-conflicts-only"],
+        [sys.executable, "-B", "scripts/validate_dependency_locks.py", "--mode", "static"],
+        [sys.executable, "-B", "scripts/safe_compileall.py", "-q", "."],
         [sys.executable, "-m", "ruff", "check", "--no-cache", "."],
         [sys.executable, "-m", "mypy", "--cache-dir=/dev/null"],
         [
@@ -129,15 +130,16 @@ def build_validation_commands(output_dir: str = DEFAULT_RELEASE_OUTPUT_DIR) -> l
         [sys.executable, "-m", "pip_audit", "-r", "requirements.lock.txt"],
         [
             sys.executable,
+            "-B",
             "scripts/create_release_zip.py",
             "--output-dir",
             output_dir,
             "--zip-name",
             VALIDATION_ZIP_NAME,
         ],
-        [sys.executable, "scripts/verify_release_zip.py", validation_zip_path],
-        [sys.executable, "scripts/cleanup_validation_artifacts.py"],
-        [sys.executable, "scripts/check_workspace_clean.py", "--project-root", "."],
+        [sys.executable, "-B", "scripts/verify_release_zip.py", validation_zip_path],
+        [sys.executable, "-B", "scripts/cleanup_workspace.py"],
+        [sys.executable, "-B", "scripts/check_workspace_clean.py", "--project-root", "."],
     ]
 
 

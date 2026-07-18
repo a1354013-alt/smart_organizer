@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
   dependency-lock-determinism:
     name: Dependency Lock Determinism
@@ -21,23 +24,26 @@ jobs:
 
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.lock.txt
+          python -B -m pip install --upgrade pip
+          python -B -m pip install -r requirements-dev.lock.txt
 
       - name: Python runtime preflight
-        run: python -c "from runtime_preflight import require_supported_python; require_supported_python()"
+        run: python -B -c "from runtime_preflight import require_supported_python; require_supported_python()"
 
       - name: Static lock validation
-        run: python scripts/validate_dependency_locks.py --mode static
+        run: python -B scripts/validate_dependency_locks.py --mode static
 
       - name: Seeded no-upgrade regeneration
-        run: python scripts/validate_dependency_locks.py --mode regenerate
+        run: python -B scripts/validate_dependency_locks.py --mode regenerate
 
       - name: Repository unchanged check
         run: git diff --exit-code
 
+      - name: Cleanup generated workspace artifacts
+        run: python -B scripts/cleanup_workspace.py
+
       - name: Workspace clean check
-        run: python scripts/check_workspace_clean.py --project-root .
+        run: python -B scripts/check_workspace_clean.py --project-root .
 
   test:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -67,34 +73,34 @@ jobs:
 
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.lock.txt
+          python -B -m pip install --upgrade pip
+          python -B -m pip install -r requirements-dev.lock.txt
 
       - name: Python runtime preflight
-        run: python -c "from runtime_preflight import require_supported_python; require_supported_python()"
+        run: python -B -c "from runtime_preflight import require_supported_python; require_supported_python()"
 
       - name: Clean release output
         shell: bash
         run: rm -rf release_ci coverage.xml .coverage .coverage.*
 
       - name: Compile Python files
-        run: python scripts/safe_compileall.py -q .
+        run: python -B scripts/safe_compileall.py -q .
 
       - name: Validate dependency locks
-        run: python scripts/validate_dependency_locks.py --mode static
+        run: python -B scripts/validate_dependency_locks.py --mode static
 
       - name: Ruff
-        run: python -m ruff check --no-cache .
+        run: python -B -m ruff check --no-cache .
 
       - name: Mypy
-        run: python -m mypy --cache-dir=/dev/null
+        run: python -B -m mypy --cache-dir=/dev/null
 
       - name: Pytest ResourceWarning gate
         run: |
-          python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
+          python -B -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
 
       - name: Pytest with coverage
-        run: python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
+        run: python -B -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage XML
         if: always()
@@ -105,24 +111,27 @@ jobs:
           if-no-files-found: ignore
 
       - name: Dependency audit
-        run: python -m pip_audit -r requirements.lock.txt
+        run: python -B -m pip_audit -r requirements.lock.txt
 
       - name: Build release zip
-        run: python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
+        run: python -B scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
 
       - name: Verify release zip
-        run: python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
-
-      - name: Workspace clean check
-        run: python scripts/check_workspace_clean.py --project-root .
+        run: python -B scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
 
       - name: Validate release source command plan
         run: |
-          python scripts/validate_release_source.py --dry-run
+          python -B scripts/validate_release_source.py --dry-run
 
       - name: Validate release source execution
         run: |
-          python scripts/validate_release_source.py --timeout-tail-lines 20
+          python -B scripts/validate_release_source.py --timeout-tail-lines 20
+
+      - name: Cleanup generated workspace artifacts
+        run: python -B scripts/cleanup_workspace.py
+
+      - name: Workspace clean check
+        run: python -B scripts/check_workspace_clean.py --project-root .
 
       - name: PowerShell syntax smoke
         if: runner.os == 'Windows'

@@ -5,13 +5,13 @@ Do not zip the whole workspace directly.
 Use one of these official packaging commands instead:
 
 ```bash
-python scripts/build_release_zip.py
+python -B scripts/build_release_zip.py
 ```
 
 Compatibility alias:
 
 ```bash
-python scripts/create_release_zip.py
+python -B scripts/create_release_zip.py
 ```
 
 ```powershell
@@ -44,6 +44,8 @@ Source-only scripts stay in the source repository and are never included in the 
 
 - `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
+- `scripts/cleanup_workspace.py`
+- `scripts/cleanup_validation_artifacts.py`
 - `scripts/create_release_zip.py`
 - `scripts/regenerate_dependency_locks.py`
 - `scripts/release_policy.py`
@@ -103,7 +105,7 @@ Run the full source-repository validation sequence before publishing:
 Source repository only, not included in runtime release zip.
 
 ```bash
-python scripts/validate_release_source.py
+python -B scripts/validate_release_source.py
 ```
 
 This command is only available in the source repository and is not included in the extracted runtime/demo zip because source-only scripts stay in the source repository.

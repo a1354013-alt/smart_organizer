@@ -61,20 +61,20 @@ def find_workspace_pollution() -> list[Path]:
     return sorted(set(problems))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check the workspace for delivery pollution.")
     parser.add_argument(
         "--project-root",
         default=str(PROJECT_ROOT),
         help="Project root to scan. Defaults to the current repository root.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     global PROJECT_ROOT
 
-    args = parse_args()
+    args = parse_args(argv)
     project_root = Path(args.project_root).resolve()
     PROJECT_ROOT = project_root
 

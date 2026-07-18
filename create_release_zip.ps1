@@ -20,7 +20,7 @@ $python = if (Get-Command python -ErrorAction SilentlyContinue) {
     throw "Python is required to build the release zip."
 }
 
-$args = @($pythonScript, "--output-dir", $OutputDir)
+$args = @("-B", $pythonScript, "--output-dir", $OutputDir)
 if (-not [string]::IsNullOrWhiteSpace($ZipName)) {
     $args += @("--zip-name", $ZipName)
 }

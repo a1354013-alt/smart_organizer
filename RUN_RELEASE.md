@@ -13,13 +13,13 @@ powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1
 Or:
 
 ```bash
-python scripts/build_release_zip.py
+python -B scripts/build_release_zip.py
 ```
 
 Compatibility alias:
 
 ```bash
-python scripts/create_release_zip.py
+python -B scripts/create_release_zip.py
 ```
 
 What this does:
@@ -62,6 +62,8 @@ Source-only scripts stay in the source repository and are not shipped in the run
 
 - `scripts/build_release_zip.py`
 - `scripts/check_workspace_clean.py`
+- `scripts/cleanup_workspace.py`
+- `scripts/cleanup_validation_artifacts.py`
 - `scripts/create_release_zip.py`
 - `scripts/regenerate_dependency_locks.py`
 - `scripts/release_policy.py`
@@ -89,8 +91,8 @@ The release zip is intended for:
 
 These commands belong to the source repository, not the runtime package, because the source-only scripts stay in the source repository:
 
-- `python scripts/create_release_zip.py`
-- `python scripts/build_release_zip.py`
+- `python -B scripts/create_release_zip.py`
+- `python -B scripts/build_release_zip.py`
 - `powershell -ExecutionPolicy Bypass -File .\create_release_zip.ps1`
 - `python -m pytest`
 - `python -m mypy`
@@ -149,7 +151,7 @@ Use the release validation script as the single source of truth for the full com
 sequence.
 
 ```bash
-python scripts/validate_release_source.py
+python -B scripts/validate_release_source.py
 ```
 
 This command is only available in the source repository and is not included in the extracted runtime/demo zip.
@@ -164,9 +166,9 @@ do not influence the result.
 
 Helpful variants:
 
-- `python scripts/validate_release_source.py --dry-run`
+- `python -B scripts/validate_release_source.py --dry-run`
   Prints the full validation command plan without executing it.
-- `python scripts/validate_release_source.py --timeout-tail-lines 20`
+- `python -B scripts/validate_release_source.py --timeout-tail-lines 20`
   Prints the last 20 stdout/stderr tail lines when a subprocess times out. The tail keeps flushed partial output and labels each line as `[stdout]` or `[stderr]`.
 
 CI keeps both levels of coverage:
@@ -177,24 +179,24 @@ CI keeps both levels of coverage:
 Equivalent explicit commands:
 
 ```bash
-python scripts/validate_dependency_locks.py --mode static
-python scripts/safe_compileall.py -q .
+python -B scripts/validate_dependency_locks.py --mode static
+python -B scripts/safe_compileall.py -q .
 python -m ruff check --no-cache .
 python -m mypy --cache-dir=/dev/null
 python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
 python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 python -m pip_audit -r requirements.lock.txt
-python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
-python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
-python scripts/cleanup_validation_artifacts.py
-python scripts/check_workspace_clean.py --project-root .
-python scripts/validate_release_source.py --timeout-tail-lines 20
+python -B scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
+python -B scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
+python -B scripts/cleanup_workspace.py
+python -B scripts/check_workspace_clean.py --project-root .
+python -B scripts/validate_release_source.py --timeout-tail-lines 20
 ```
 
 Canonical dependency lock regeneration is intentionally separate from the cross-platform source validation flow. The committed lock files are regenerated and compared only in the canonical Windows plus Python `3.11` environment:
 
 ```bash
-python scripts/validate_dependency_locks.py --mode regenerate
+python -B scripts/validate_dependency_locks.py --mode regenerate
 ```
 
 Static validation never upgrades packages. Canonical regenerate validation seeds the temporary lock from the committed lock first and then runs `pip-compile --no-upgrade`, so newly published compatible packages do not create false CI drift.
@@ -202,8 +204,8 @@ Static validation never upgrades packages. Canonical regenerate validation seeds
 Manual lock commands:
 
 ```bash
-python scripts/regenerate_dependency_locks.py
-python scripts/regenerate_dependency_locks.py --upgrade
+python -B scripts/regenerate_dependency_locks.py
+python -B scripts/regenerate_dependency_locks.py --upgrade
 ```
 
 Use `scripts/regenerate_dependency_locks.py` in the canonical Windows + Python `3.11` environment. The default command refreshes committed locks while preserving compatible pins; `--upgrade` is the explicit opt-in path for newer compatible versions. After either command, review the printed package diff and rerun the full validation workflow.

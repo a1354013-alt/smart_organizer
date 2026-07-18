@@ -12,6 +12,7 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
 
     assert "dependency-lock-determinism:" in workflow
     assert "Dependency Lock Determinism" in workflow
+    assert 'PYTHONDONTWRITEBYTECODE: "1"' in workflow
     assert "ubuntu-latest" in workflow
     assert "windows-latest" in workflow
     assert '"3.11"' in workflow
@@ -19,9 +20,11 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "fail-fast: false" in workflow
     assert "continue-on-error" not in workflow
     assert "requirements-dev.lock.txt" in workflow
-    assert "validate_dependency_locks.py --mode regenerate" in workflow
-    assert "validate_dependency_locks.py --mode static" in workflow
+    assert "python -B scripts/validate_dependency_locks.py --mode regenerate" in workflow
+    assert "python -B scripts/validate_dependency_locks.py --mode static" in workflow
     assert "Repository unchanged check" in workflow
+    assert "Cleanup generated workspace artifacts" in workflow
+    assert "python -B scripts/check_workspace_clean.py --project-root ." in workflow
     assert "error::ResourceWarning" in workflow
     assert "pip_audit" in workflow
     assert "--cov-branch" in workflow

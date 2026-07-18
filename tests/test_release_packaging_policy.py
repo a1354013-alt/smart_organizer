@@ -49,6 +49,7 @@ def test_release_allowlist_is_importable_and_contains_runtime_files():
     for source_only_path in (
         "scripts/build_release_zip.py",
         "scripts/check_workspace_clean.py",
+        "scripts/cleanup_workspace.py",
         "scripts/cleanup_validation_artifacts.py",
         "scripts/conflict_markers.py",
         "scripts/create_release_zip.py",
@@ -83,7 +84,7 @@ def test_release_packaging_docs_match_current_policy():
         assert expected in allowlist
         assert expected in packaging
 
-    assert "python scripts/validate_release_source.py" in run_release
+    assert "python -B scripts/validate_release_source.py" in run_release
     assert "python -m pip install -r requirements.lock.txt" in readme
     assert "requirements-dev.txt" not in readme
     assert "Source Repository Release Validation" in readme
@@ -92,7 +93,8 @@ def test_release_packaging_docs_match_current_policy():
     assert "streamlit run app.py" in readme
     assert "streamlit run app.py" in run_release
     assert "$includePaths" not in ps1
-    assert "python scripts/create_release_zip.py" in ps1 or "scripts\\create_release_zip.py" in ps1
+    assert "-B" in ps1
+    assert "scripts\\create_release_zip.py" in ps1
     assert "source-only scripts" in packaging
     assert "source-only scripts" in run_release
 
@@ -106,21 +108,21 @@ def test_release_validation_commands_are_consistent_and_cache_safe():
     ]
     command_text = "\n".join(" ".join(command[1:]) for command in build_validation_commands())
     required_commands = [
-        "scripts/validate_dependency_locks.py --mode static",
-        "scripts/safe_compileall.py -q .",
+        "-B scripts/validate_dependency_locks.py --mode static",
+        "-B scripts/safe_compileall.py -q .",
         "-m ruff check --no-cache .",
         "-m mypy --cache-dir=/dev/null",
         "-W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py",
         "-m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml",
         "-m pip_audit -r requirements.lock.txt",
-        "scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
-        "scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
-        "scripts/cleanup_validation_artifacts.py",
-        "scripts/check_workspace_clean.py --project-root .",
+        "-B scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
+        "-B scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
+        "-B scripts/cleanup_workspace.py",
+        "-B scripts/check_workspace_clean.py --project-root .",
     ]
 
     for content in docs:
-        assert "python scripts/validate_release_source.py" in content
+        assert "python -B scripts/validate_release_source.py" in content
         assert "Source repository only, not included in runtime release zip." in content
         assert "source-only scripts stay in the source repository" in content
         assert "python -m compileall -q ." not in content
@@ -141,18 +143,18 @@ def test_release_validation_dry_run_lists_expected_commands(capsys):
 
     output = capsys.readouterr().out
     expected_commands = [
-        "python scripts/validate_release_source.py --check-conflicts-only",
-        "python scripts/validate_dependency_locks.py --mode static",
-        "python scripts/safe_compileall.py -q .",
+        "python -B scripts/validate_release_source.py --check-conflicts-only",
+        "python -B scripts/validate_dependency_locks.py --mode static",
+        "python -B scripts/safe_compileall.py -q .",
         "python -m ruff check --no-cache .",
         "python -m mypy --cache-dir=/dev/null",
         "python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py",
         "python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml",
         "python -m pip_audit -r requirements.lock.txt",
-        "python scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
-        "python scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
-        "python scripts/cleanup_validation_artifacts.py",
-        "python scripts/check_workspace_clean.py --project-root .",
+        "python -B scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip",
+        "python -B scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip",
+        "python -B scripts/cleanup_workspace.py",
+        "python -B scripts/check_workspace_clean.py --project-root .",
     ]
 
     for command in expected_commands:
@@ -212,7 +214,7 @@ def test_release_validation_docs_reference_single_entrypoint():
 
     for path in docs:
         content = path.read_text(encoding="utf-8")
-        assert "python scripts/validate_release_source.py" in content
+        assert "python -B scripts/validate_release_source.py" in content
         assert "Source repository only, not included in runtime release zip." in content
 
 
@@ -244,5 +246,5 @@ def test_release_readme_references_only_files_in_runtime_zip(tmp_path: Path):
 
     for doc_name in ("RUN_RELEASE.md", "RELEASE_PACKAGING.md"):
         content = (extract_dir / doc_name).read_text(encoding="utf-8")
-        assert "python scripts/validate_release_source.py" in content
+        assert "python -B scripts/validate_release_source.py" in content
         assert "Source repository only, not included in runtime release zip." in content
