@@ -4,6 +4,8 @@ from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import app_main
 from core import FileProcessor
 from runtime_config import build_runtime_config
@@ -16,7 +18,7 @@ def test_bootstrap_services_initializes_clean_workspace(tmp_path: Path):
     repo_root = tmp_path / "repo"
     upload_dir = tmp_path / "uploads"
 
-    app_main._bootstrap_services.clear()
+    app_main.clear_test_service_cache()
     try:
         processor, storage = app_main._bootstrap_services(
             str(db_path),
@@ -46,7 +48,7 @@ def test_bootstrap_services_initializes_clean_workspace(tmp_path: Path):
     finally:
         with suppress(UnboundLocalError):
             storage.close()
-        app_main._bootstrap_services.clear()
+        app_main.clear_test_service_cache()
 
 
 def test_build_context_uses_startup_resolved_runtime_config(monkeypatch, tmp_path: Path):
@@ -67,3 +69,46 @@ def test_build_context_uses_startup_resolved_runtime_config(monkeypatch, tmp_pat
     assert context.db_path == config.db_path
     assert context.repo_root == config.repo_root
     assert context.upload_dir == config.upload_dir
+
+
+def test_clear_test_service_cache_closes_cached_storage_and_is_idempotent(tmp_path: Path):
+    db_path = tmp_path / "smart_organizer.db"
+    repo_root = tmp_path / "repo"
+    upload_dir = tmp_path / "uploads"
+    app_main.clear_test_service_cache()
+
+    _processor, storage = app_main._bootstrap_services(
+        str(db_path),
+        str(repo_root),
+        str(upload_dir),
+    )
+    storage.create_temp_file("invoice.pdf", b"%PDF-1.4\n", "bootstrap-cache", "document")
+
+    app_main.clear_test_service_cache()
+    app_main.clear_test_service_cache()
+
+    renamed = tmp_path / "renamed.db"
+    db_path.rename(renamed)
+    assert renamed.exists()
+
+
+def test_bootstrap_services_closes_storage_when_registration_fails(monkeypatch, tmp_path: Path):
+    app_main.clear_test_service_cache()
+    captured: list[StorageManager] = []
+
+    def fail_register(storage: StorageManager) -> None:
+        captured.append(storage)
+        raise RuntimeError("register failed")
+
+    monkeypatch.setattr(app_main, "_register_storage_close", fail_register)
+
+    with pytest.raises(RuntimeError, match="register failed"):
+        app_main._bootstrap_services(
+            str(tmp_path / "smart_organizer.db"),
+            str(tmp_path / "repo"),
+            str(tmp_path / "uploads"),
+        )
+
+    assert len(captured) == 1
+    with pytest.raises(RuntimeError, match="closed"):
+        captured[0]._get_connection()

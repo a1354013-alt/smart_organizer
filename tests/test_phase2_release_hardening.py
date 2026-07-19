@@ -24,6 +24,11 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "python -B scripts/validate_dependency_locks.py --mode static" in workflow
     assert "Repository unchanged check" in workflow
     assert "Cleanup generated workspace artifacts" in workflow
+    assert "--tb=short" in workflow
+    assert "--junitxml=test-results.xml" in workflow
+    assert "resourcewarning-results.xml" in workflow
+    assert "test-diagnostics-${{ matrix.os }}-py${{ matrix.python-version }}" in workflow
+    assert "python -B scripts/cleanup_validation_artifacts.py" in workflow
     assert "python -B scripts/check_workspace_clean.py --project-root ." in workflow
     assert "error::ResourceWarning" in workflow
     assert "pip_audit" in workflow

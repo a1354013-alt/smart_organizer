@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc9)
+# Smart Organizer (v2.8.5rc10)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -274,7 +274,7 @@ Newly published compatible packages should no longer break CI because canonical 
 Focused SQLite lifecycle validation command:
 
 ```bash
-python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
+python -B -X tracemalloc=10 -W error::ResourceWarning -m pytest -q --tb=short -ra tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
 ```
 
 Dependabot checks Python dependencies and GitHub Actions weekly. CodeQL runs as supplemental security analysis for Python and workflow code.

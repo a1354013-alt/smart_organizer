@@ -25,6 +25,7 @@ from ui_state import init_session_state
 from ui_upload import render_upload
 
 _REGISTERED_STORAGE_CLOSE_IDS: set[int] = set()
+_BOOTSTRAPPED_STORAGES: dict[tuple[str, str, str], StorageManager] = {}
 
 
 def _optional_import(module_name: str) -> Any:
@@ -41,12 +42,26 @@ def _configure_page() -> None:
     setup_logging()
 
 
+def _close_storage(storage: StorageManager) -> None:
+    storage.close()
+    _REGISTERED_STORAGE_CLOSE_IDS.discard(id(storage))
+
+
 def _register_storage_close(storage: StorageManager) -> None:
     storage_id = id(storage)
     if storage_id in _REGISTERED_STORAGE_CLOSE_IDS:
         return
-    atexit.register(storage.close)
+    atexit.register(_close_storage, storage)
     _REGISTERED_STORAGE_CLOSE_IDS.add(storage_id)
+
+
+def clear_test_service_cache() -> None:
+    for storage in list(_BOOTSTRAPPED_STORAGES.values()):
+        _close_storage(storage)
+    _BOOTSTRAPPED_STORAGES.clear()
+    clear_cache = getattr(_bootstrap_services, "clear", None)
+    if callable(clear_cache):
+        clear_cache()
 
 
 @st.cache_resource
@@ -58,10 +73,22 @@ def _bootstrap_services(
     resolved_db_path = Path(db_path) if db_path is not None else DB_PATH
     resolved_repo_root = Path(repo_root) if repo_root is not None else REPO_ROOT
     resolved_upload_dir = Path(upload_dir) if upload_dir is not None else UPLOAD_DIR
-    processor = FileProcessor()
-    storage = StorageManager(str(resolved_db_path), str(resolved_repo_root), str(resolved_upload_dir))
-    _register_storage_close(storage)
-    return processor, storage
+    cache_key = (str(resolved_db_path), str(resolved_repo_root), str(resolved_upload_dir))
+    storage: StorageManager | None = None
+    try:
+        processor = FileProcessor()
+        storage = StorageManager(*cache_key)
+        previous = _BOOTSTRAPPED_STORAGES.get(cache_key)
+        if previous is not None and previous is not storage:
+            _close_storage(previous)
+        _BOOTSTRAPPED_STORAGES[cache_key] = storage
+        _register_storage_close(storage)
+        return processor, storage
+    except Exception:
+        if storage is not None:
+            _close_storage(storage)
+            _BOOTSTRAPPED_STORAGES.pop(cache_key, None)
+        raise
 
 
 def _build_context(runtime_config: RuntimeConfig | None = None) -> UIContext:

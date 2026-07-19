@@ -183,11 +183,12 @@ python -B scripts/validate_dependency_locks.py --mode static
 python -B scripts/safe_compileall.py -q .
 python -m ruff check --no-cache .
 python -m mypy --cache-dir=/dev/null
-python -W error::ResourceWarning -m pytest -q tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
-python -m pytest -q --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
+python -B -X tracemalloc=10 -W error::ResourceWarning -m pytest -q --tb=short -ra --junitxml=resourcewarning-results.xml tests/test_storage_db_schema.py tests/test_runtime_config.py tests/test_storage.py tests/test_app_bootstrap.py
+python -B -m pytest -q --tb=short -ra --junitxml=test-results.xml --cov=. --cov-branch --cov-report=term-missing --cov-report=xml
 python -m pip_audit -r requirements.lock.txt
 python -B scripts/create_release_zip.py --output-dir release_ci --zip-name smart_organizer-release-validation.zip
 python -B scripts/verify_release_zip.py release_ci/smart_organizer-release-validation.zip
+python -B scripts/cleanup_validation_artifacts.py
 python -B scripts/cleanup_workspace.py
 python -B scripts/check_workspace_clean.py --project-root .
 python -B scripts/validate_release_source.py --timeout-tail-lines 20

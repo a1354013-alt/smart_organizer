@@ -15,10 +15,11 @@ def cleanup_validation_artifacts(project_root: Path = PROJECT_ROOT) -> list[Path
         if path.is_file() and path.name != ".coveragerc":
             path.unlink()
             removed.append(path)
-    coverage_xml = project_root / "coverage.xml"
-    if coverage_xml.exists() and coverage_xml.is_file():
-        coverage_xml.unlink()
-        removed.append(coverage_xml)
+    for artifact_name in ("coverage.xml", "test-results.xml", "resourcewarning-results.xml", "pytest-output.txt"):
+        artifact_path = project_root / artifact_name
+        if artifact_path.exists() and artifact_path.is_file():
+            artifact_path.unlink()
+            removed.append(artifact_path)
     return removed
 
 

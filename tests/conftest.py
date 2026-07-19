@@ -1,5 +1,6 @@
 # ruff: noqa: I001
 import atexit
+import gc
 import os
 import shutil
 import sys
@@ -185,6 +186,23 @@ def _close_storage_managers(monkeypatch):
     finally:
         for storage in reversed(created):
             storage.close()
+
+
+@pytest.fixture(autouse=True)
+def _clear_project_service_cache():
+    try:
+        import app_main
+    except Exception:
+        yield
+        gc.collect()
+        return
+
+    try:
+        yield
+    finally:
+        with suppress(Exception):
+            app_main.clear_test_service_cache()
+        gc.collect()
 
 
 @pytest.fixture
