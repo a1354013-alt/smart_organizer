@@ -5,12 +5,15 @@ import logging
 import os
 import time
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 from contracts import validate_extracted_metadata
 from core import FileProcessor
+from malware_scanner import MalwareScanner, MalwareScanResult, ScanHealth, ScanPolicy, Verdict
 from services_models import AnalysisResult, BatchAnalysisOutcome, DuplicateInfo, UploadedFileData
 from storage import MAX_UPLOAD_BATCH_BYTES, MAX_UPLOAD_BYTES, StorageManager
+from storage_base import utc_now_iso
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 from topic_taxonomy import normalize_topic_key
 from upload_validation import validate_upload_batch
@@ -41,6 +44,114 @@ def _infer_file_type_hint(uploaded: UploadedFileData) -> str:
     if mime_type.startswith("video") or suffix in SUPPORTED_VIDEO_SUFFIXES:
         return "video"
     return "document"
+
+
+def _build_scan_policy(options: Mapping[str, Any]) -> ScanPolicy:
+    policy_name = str(options.get("malware_scan_policy") or "standard").strip().lower() or "standard"
+    strict = policy_name == "strict"
+    return ScanPolicy(
+        name=policy_name,
+        policy_version=str(options.get("malware_scan_policy_version") or ("strict-v1" if strict else "standard-v1")),
+        max_scan_size_bytes=options.get("malware_max_scan_size_bytes"),
+        max_file_size_bytes=options.get("malware_max_file_size_bytes"),
+        max_archive_recursion=options.get("malware_max_archive_recursion"),
+        max_archive_files=options.get("malware_max_archive_files"),
+        max_scan_time_seconds=max(1, int(options.get("malware_scan_timeout_seconds", 30))),
+        enable_pua=bool(strict or options.get("malware_detect_pua")),
+        enable_heuristics=bool(strict or options.get("malware_enable_heuristics")),
+        alert_encrypted=bool(strict or options.get("malware_alert_encrypted")),
+        alert_broken_executables=bool(strict or options.get("malware_alert_broken_executables")),
+        custom_rules_dir=str(options.get("malware_custom_rules_dir") or "").strip() or None,
+    )
+
+
+def _scan_upload_before_processing(
+    *,
+    uploaded: UploadedFileData,
+    file_id: int,
+    temp_path: str,
+    file_hash: str,
+    storage: StorageManager,
+    processing_options: Mapping[str, Any],
+) -> MalwareScanResult | None:
+    if not bool(processing_options.get("enable_malware_scan", False)):
+        return None
+
+    policy = _build_scan_policy(processing_options)
+    timeout_seconds = max(1, int(processing_options.get("malware_scan_timeout_seconds", 30)))
+    scanner = MalwareScanner(
+        timeout_seconds=timeout_seconds,
+        max_database_age_days=max(1, int(processing_options.get("malware_database_max_age_days", 7))),
+        policy=policy,
+    )
+    record = storage.get_file_by_id(file_id) or {}
+    raw_mtime_ns = record.get("mtime_ns")
+    mtime_ns = raw_mtime_ns if isinstance(raw_mtime_ns, int) else None
+    raw_size_bytes = record.get("size_bytes")
+    size_bytes = raw_size_bytes if isinstance(raw_size_bytes, int) else None
+    cached = storage.get_malware_scan_cache(
+        sha256=file_hash,
+        scanner_backend=scanner.get_status().selected_backend,
+        database_version=scanner.get_status().database_version,
+        database_date=scanner.get_status().database_date,
+        scan_policy_version=policy.policy_version,
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+    )
+    if cached is not None:
+        result = MalwareScanResult(
+            verdict=cast(Verdict, cached.get("verdict") or "not_scanned"),
+            scan_health=cast(ScanHealth, cached.get("scan_health") or "incomplete"),
+            scanner="ClamAV",
+            file_path=temp_path,
+            backend=str(cached.get("scanner_backend") or "cache"),
+            threat_name=str(cached.get("threat_name") or "").strip() or None,
+            message=str(cached.get("message") or "").strip(),
+            elapsed_seconds=float(cast(float | int | str, cached.get("elapsed_seconds") or 0.0)),
+            engine_version=str(cached.get("engine_version") or "").strip() or None,
+            database_version=str(cached.get("database_version") or "").strip() or None,
+            database_date=str(cached.get("database_date") or "").strip() or None,
+            cache_hit=True,
+            file_sha256=file_hash,
+        )
+        storage.update_file_malware_scan(file_id, result, cache_hit=True)
+        return result
+
+    status = scanner.get_status()
+    if status.selected_backend == "clamd":
+        result = scanner.scan_bytes(uploaded.content, uploaded.name)
+    else:
+        result = scanner.scan_path(Path(temp_path))
+    result = MalwareScanResult(
+        verdict=result.verdict,
+        scan_health=result.scan_health,
+        scanner=result.scanner,
+        file_path=temp_path,
+        backend=result.backend,
+        threat_name=result.threat_name,
+        message=result.message,
+        elapsed_seconds=result.elapsed_seconds,
+        return_code=result.return_code,
+        engine_version=result.engine_version,
+        database_version=result.database_version,
+        database_date=result.database_date,
+        cache_hit=False,
+        file_sha256=file_hash,
+    )
+    storage.update_file_malware_scan(file_id, result, cache_hit=False)
+    storage.upsert_malware_scan_cache(
+        sha256=file_hash,
+        canonical_path=temp_path,
+        size_bytes=result.file_size,
+        mtime_ns=result.file_mtime_ns,
+        file_identity=result.file_inode,
+        result=result,
+        scan_policy_version=policy.policy_version,
+    )
+    if not result.is_actionably_clean():
+        holding_path = storage.move_upload_to_malware_holding(file_id)
+        storage.update_file_malware_scan(file_id, result, cache_hit=False, temp_path=holding_path, status_override="BLOCKED")
+    return result
 
 
 def analyze_one_upload(
@@ -91,6 +202,20 @@ def analyze_one_upload(
             return None, None, f"Temporary path missing for {uploaded.name}"
 
         options = dict(processing_options or {})
+        malware_result = _scan_upload_before_processing(
+            uploaded=uploaded,
+            file_id=file_id,
+            temp_path=temp_path,
+            file_hash=file_hash,
+            storage=storage,
+            processing_options=options,
+        )
+        if malware_result is not None and not malware_result.is_actionably_clean():
+            return None, None, (
+                f"{uploaded.name}: blocked by malware scan "
+                f"({malware_result.status}: {malware_result.message or malware_result.threat_name or 'scan blocked'})"
+            )
+
         options.setdefault("enable_pdf_preview", False)
         options.setdefault("enable_ocr", False)
         options.setdefault("pdf_text_max_pages", 3)
@@ -165,6 +290,18 @@ def analyze_one_upload(
                 metadata=metadata,
                 preview_path=metadata.get("preview_path"),
                 is_scanned=bool(metadata.get("is_scanned", False)),
+                malware_verdict=malware_result.verdict if malware_result is not None else "not_scanned",
+                malware_scan_health=malware_result.scan_health if malware_result is not None else "incomplete",
+                malware_status=malware_result.status if malware_result is not None else "not_scanned",
+                malware_scanner_backend=malware_result.backend if malware_result is not None else None,
+                malware_scanner_engine_version=malware_result.engine_version if malware_result is not None else None,
+                malware_database_version=malware_result.database_version if malware_result is not None else None,
+                malware_database_date=malware_result.database_date if malware_result is not None else None,
+                malware_threat_name=malware_result.threat_name if malware_result is not None else None,
+                malware_message=malware_result.message if malware_result is not None else None,
+                malware_scanned_at=utc_now_iso() if malware_result is not None else None,
+                malware_elapsed_seconds=malware_result.elapsed_seconds if malware_result is not None else 0.0,
+                malware_cache_hit=malware_result.cache_hit if malware_result is not None else False,
                 summary_status=None,
                 summary_error=None,
                 analysis_status=analysis_status,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sqlite3
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from core import FileUtils
+from malware_scanner import MalwareScanResult, file_sha256
+from path_utils import canonical_path_key
 from storage_base import MAX_UPLOAD_BYTES, _log_context, utc_now_iso
 from supported_formats import SUPPORTED_VIDEO_SUFFIXES
 from topic_taxonomy import normalize_topic_key, normalize_topic_scores
@@ -164,7 +167,247 @@ class StorageRepositoryMixin:
         normalized["preview_path"] = cast(Any, self)._normalize_preview_path(normalized.get("preview_path"))
         normalized["summary_status"] = str(normalized.get("summary_status") or "").strip() or None
         normalized["summary_error"] = str(normalized.get("summary_error") or "").strip() or None
+        normalized["malware_verdict"] = str(normalized.get("malware_verdict") or "not_scanned")
+        normalized["malware_scan_health"] = str(normalized.get("malware_scan_health") or "incomplete")
+        normalized["malware_status"] = str(
+            normalized.get("malware_status") or normalized.get("malware_verdict") or "not_scanned"
+        )
+        normalized["malware_scanner_backend"] = str(normalized.get("malware_scanner_backend") or "").strip() or None
+        normalized["malware_scanner_engine_version"] = (
+            str(normalized.get("malware_scanner_engine_version") or "").strip() or None
+        )
+        normalized["malware_database_version"] = str(normalized.get("malware_database_version") or "").strip() or None
+        normalized["malware_database_date"] = str(normalized.get("malware_database_date") or "").strip() or None
+        normalized["malware_threat_name"] = str(normalized.get("malware_threat_name") or "").strip() or None
+        normalized["malware_message"] = str(normalized.get("malware_message") or "").strip() or None
         return normalized
+
+    def get_malware_scan_cache(
+        self: Any,
+        *,
+        sha256: str,
+        scanner_backend: str,
+        database_version: str | None,
+        database_date: str | None,
+        scan_policy_version: str,
+        size_bytes: int | None = None,
+        mtime_ns: int | None = None,
+    ) -> dict[str, object] | None:
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM malware_scan_cache
+                WHERE sha256 = ?
+                  AND scanner_backend = ?
+                  AND COALESCE(database_version, '') = COALESCE(?, '')
+                  AND COALESCE(database_date, '') = COALESCE(?, '')
+                  AND scan_policy_version = ?
+                ORDER BY scanned_at DESC, cache_id DESC
+                LIMIT 1
+                """,
+                (sha256, scanner_backend, database_version, database_date, scan_policy_version),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            payload = dict(row)
+            if payload.get("scan_health") in {"timeout", "scanner_unavailable", "error", "incomplete", "limit_exceeded"}:
+                return None
+            if size_bytes is not None and payload.get("size_bytes") not in (None, size_bytes):
+                return None
+            if mtime_ns is not None and payload.get("mtime_ns") not in (None, mtime_ns):
+                return None
+            return payload
+        except sqlite3.Error:
+            logger.debug("get_malware_scan_cache failed", exc_info=True)
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+    def upsert_malware_scan_cache(
+        self: Any,
+        *,
+        sha256: str,
+        canonical_path: str | None,
+        size_bytes: int | None,
+        mtime_ns: int | None,
+        file_identity: str | None,
+        result: MalwareScanResult,
+        scan_policy_version: str,
+    ) -> None:
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO malware_scan_cache (
+                    sha256, canonical_path_key, size_bytes, mtime_ns, file_identity,
+                    scanner_backend, engine_version, database_version, database_date, scan_policy_version,
+                    verdict, scan_health, threat_name, message, scanned_at, elapsed_seconds
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
+                DO UPDATE SET
+                    canonical_path_key = excluded.canonical_path_key,
+                    size_bytes = excluded.size_bytes,
+                    mtime_ns = excluded.mtime_ns,
+                    file_identity = excluded.file_identity,
+                    verdict = excluded.verdict,
+                    scan_health = excluded.scan_health,
+                    threat_name = excluded.threat_name,
+                    message = excluded.message,
+                    scanned_at = excluded.scanned_at,
+                    elapsed_seconds = excluded.elapsed_seconds
+                """,
+                (
+                    sha256,
+                    canonical_path_key(canonical_path) if canonical_path else None,
+                    size_bytes,
+                    mtime_ns,
+                    file_identity,
+                    result.backend,
+                    result.engine_version,
+                    result.database_version,
+                    result.database_date,
+                    scan_policy_version,
+                    result.verdict,
+                    result.scan_health,
+                    result.threat_name,
+                    result.message,
+                    utc_now_iso(),
+                    float(result.elapsed_seconds),
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            logger.debug("upsert_malware_scan_cache failed", exc_info=True)
+        finally:
+            if conn:
+                conn.close()
+
+    def update_file_malware_scan(
+        self: Any,
+        file_id: int,
+        result: MalwareScanResult,
+        *,
+        status_override: str | None = None,
+        cache_hit: bool | None = None,
+        temp_path: str | None = None,
+    ) -> None:
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            update_status = status_override
+            if update_status is None:
+                if result.is_actionably_clean():
+                    update_status = "PENDING"
+                elif result.status in {"infected", "suspicious"}:
+                    update_status = "BLOCKED"
+                else:
+                    update_status = "SCAN_FAILED"
+            cursor.execute(
+                """
+                UPDATE files
+                SET malware_verdict = ?,
+                    malware_scan_health = ?,
+                    malware_status = ?,
+                    malware_scanner_backend = ?,
+                    malware_scanner_engine_version = ?,
+                    malware_database_version = ?,
+                    malware_database_date = ?,
+                    malware_threat_name = ?,
+                    malware_message = ?,
+                    malware_scanned_at = ?,
+                    malware_elapsed_seconds = ?,
+                    malware_cache_hit = ?,
+                    temp_path = COALESCE(?, temp_path),
+                    status = ?,
+                    updated_at = ?
+                WHERE file_id = ?
+                """,
+                (
+                    result.verdict,
+                    result.scan_health,
+                    result.status,
+                    result.backend,
+                    result.engine_version,
+                    result.database_version,
+                    result.database_date,
+                    result.threat_name,
+                    result.message,
+                    utc_now_iso(),
+                    float(result.elapsed_seconds),
+                    1 if (result.cache_hit if cache_hit is None else cache_hit) else 0,
+                    temp_path,
+                    update_status,
+                    utc_now_iso(),
+                    int(file_id),
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error as exc:
+            logger.error("update_file_malware_scan failed: %s", exc)
+            raise
+        finally:
+            if conn:
+                conn.close()
+
+    def move_upload_to_malware_holding(self: Any, file_id: int) -> str | None:
+        record = self.get_file_by_id(file_id)
+        temp_path = str((record or {}).get("temp_path") or "")
+        if not temp_path:
+            return None
+        if self._mem_files is not None and self._is_mem_path(temp_path):
+            target = temp_path.replace("mem://uploads/", "mem://uploads/malware_holding/", 1)
+            with self._mem_files_lock:
+                if temp_path in self._mem_files:
+                    self._mem_files[target] = self._mem_files.pop(temp_path)
+            self.update_file_malware_scan(
+                file_id,
+                MalwareScanResult(status="not_scanned", scanner="ClamAV", file_path=target, message="Moved to holding."),
+                temp_path=target,
+                status_override="BLOCKED",
+            )
+            return target
+
+        source = Path(temp_path)
+        if not source.exists():
+            return temp_path
+        holding_dir = self.upload_dir / "malware_holding"
+        holding_dir.mkdir(parents=True, exist_ok=True)
+        target = holding_dir / source.name
+        counter = 1
+        while target.exists():
+            target = holding_dir / f"{source.stem}__{counter}{source.suffix}"
+            counter += 1
+        os.replace(source, target)
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            conn.execute(
+                "UPDATE files SET temp_path = ?, updated_at = ? WHERE file_id = ?",
+                (str(target), utc_now_iso(), int(file_id)),
+            )
+            conn.commit()
+        finally:
+            if conn:
+                conn.close()
+        return str(target)
+
+    def calculate_path_sha256(self: Any, path_value: str) -> str:
+        if self._mem_files is not None and self._is_mem_path(path_value):
+            with self._mem_files_lock:
+                payload = bytes(self._mem_files.get(path_value, b""))
+            return hashlib.sha256(payload).hexdigest()
+        return file_sha256(Path(path_value))
 
     def create_temp_file(
         self: Any,
@@ -368,6 +611,18 @@ class StorageRepositoryMixin:
             manual_override_val = None if manual_override is None else (1 if manual_override else 0)
             summary_status = str(metadata.get("summary_status") or "").strip() or None
             summary_error = str(metadata.get("summary_error") or "").strip() or None
+            malware_verdict = str(metadata.get("malware_verdict") or "").strip() or None
+            malware_scan_health = str(metadata.get("malware_scan_health") or "").strip() or None
+            malware_status = str(metadata.get("malware_status") or "").strip() or malware_verdict
+            malware_scanner_backend = str(metadata.get("malware_scanner_backend") or "").strip() or None
+            malware_scanner_engine_version = str(metadata.get("malware_scanner_engine_version") or "").strip() or None
+            malware_database_version = str(metadata.get("malware_database_version") or "").strip() or None
+            malware_database_date = str(metadata.get("malware_database_date") or "").strip() or None
+            malware_threat_name = str(metadata.get("malware_threat_name") or "").strip() or None
+            malware_message = str(metadata.get("malware_message") or "").strip() or None
+            malware_scanned_at = str(metadata.get("malware_scanned_at") or "").strip() or None
+            malware_elapsed_seconds = metadata.get("malware_elapsed_seconds")
+            malware_cache_hit = metadata.get("malware_cache_hit")
 
             decision_source = metadata.get("decision_source")
             last_manual_topic = metadata.get("last_manual_topic")
@@ -395,6 +650,18 @@ class StorageRepositoryMixin:
                     decision_updated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE decision_updated_at END,
                     last_manual_topic = COALESCE(?, last_manual_topic),
                     last_manual_reason = COALESCE(?, last_manual_reason),
+                    malware_verdict = COALESCE(?, malware_verdict),
+                    malware_scan_health = COALESCE(?, malware_scan_health),
+                    malware_status = COALESCE(?, malware_status),
+                    malware_scanner_backend = COALESCE(?, malware_scanner_backend),
+                    malware_scanner_engine_version = COALESCE(?, malware_scanner_engine_version),
+                    malware_database_version = COALESCE(?, malware_database_version),
+                    malware_database_date = COALESCE(?, malware_database_date),
+                    malware_threat_name = COALESCE(?, malware_threat_name),
+                    malware_message = COALESCE(?, malware_message),
+                    malware_scanned_at = COALESCE(?, malware_scanned_at),
+                    malware_elapsed_seconds = COALESCE(?, malware_elapsed_seconds),
+                    malware_cache_hit = COALESCE(?, malware_cache_hit),
                     is_scanned = ?,
                     updated_at = ?,
                     status = CASE
@@ -418,6 +685,18 @@ class StorageRepositoryMixin:
                     decision_updated_at,
                     last_manual_topic,
                     last_manual_reason,
+                    malware_verdict,
+                    malware_scan_health,
+                    malware_status,
+                    malware_scanner_backend,
+                    malware_scanner_engine_version,
+                    malware_database_version,
+                    malware_database_date,
+                    malware_threat_name,
+                    malware_message,
+                    malware_scanned_at,
+                    malware_elapsed_seconds,
+                    None if malware_cache_hit is None else (1 if malware_cache_hit else 0),
                     1 if metadata.get("is_scanned") else 0,
                     utc_now_iso(),
                     self_file_id,

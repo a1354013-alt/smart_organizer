@@ -34,6 +34,18 @@ class AnalysisResult:
     metadata: ExtractedMetadata
     preview_path: str | None
     is_scanned: bool
+    malware_verdict: str = "not_scanned"
+    malware_scan_health: str = "incomplete"
+    malware_status: str = "not_scanned"
+    malware_scanner_backend: str | None = None
+    malware_scanner_engine_version: str | None = None
+    malware_database_version: str | None = None
+    malware_database_date: str | None = None
+    malware_threat_name: str | None = None
+    malware_message: str | None = None
+    malware_scanned_at: str | None = None
+    malware_elapsed_seconds: float = 0.0
+    malware_cache_hit: bool = False
     summary: str | None = None
     summary_status: str | None = None
     summary_error: str | None = None

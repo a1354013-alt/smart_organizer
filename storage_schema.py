@@ -51,6 +51,18 @@ class StorageSchemaMixin:
                     is_scanned INTEGER DEFAULT 0,
                     last_error TEXT,
                     status TEXT DEFAULT 'PENDING',
+                    malware_verdict TEXT DEFAULT 'not_scanned',
+                    malware_scan_health TEXT DEFAULT 'incomplete',
+                    malware_status TEXT DEFAULT 'not_scanned',
+                    malware_scanner_backend TEXT,
+                    malware_scanner_engine_version TEXT,
+                    malware_database_version TEXT,
+                    malware_database_date TEXT,
+                    malware_threat_name TEXT,
+                    malware_message TEXT,
+                    malware_scanned_at TEXT,
+                    malware_elapsed_seconds REAL DEFAULT 0,
+                    malware_cache_hit INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
                     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
                 )
@@ -78,6 +90,36 @@ class StorageSchemaMixin:
                     content,
                     tokenize='unicode61'
                 )
+            """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS malware_scan_cache (
+                    cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sha256 TEXT NOT NULL,
+                    canonical_path_key TEXT,
+                    size_bytes INTEGER,
+                    mtime_ns INTEGER,
+                    file_identity TEXT,
+                    scanner_backend TEXT NOT NULL,
+                    engine_version TEXT,
+                    database_version TEXT,
+                    database_date TEXT,
+                    scan_policy_version TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    scan_health TEXT NOT NULL,
+                    threat_name TEXT,
+                    message TEXT,
+                    scanned_at TEXT NOT NULL,
+                    elapsed_seconds REAL DEFAULT 0,
+                    UNIQUE(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
+                )
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_lookup
+                ON malware_scan_cache(sha256, database_version, database_date, scan_policy_version)
             """
             )
             cursor.execute(

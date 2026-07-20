@@ -121,6 +121,15 @@ def _validate_quarantine_path(path_value: Path | str, quarantine_root: Path, *, 
     return resolved
 
 
+def _matches_scan_snapshot(path_obj: Path, *, expected_size: int, expected_mtime: object) -> bool:
+    try:
+        stat_result = path_obj.stat()
+    except OSError:
+        return False
+    actual_mtime = datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC).isoformat()
+    return int(stat_result.st_size) == int(expected_size) and str(actual_mtime) == str(expected_mtime)
+
+
 def build_quarantine_target_path(
     root: Path,
     original_path: Path | str,
@@ -955,6 +964,12 @@ def run_folder_organizer(
                     raise FileExistsError("File already has an active quarantine manifest entry.")
                 if not resolved_original.exists():
                     raise FileNotFoundError("Source file no longer exists.")
+                if not _matches_scan_snapshot(
+                    resolved_original,
+                    expected_size=file_size,
+                    expected_mtime=last_modified,
+                ):
+                    raise RuntimeError("Selected file changed after scan. Re-run malware scan and folder scan before quarantine.")
                 destination = build_quarantine_target_path(
                     root,
                     resolved_original,
@@ -1118,6 +1133,12 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                 validated_original = _validate_path_within_root(original, root, label="manifest original_path")
                 if not validated_source.exists():
                     raise FileNotFoundError("Quarantined file is missing.")
+                if not _matches_scan_snapshot(
+                    validated_source,
+                    expected_size=safe_int(item.get("file_size")),
+                    expected_mtime=item.get("last_modified"),
+                ):
+                    raise RuntimeError("Quarantined file changed after the original scan snapshot. Re-scan before restore.")
                 destination = safe_destination(validated_original)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(validated_source), str(destination))
