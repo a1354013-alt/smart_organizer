@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
@@ -18,11 +21,13 @@ from folder_report import export_folder_report_csv, export_folder_report_markdow
 from folder_service import (
     build_report_snapshot,
     get_quarantine_items_safe,
+    merge_malware_scan_into_analysis,
     preview_selected_actions,
     quarantine_selected_files,
     resolve_report_inputs,
     restore_quarantine_selection,
     scan_folder,
+    scan_folder_malware,
 )
 from i18n import (
     get_current_language,
@@ -53,13 +58,23 @@ from ui_renderers import render_dependency_status
 from ui_state import (
     SESSION_AI_ENABLED,
     SESSION_DEBUG_MODE,
+    SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID,
+    SESSION_FOLDER_ANALYSIS_DIALOG_OPEN,
+    SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID,
     SESSION_FOLDER_LAST_OPERATION_RESULT,
+    SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
+    SESSION_FOLDER_MALWARE_DIALOG_OPEN,
+    SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
+    SESSION_FOLDER_MALWARE_SCAN_RESULT,
     SESSION_FOLDER_REPORT_SNAPSHOT,
     SESSION_FOLDER_RESTORE_RESULT,
     SESSION_FOLDER_SCAN_CURRENT,
     SESSION_FOLDER_SCAN_OPTIONS,
+    SESSION_FOLDER_SCAN_OPTIONS_DRAFT,
     SESSION_FOLDER_SCAN_PATH,
     SESSION_FOLDER_SELECTED_PATHS,
+    SESSION_FOLDER_SETTINGS_DIALOG_OPEN,
+    SESSION_MAIN_TAB_OVERRIDE,
     SESSION_PROCESSING_OPTIONS,
 )
 from version import APP_NAME, __version__
@@ -73,6 +88,9 @@ WARNINGS_DIALOG_KEY = "home_dialog_warnings"
 REPORT_DIALOG_KEY = "home_dialog_report"
 STATS_DIALOG_KEY = "home_dialog_stats"
 PATHS_DIALOG_KEY = "home_dialog_paths"
+SETTINGS_DIALOG_KEY = SESSION_FOLDER_SETTINGS_DIALOG_OPEN
+MALWARE_RESULT_DIALOG_KEY = SESSION_FOLDER_MALWARE_DIALOG_OPEN
+ANALYSIS_RESULT_DIALOG_KEY = SESSION_FOLDER_ANALYSIS_DIALOG_OPEN
 CLAMAV_STATUS_SESSION_KEY = "clamav_status"
 CLAMAV_UPDATE_RESULT_SESSION_KEY = "clamav_update_result"
 _REASON_LABEL_KEYS = {
@@ -180,6 +198,17 @@ def _render_clamav_status_box(status: dict[str, object]) -> None:
     age_days = status.get("database_age_days")
     if isinstance(age_days, int):
         details.append(t("malware.database_age_days", days=age_days))
+    selected_backend = str(status.get("selected_backend") or "").strip()
+    if selected_backend:
+        details.append(t("malware.selected_backend", backend=selected_backend))
+    engine_version = str(status.get("engine_version") or "").strip()
+    details.append(
+        t(
+            "malware.engine_info",
+            engine="ClamAV",
+            version=engine_version or "-",
+        )
+    )
     clamscan_path = str(status.get("clamscan_path") or "").strip() or "-"
     freshclam_path = str(status.get("freshclam_path") or "").strip() or "-"
     database_dir = str(status.get("database_dir") or "").strip() or "-"
@@ -244,6 +273,270 @@ def refresh_dependency_status(context: UIContext) -> dict[str, Any]:
     return cache_dependency_status(st.session_state, status)
 
 
+def _default_scan_options() -> dict[str, object]:
+    return {
+        "stale_days": 364,
+        "recursive": True,
+        "max_files": 5000,
+        "large_file_bytes": 250 * 1024 * 1024,
+        "duplicate_detection": False,
+        "enable_malware_scan": False,
+        "malware_scan_mode": "standard",
+        "malware_scan_policy": "standard",
+        "malware_scan_timeout_seconds": 30,
+        "malware_database_max_age_days": 7,
+        "malware_only_operation": False,
+    }
+
+
+def _default_processing_options() -> dict[str, object]:
+    return {
+        "enable_pdf_preview": False,
+        "enable_ocr": False,
+        "max_heavy_bytes": 15 * 1024 * 1024,
+        "pdf_text_max_pages": 3,
+        "pdf_ocr_max_pages": 3,
+        "pdf_preview_max_pages": 1,
+        "pdf_text_timeout_seconds": 10,
+        "pdf_preview_timeout_seconds": 10,
+        "ocr_timeout_seconds": 15,
+        "video_metadata_timeout_seconds": 10,
+        "video_thumbnail_timeout_seconds": 10,
+    }
+
+
+def _current_settings_draft() -> dict[str, object]:
+    return {
+        **_current_scan_options(),
+        "ai_enabled": bool(st.session_state.get(SESSION_AI_ENABLED, False)),
+        "enable_pdf_preview": bool(
+            cast(dict[str, object], st.session_state.get(SESSION_PROCESSING_OPTIONS) or {}).get(
+                "enable_pdf_preview", False
+            )
+        ),
+        "enable_ocr": bool(
+            cast(dict[str, object], st.session_state.get(SESSION_PROCESSING_OPTIONS) or {}).get("enable_ocr", False)
+        ),
+    }
+
+
+def _current_scan_options() -> dict[str, object]:
+    raw = st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS)
+    options = dict(_default_scan_options())
+    if isinstance(raw, dict):
+        options.update(raw)
+    return options
+
+
+def _current_processing_options(context: UIContext) -> dict[str, object]:
+    raw = st.session_state.get(SESSION_PROCESSING_OPTIONS)
+    options = dict(_default_processing_options())
+    if isinstance(raw, dict):
+        options.update(raw)
+    options["pdf_ocr_max_pages"] = int(
+        raw.get("pdf_ocr_max_pages", getattr(context.processor, "pdf_ocr_max_pages", 3))
+        if isinstance(raw, dict)
+        else getattr(context.processor, "pdf_ocr_max_pages", 3)
+    )
+    options["pdf_preview_max_pages"] = int(getattr(context.processor, "pdf_preview_max_pages", 1))
+    return options
+
+
+def _open_settings_dialog() -> None:
+    st.session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT] = _current_settings_draft()
+    open_dialog_state(SETTINGS_DIALOG_KEY)
+
+
+def _discard_settings_draft() -> None:
+    st.session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT] = _current_settings_draft()
+    close_dialog_state(SETTINGS_DIALOG_KEY)
+
+
+def _reset_settings_draft_to_defaults() -> None:
+    st.session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT] = {
+        **_default_scan_options(),
+        "ai_enabled": False,
+        "enable_pdf_preview": False,
+        "enable_ocr": False,
+    }
+
+
+def _save_settings_draft(updated: dict[str, object], *, context: UIContext) -> None:
+    normalized = dict(_default_scan_options())
+    normalized.update(updated)
+    normalized["stale_days"] = max(7, safe_int(normalized.get("stale_days")))
+    normalized["large_file_bytes"] = max(10, safe_int(normalized.get("large_file_bytes"))) * 1024 * 1024
+    normalized["max_files"] = max(100, safe_int(normalized.get("max_files")))
+    normalized["recursive"] = bool(normalized.get("recursive"))
+    normalized["duplicate_detection"] = bool(normalized.get("duplicate_detection"))
+    normalized["enable_malware_scan"] = bool(normalized.get("enable_malware_scan"))
+    normalized["malware_scan_timeout_seconds"] = max(5, safe_int(normalized.get("malware_scan_timeout_seconds")))
+    normalized["malware_database_max_age_days"] = max(1, safe_int(normalized.get("malware_database_max_age_days")))
+    normalized["malware_scan_mode"] = str(normalized.get("malware_scan_mode") or "standard")
+    normalized["malware_scan_policy"] = str(normalized.get("malware_scan_policy") or "standard")
+    normalized["malware_only_operation"] = bool(normalized.get("malware_only_operation"))
+    processing_options = _current_processing_options(context)
+    processing_options.update(
+        {
+            "enable_pdf_preview": bool(updated.get("enable_pdf_preview")),
+            "enable_ocr": bool(updated.get("enable_ocr")),
+            "pdf_preview_max_pages": int(getattr(context.processor, "pdf_preview_max_pages", 1)),
+            "pdf_ocr_max_pages": int(getattr(context.processor, "pdf_ocr_max_pages", 3)),
+        }
+    )
+    st.session_state[SESSION_FOLDER_SCAN_OPTIONS] = normalized
+    st.session_state[SESSION_PROCESSING_OPTIONS] = processing_options
+    st.session_state[SESSION_AI_ENABLED] = bool(updated.get("ai_enabled"))
+    st.session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT] = _current_settings_draft()
+    close_dialog_state(SETTINGS_DIALOG_KEY)
+
+
+def _scan_mode_label(value: object) -> str:
+    return t(f"home.settings.scan_mode.{value or 'standard'}")
+
+
+def _scan_policy_label(value: object) -> str:
+    return t(f"home.settings.security_policy.{value or 'standard'}")
+
+
+def _malware_primary_action_label(scan_options: dict[str, object]) -> str:
+    if bool(scan_options.get("malware_only_operation")):
+        return t("home.scan.primary_action_malware_only")
+    if bool(scan_options.get("enable_malware_scan")):
+        return t("home.scan.primary_action_secure")
+    return t("home.scan.primary_action_organization")
+
+
+def _safe_relative_path(root_path: object, path_value: object) -> str:
+    root = Path(str(root_path or "")).expanduser()
+    path_obj = Path(str(path_value or "")).expanduser()
+    try:
+        return str(path_obj.resolve(strict=False).relative_to(root.resolve(strict=False)))
+    except Exception:
+        return path_obj.name or str(path_obj)
+
+
+def _format_rate(bytes_per_second: float, files_per_second: float) -> str:
+    if bytes_per_second > 0:
+        return f"{human_bytes(int(bytes_per_second))}/s"
+    return f"{files_per_second:.1f} files/s"
+
+
+def _export_malware_result_csv(result: dict[str, object]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=[
+            "relative_path",
+            "path",
+            "malware_status",
+            "malware_scan_health",
+            "malware_threat_name",
+            "malware_backend",
+            "malware_cache_hit",
+            "malware_scanned_at",
+            "malware_message",
+        ],
+    )
+    writer.writeheader()
+    for row in cast(list[dict[str, object]], result.get("records") or []):
+        writer.writerow(
+            {
+                "relative_path": _safe_relative_path(result.get("path"), row.get("path")),
+                "path": str(row.get("path") or ""),
+                "malware_status": str(row.get("malware_status") or ""),
+                "malware_scan_health": str(row.get("malware_scan_health") or ""),
+                "malware_threat_name": str(row.get("malware_threat_name") or ""),
+                "malware_backend": str(row.get("malware_backend") or ""),
+                "malware_cache_hit": bool(row.get("malware_cache_hit")),
+                "malware_scanned_at": str(row.get("malware_scanned_at") or ""),
+                "malware_message": str(row.get("malware_message") or ""),
+            }
+        )
+    return buffer.getvalue()
+
+
+def _mark_dialog_dismissed(dialog_key: str, dismissed_key: str, result: dict[str, object] | None) -> None:
+    if isinstance(result, dict):
+        st.session_state[dismissed_key] = str(result.get("result_id") or "")
+    close_dialog_state(dialog_key)
+
+
+def _maybe_auto_open_result_dialog(
+    *,
+    result: dict[str, object] | None,
+    dialog_key: str,
+    auto_open_key: str,
+    dismissed_key: str,
+) -> None:
+    if not isinstance(result, dict):
+        return
+    result_id = str(result.get("result_id") or "")
+    if not result_id:
+        return
+    if str(st.session_state.get(auto_open_key) or "") != result_id:
+        return
+    if str(st.session_state.get(dismissed_key) or "") == result_id:
+        st.session_state[auto_open_key] = None
+        return
+    open_dialog_state(dialog_key)
+    st.session_state[auto_open_key] = None
+
+
+def _sync_analysis_with_malware_result(scan_options: dict[str, object]) -> dict[str, object] | None:
+    analysis_result = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
+    if not isinstance(analysis_result, dict):
+        return None
+    merged = merge_malware_scan_into_analysis(
+        analysis_result,
+        cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_MALWARE_SCAN_RESULT)),
+        require_malware_scan=bool(scan_options.get("enable_malware_scan")),
+        malware_scan_policy=str(scan_options.get("malware_scan_policy") or "standard"),
+        malware_database_max_age_days=safe_int(scan_options.get("malware_database_max_age_days", 7)),
+    )
+    st.session_state[SESSION_FOLDER_SCAN_CURRENT] = merged
+    return merged
+
+
+def _render_settings_summary_card(scan_options: dict[str, object]) -> None:
+    recursive_label = t("home.settings.subfolders_on") if bool(scan_options.get("recursive")) else t(
+        "home.settings.subfolders_off"
+    )
+    cols = st.columns([1, 1, 1], gap="small")
+    with cols[0]:
+        st.markdown(
+            f"""
+            <div class="so-card so-card-secondary so-card-compact">
+              <div class="card-title">{safe_display_text(t("home.settings.security_summary_title"))}</div>
+              <div class="card-muted">{safe_display_text(t("home.settings.security_summary_inline", scan_mode=_scan_mode_label(scan_options.get("malware_scan_mode")), policy=_scan_policy_label(scan_options.get("malware_scan_policy")), malware_required=t("home.settings.malware_enabled" if bool(scan_options.get("enable_malware_scan")) else "home.settings.malware_disabled")))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with cols[1]:
+        st.markdown(
+            f"""
+            <div class="so-card so-card-secondary so-card-compact">
+              <div class="card-title">{safe_display_text(t("home.settings.organization_summary_title"))}</div>
+              <div class="card-muted">{safe_display_text(t("home.settings.organization_summary_inline", subfolders=recursive_label, days=safe_int(scan_options.get("stale_days")), large_mb=max(1, safe_int(scan_options.get("large_file_bytes")) // (1024 * 1024)), max_files=safe_int(scan_options.get("max_files")), duplicate_detection=t("common.yes") if bool(scan_options.get("duplicate_detection")) else t("common.no")))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with cols[2]:
+        if st.button(t("home.settings.edit_button"), key="open_settings_dialog_from_summary", use_container_width=True):
+            _open_settings_dialog()
+        st.caption(t("home.settings.no_auto_move_delete"))
+
+
+def _current_primary_action_label(scan_options: dict[str, object]) -> str:
+    if bool(scan_options.get("malware_only_operation")):
+        return t("home.scan.primary_action_malware_only")
+    if bool(scan_options.get("enable_malware_scan")):
+        return t("home.scan.primary_action_secure")
+    return t("home.scan.primary_action_organization")
+
+
 def limit_candidate_rows(
     candidates: list[dict[str, object]],
     *,
@@ -276,149 +569,20 @@ def merge_visible_selection(
 
 
 def render_sidebar(context: UIContext) -> None:
-    st.sidebar.header(t("sidebar.title"))
-    language_options = get_language_options()
-    current_language = get_current_language(st.session_state)
-    selected_language = st.sidebar.selectbox(
-        t("sidebar.language_label"),
-        options=language_options,
-        index=language_options.index(current_language),
-        format_func=get_language_label,
-        key="sidebar_ui_language",
-    )
-    set_current_language(selected_language, st.session_state)
-
-    with st.sidebar.expander(t("sidebar.scan_settings_title"), expanded=True):
-        stale_days = st.slider(t("sidebar.stale_days"), 7, 3650, 365, step=7)
-        large_file_mb = st.slider(t("sidebar.large_file_mb"), 10, 2048, 250, step=10)
-        recursive = st.checkbox(t("sidebar.scan_subfolders"), value=True, key="folder_recursive")
-        max_files = st.number_input(t("sidebar.max_files"), min_value=100, max_value=200000, value=5000, step=500)
-        enable_malware_scan = st.checkbox(
-            t("malware.enable_scan"),
-            value=bool((st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS) or {}).get("enable_malware_scan", False)),
-            key="folder_enable_malware_scan",
-        )
-        malware_scan_timeout_seconds = st.number_input(
-            t("malware.timeout_seconds"),
-            min_value=5,
-            max_value=300,
-            value=int((st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS) or {}).get("malware_scan_timeout_seconds", 30)),
-            step=5,
-            key="folder_malware_timeout_seconds",
-        )
-        malware_database_max_age_days = st.number_input(
-            t("malware.database_max_age_days"),
-            min_value=1,
-            max_value=30,
-            value=int((st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS) or {}).get("malware_database_max_age_days", 7)),
-            step=1,
-            key="folder_malware_database_max_age_days",
-        )
-        st.session_state[SESSION_FOLDER_SCAN_OPTIONS] = {
-            "stale_days": int(stale_days),
-            "large_file_bytes": int(large_file_mb) * 1024 * 1024,
-            "recursive": bool(recursive),
-            "max_files": int(max_files),
-            "enable_malware_scan": bool(enable_malware_scan),
-            "malware_scan_timeout_seconds": int(malware_scan_timeout_seconds),
-            "malware_database_max_age_days": int(malware_database_max_age_days),
-        }
-        malware_status_cols = st.columns(2, gap="small")
-        with malware_status_cols[0]:
-            if st.button(t("malware.check_status"), key="check_clamav_status_button", use_container_width=True):
-                st.session_state[CLAMAV_STATUS_SESSION_KEY] = _serialize_clamav_status(
-                    get_clamav_status(int(malware_database_max_age_days))
-                )
-        with malware_status_cols[1]:
-            if st.button(t("malware.update_database"), key="update_clamav_database_button", use_container_width=True):
-                ok, message = update_clamav_database()
-                st.session_state[CLAMAV_UPDATE_RESULT_SESSION_KEY] = {"ok": ok, "message": message}
-                st.session_state[CLAMAV_STATUS_SESSION_KEY] = _serialize_clamav_status(
-                    get_clamav_status(int(malware_database_max_age_days))
-                )
-
-        clamav_status = _clamav_status_from_session()
-        if clamav_status is not None:
-            _render_clamav_status_box(clamav_status)
-        update_result = st.session_state.get(CLAMAV_UPDATE_RESULT_SESSION_KEY)
-        if isinstance(update_result, dict):
-            message = str(update_result.get("message") or "").strip()
-            if message:
-                if bool(update_result.get("ok")):
-                    st.success(message)
-                else:
-                    st.warning(message)
-
-    with st.sidebar.expander(t("sidebar.advanced_settings_title"), expanded=False):
-        debug_mode = st.checkbox(t("sidebar.debug_mode"), value=False, key="debug_mode_checkbox")
-        st.session_state[SESSION_DEBUG_MODE] = bool(debug_mode)
-        if is_debug() and st.session_state.get("current_processing_file"):
-            st.caption(
-                t(
-                    "sidebar.current_processing_file",
-                    name=safe_display_text(st.session_state.current_processing_file),
-                )
-            )
-
-        ai_enabled = st.toggle(t("sidebar.enable_ai_summary"), value=False, key="ai_enabled_toggle")
-        enable_pdf_preview = st.checkbox(t("sidebar.enable_pdf_preview"), value=False, key="enable_pdf_preview")
-        enable_ocr = st.checkbox(t("sidebar.enable_ocr"), value=False, key="enable_ocr")
-        max_heavy_mb = st.slider(t("sidebar.heavy_file_mb"), 1, 200, 15, key="max_heavy_mb")
-        pdf_text_max_pages = st.slider(t("sidebar.pdf_text_pages"), 1, 50, 3, key="pdf_text_max_pages")
-        pdf_ocr_max_pages = st.slider(
-            t("sidebar.pdf_ocr_pages"),
-            1,
-            5,
-            max(1, min(5, int(getattr(context.processor, "pdf_ocr_max_pages", 3)))),
-            key="pdf_ocr_max_pages",
-        )
-        batch_upload_bytes = int(getattr(context, "max_upload_batch_bytes", context.max_upload_bytes))
-        batch_limit_mb = int(max(batch_upload_bytes, context.max_upload_bytes) / (1024 * 1024))
-        st.caption(
-            t(
-                "sidebar.upload_limits",
-                file_size=f"{int(context.max_upload_bytes / (1024 * 1024))} MB",
-                batch_size=f"{batch_limit_mb} MB",
-            )
-        )
-
-        st.session_state[SESSION_AI_ENABLED] = bool(ai_enabled)
-        st.session_state[SESSION_PROCESSING_OPTIONS] = {
-            "enable_pdf_preview": bool(enable_pdf_preview),
-            "enable_ocr": bool(enable_ocr),
-            "max_heavy_bytes": int(max_heavy_mb) * 1024 * 1024,
-            "pdf_text_max_pages": int(pdf_text_max_pages),
-            "pdf_ocr_max_pages": int(pdf_ocr_max_pages),
-            "pdf_preview_max_pages": int(getattr(context.processor, "pdf_preview_max_pages", 1)),
-            "pdf_text_timeout_seconds": 10,
-            "pdf_preview_timeout_seconds": 10,
-            "ocr_timeout_seconds": 15,
-            "video_metadata_timeout_seconds": 10,
-            "video_thumbnail_timeout_seconds": 10,
-        }
-
-        dependency_status = get_cached_dependency_status(st.session_state)
-        if is_debug():
-            st.caption(t("sidebar.processing_options"))
-            st.json(st.session_state.get(SESSION_PROCESSING_OPTIONS) or {})
-
-        with st.expander(t("sidebar.dependency_check_title"), expanded=False):
-            if st.button(t("sidebar.check_dependencies"), key="check_dependencies_button"):
-                dependency_status = refresh_dependency_status(context)
-                st.success(t("sidebar.dependency_check_success"))
-            elif dependency_status is None:
-                st.caption(t("sidebar.dependency_check_hint"))
-
-            if dependency_status is not None:
-                render_dependency_status(dependency_status)
-
-    with st.sidebar.expander(t("sidebar.development_info_title"), expanded=False):
-        st.markdown(
-            f"- {t('sidebar.workspace.project_root')}: `{context.project_root}`\n"
-            f"- {t('sidebar.workspace.uploads')}: `{context.upload_dir}`\n"
-            f"- {t('sidebar.workspace.repo')}: `{context.repo_root}`\n"
-            f"- {t('sidebar.workspace.database')}: `{context.db_path}`"
-        )
+    del context
+    st.session_state.setdefault(SESSION_FOLDER_SCAN_OPTIONS, _current_scan_options())
+    st.session_state.setdefault(SESSION_FOLDER_SCAN_OPTIONS_DRAFT, {})
+    st.session_state.setdefault(SESSION_FOLDER_SETTINGS_DIALOG_OPEN, False)
+    st.session_state.setdefault(SESSION_FOLDER_MALWARE_SCAN_RESULT, None)
+    st.session_state.setdefault(SESSION_FOLDER_MALWARE_DIALOG_OPEN, False)
+    st.session_state.setdefault(SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID, None)
+    st.session_state.setdefault(SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID, None)
+    st.session_state.setdefault(SESSION_FOLDER_ANALYSIS_DIALOG_OPEN, False)
+    st.session_state.setdefault(SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID, None)
+    st.session_state.setdefault(SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID, None)
+    st.session_state.setdefault(SESSION_PROCESSING_OPTIONS, _default_processing_options())
+    st.session_state.setdefault(SESSION_AI_ENABLED, False)
+    st.session_state.setdefault(SESSION_DEBUG_MODE, False)
 
 
 def _render_candidate_editor(
@@ -602,6 +766,8 @@ def _render_process_steps() -> None:
 
 
 def _render_home_header() -> None:
+    language_options = get_language_options()
+    current_language = get_current_language(st.session_state)
     st.markdown(
         f"""
         <div class="so-card so-card-compact">
@@ -618,6 +784,21 @@ def _render_home_header() -> None:
         """,
         unsafe_allow_html=True,
     )
+    header_action_columns = st.columns([1, 1, 1, 2, 2], gap="small")
+    with header_action_columns[3]:
+        selected_language = st.selectbox(
+            t("home.settings.language_label"),
+            options=language_options,
+            index=language_options.index(current_language),
+            format_func=get_language_label,
+            key="header_ui_language",
+            label_visibility="collapsed",
+        )
+        set_current_language(selected_language, st.session_state)
+    with header_action_columns[4]:
+        if st.button(t("home.settings.open_button"), key="open_settings_dialog_from_header", use_container_width=True):
+            _open_settings_dialog()
+
     action_columns = st.columns([1, 1, 1, 5], gap="small")
     with action_columns[0]:
         if st.button(t("home.dialogs.help_button"), key="open_help_dialog", use_container_width=True):
@@ -651,13 +832,178 @@ def _render_help_dialog_body() -> None:
     st.markdown(f"- {t('home.help.restore')}")
 
 
+def _render_settings_dialog_body(context: UIContext) -> None:
+    draft = _current_settings_draft()
+    raw_draft = st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS_DRAFT)
+    if isinstance(raw_draft, dict) and raw_draft:
+        draft.update(raw_draft)
+
+    st.caption(t("home.settings.dialog_description"))
+
+    tab_organization, tab_security = st.tabs(
+        [t("home.settings.organization_tab"), t("home.settings.security_tab")]
+    )
+    with st.form("folder_settings_form", clear_on_submit=False):
+        with tab_organization:
+            stale_days = st.slider(
+                t("home.settings.organization.unused_days"),
+                7,
+                3650,
+                safe_int(draft.get("stale_days", 364)),
+                step=7,
+            )
+            large_file_mb = st.slider(
+                t("home.settings.organization.large_file_mb"),
+                10,
+                2048,
+                max(10, safe_int(draft.get("large_file_bytes")) // (1024 * 1024)),
+                step=10,
+            )
+            recursive = st.checkbox(
+                t("home.settings.organization.include_subfolders"),
+                value=bool(draft.get("recursive", True)),
+            )
+            max_files = st.number_input(
+                t("home.settings.organization.max_files"),
+                min_value=100,
+                max_value=200000,
+                value=max(100, safe_int(draft.get("max_files", 5000))),
+                step=500,
+            )
+            duplicate_detection = st.checkbox(
+                t("home.settings.organization.duplicate_detection"),
+                value=bool(draft.get("duplicate_detection", False)),
+            )
+            st.divider()
+            st.caption(t("home.settings.organization.secondary_section"))
+            ai_enabled = st.toggle(
+                t("home.settings.organization.enable_ai_summary"),
+                value=bool(draft.get("ai_enabled", False)),
+            )
+            enable_pdf_preview = st.checkbox(
+                t("home.settings.organization.enable_pdf_preview"),
+                value=bool(draft.get("enable_pdf_preview", False)),
+            )
+            enable_ocr = st.checkbox(
+                t("home.settings.organization.enable_ocr"),
+                value=bool(draft.get("enable_ocr", False)),
+            )
+
+        with tab_security:
+            enable_malware_scan = st.checkbox(
+                t("malware.enable_scan"),
+                value=bool(draft.get("enable_malware_scan", False)),
+            )
+            malware_scan_mode = st.selectbox(
+                t("home.settings.malware.scan_mode_label"),
+                options=["fast", "standard", "full"],
+                index=["fast", "standard", "full"].index(str(draft.get("malware_scan_mode", "standard"))),
+                format_func=_scan_mode_label,
+            )
+            malware_scan_policy = st.selectbox(
+                t("home.settings.malware.security_policy_label"),
+                options=["standard", "strict"],
+                index=["standard", "strict"].index(str(draft.get("malware_scan_policy", "standard"))),
+                format_func=_scan_policy_label,
+            )
+            malware_scan_timeout_seconds = st.number_input(
+                t("malware.timeout_seconds"),
+                min_value=5,
+                max_value=300,
+                value=max(5, safe_int(draft.get("malware_scan_timeout_seconds", 30))),
+                step=5,
+            )
+            malware_database_max_age_days = st.number_input(
+                t("malware.database_max_age_days"),
+                min_value=1,
+                max_value=30,
+                value=max(1, safe_int(draft.get("malware_database_max_age_days", 7))),
+                step=1,
+            )
+            st.caption(t("home.settings.malware.engine_info"))
+            clamav_status = _clamav_status_from_session()
+            if clamav_status is not None:
+                _render_clamav_status_box(clamav_status)
+            update_result = st.session_state.get(CLAMAV_UPDATE_RESULT_SESSION_KEY)
+            if isinstance(update_result, dict):
+                message = str(update_result.get("message") or "").strip()
+                if message:
+                    if bool(update_result.get("ok")):
+                        st.success(message)
+                    else:
+                        st.warning(message)
+
+        submitted = st.form_submit_button(t("home.settings.save_button"), use_container_width=True)
+
+    button_cols = st.columns(3, gap="small")
+    with button_cols[0]:
+        if st.button(t("home.settings.reset_button"), key="reset_folder_settings_dialog", use_container_width=True):
+            _reset_settings_draft_to_defaults()
+            st.rerun()
+    with button_cols[1]:
+        if st.button(t("home.settings.cancel_button"), key="cancel_folder_settings_dialog", use_container_width=True):
+            _discard_settings_draft()
+            st.rerun()
+    with button_cols[2]:
+        if st.button(t("malware.check_status"), key="dialog_check_clamav_status_button", use_container_width=True):
+            st.session_state[CLAMAV_STATUS_SESSION_KEY] = _serialize_clamav_status(
+                get_clamav_status(max(1, safe_int(draft.get("malware_database_max_age_days", 7))))
+            )
+            st.rerun()
+        if st.button(t("malware.update_database"), key="dialog_update_clamav_database_button", use_container_width=True):
+            ok, message = update_clamav_database()
+            st.session_state[CLAMAV_UPDATE_RESULT_SESSION_KEY] = {"ok": ok, "message": message}
+            st.session_state[CLAMAV_STATUS_SESSION_KEY] = _serialize_clamav_status(
+                get_clamav_status(max(1, safe_int(draft.get("malware_database_max_age_days", 7))))
+            )
+            st.rerun()
+
+    if submitted:
+        _save_settings_draft(
+            {
+                "stale_days": int(stale_days),
+                "large_file_bytes": int(large_file_mb),
+                "recursive": bool(recursive),
+                "max_files": int(max_files),
+                "duplicate_detection": bool(duplicate_detection),
+                "enable_malware_scan": bool(enable_malware_scan),
+                "malware_scan_mode": malware_scan_mode,
+                "malware_scan_policy": malware_scan_policy,
+                "malware_scan_timeout_seconds": int(malware_scan_timeout_seconds),
+                "malware_database_max_age_days": int(malware_database_max_age_days),
+                "malware_only_operation": bool(draft.get("malware_only_operation", False)),
+                "ai_enabled": bool(ai_enabled),
+                "enable_pdf_preview": bool(enable_pdf_preview),
+                "enable_ocr": bool(enable_ocr),
+            },
+            context=context,
+        )
+        st.rerun()
+
+
 def _render_home_dialogs(
+    context: UIContext,
     *,
     warning_messages: list[str] | None = None,
     report_payload: str | None = None,
     records: list[dict[str, object]] | None = None,
     candidates: list[dict[str, object]] | None = None,
 ) -> None:
+    render_dialog(
+        key=SETTINGS_DIALOG_KEY,
+        title=t("home.settings.dialog_title"),
+        render_body=lambda: _render_settings_dialog_body(context),
+    )
+    render_dialog(
+        key=MALWARE_RESULT_DIALOG_KEY,
+        title=t("home.malware_result.dialog_title"),
+        render_body=_render_malware_result_dialog_body,
+    )
+    render_dialog(
+        key=ANALYSIS_RESULT_DIALOG_KEY,
+        title=t("home.analysis_result.dialog_title"),
+        render_body=_render_analysis_result_dialog_body,
+    )
     render_dialog(
         key=HELP_DIALOG_KEY,
         title=t("home.dialogs.help_title"),
@@ -783,7 +1129,43 @@ def _render_scan_metrics(stats: dict[str, object], candidates: list[dict[str, ob
     st.markdown(f'<div class="so-stats-grid">{metric_markup}</div>', unsafe_allow_html=True)
 
 
-def _render_scan_panel(
+def _store_malware_scan_result(scan_options: dict[str, object], result: dict[str, object]) -> None:
+    st.session_state[SESSION_FOLDER_MALWARE_SCAN_RESULT] = result
+    result_id = str(result.get("result_id") or "")
+    st.session_state[SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID] = result_id
+    if result_id:
+        st.session_state[SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID] = ""
+    analysis_result = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
+    if isinstance(analysis_result, dict) and str(analysis_result.get("path") or "") == str(result.get("path") or ""):
+        st.session_state[SESSION_FOLDER_SCAN_CURRENT] = merge_malware_scan_into_analysis(
+            analysis_result,
+            result,
+            require_malware_scan=bool(scan_options.get("enable_malware_scan")),
+            malware_scan_policy=str(scan_options.get("malware_scan_policy") or "standard"),
+            malware_database_max_age_days=safe_int(scan_options.get("malware_database_max_age_days", 7)),
+        )
+
+
+def _store_analysis_result(scan_options: dict[str, object], result: dict[str, object]) -> None:
+    merged = merge_malware_scan_into_analysis(
+        result,
+        cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_MALWARE_SCAN_RESULT)),
+        require_malware_scan=bool(scan_options.get("enable_malware_scan")),
+        malware_scan_policy=str(scan_options.get("malware_scan_policy") or "standard"),
+        malware_database_max_age_days=safe_int(scan_options.get("malware_database_max_age_days", 7)),
+    )
+    st.session_state[SESSION_FOLDER_SCAN_CURRENT] = merged
+    st.session_state[SESSION_FOLDER_REPORT_SNAPSHOT] = build_report_snapshot(merged)
+    st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = None
+    st.session_state[SESSION_FOLDER_RESTORE_RESULT] = None
+    st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
+    result_id = str(merged.get("result_id") or "")
+    st.session_state[SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID] = result_id
+    if result_id:
+        st.session_state[SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID] = ""
+
+
+def _render_folder_action_panel(
     context: UIContext,
     *,
     folder_path: str,
@@ -791,57 +1173,76 @@ def _render_scan_panel(
     max_files: int,
     stale_days: int,
     large_file_bytes: int,
+    duplicate_detection: bool,
     enable_malware_scan: bool,
     malware_scan_timeout_seconds: int,
     malware_database_max_age_days: int,
-    scan: dict[str, object] | None,
+    malware_scan_policy: str,
 ) -> None:
-    with st.container(border=True):
-        st.markdown(
-            f"""
-            <div class="card-title">{safe_display_text(t("home.scan.title"))}</div>
-            <div class="card-muted">{safe_display_text(t("home.scan.description"))}</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.text_input(
-            t("home.scan.input_label"),
-            value=folder_path,
-            placeholder=t("home.scan.input_placeholder"),
-            key=SESSION_FOLDER_SCAN_PATH,
-        )
-        toolbar_columns = st.columns([2, 1], gap="small")
-        with toolbar_columns[0]:
-            st.caption(_scan_status_summary(folder_path, scan))
-        with toolbar_columns[1]:
-            if st.button(t("home.scan.button"), type="primary", key="scan_folder_button", use_container_width=True):
+    current_status = _clamav_status_from_session() or _serialize_clamav_status(get_clamav_status(malware_database_max_age_days))
+    st.markdown(
+        f"""
+        <div class="so-card so-card-compact">
+          <div class="card-title">{safe_display_text(t("home.scan.title"))}</div>
+          <div class="card-muted">{safe_display_text(t("home.scan.description"))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.text_input(
+        t("home.scan.input_label"),
+        value=folder_path,
+        placeholder=t("home.scan.input_placeholder"),
+        key=SESSION_FOLDER_SCAN_PATH,
+    )
+    action_cols = st.columns(2, gap="medium")
+    with action_cols[0]:
+        with st.container(border=True):
+            st.markdown(f"### [Security] {t('home.malware_action.title')}")
+            st.caption(t("home.malware_action.description"))
+            st.caption(
+                t(
+                    "home.malware_action.summary",
+                    scan_mode=_scan_mode_label(_current_scan_options().get("malware_scan_mode")),
+                    policy=_scan_policy_label(malware_scan_policy),
+                    backend=str(current_status.get("selected_backend") or "-"),
+                    database_status=t(
+                        _CLAMAV_STATUS_LABEL_KEYS.get(
+                            str(current_status.get("availability") or "unknown"),
+                            "malware.status_unknown",
+                        )
+                    ),
+                    database_age=str(current_status.get("database_age_days") if current_status.get("database_age_days") is not None else "-"),
+                )
+            )
+            st.caption(_current_primary_action_label(_current_scan_options()))
+            if st.button(
+                t("home.malware_action.run_button"),
+                key="run_folder_malware_scan",
+                type="primary",
+                use_container_width=True,
+            ):
                 try:
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
-                    def on_progress(scanned: int, cap: int) -> None:
-                        progress_bar.progress(min(1.0, scanned / max(1, cap)))
-                        status_text.text(t("home.scan.progress", count=scanned))
+                    def on_progress(processed: int, total: int, _stage: str) -> None:
+                        progress_bar.progress(min(1.0, processed / max(1, total)))
+                        status_text.text(t("home.malware_action.progress", count=processed))
 
-                    st.session_state[SESSION_FOLDER_SCAN_CURRENT] = scan_folder(
+                    result = scan_folder_malware(
                         folder_path,
                         recursive=recursive,
                         max_files=max_files,
-                        stale_days=stale_days,
-                        large_file_bytes=large_file_bytes,
-                        enable_malware_scan=enable_malware_scan,
                         malware_scan_timeout_seconds=malware_scan_timeout_seconds,
                         malware_database_max_age_days=malware_database_max_age_days,
+                        malware_scan_policy=malware_scan_policy,
                         progress_callback=on_progress,
                     )
                     progress_bar.progress(1.0)
-                    status_text.text(t("home.scan.complete"))
-                    st.session_state[SESSION_FOLDER_REPORT_SNAPSHOT] = build_report_snapshot(
-                        cast(dict[str, object], st.session_state.get(SESSION_FOLDER_SCAN_CURRENT) or {})
-                    )
-                    st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = None
-                    st.session_state[SESSION_FOLDER_RESTORE_RESULT] = None
-                    st.session_state[SESSION_FOLDER_SELECTED_PATHS] = []
+                    status_text.text(t("home.malware_action.complete"))
+                    _store_malware_scan_result(_current_scan_options(), result)
+                    st.rerun()
                 except ScanPathError as exc:
                     st.error(str(exc))
                 except PermissionError:
@@ -849,8 +1250,250 @@ def _render_scan_panel(
                 except FolderOrganizerError as exc:
                     st.error(str(exc))
                 except Exception as exc:
-                    handle_ui_exception(t("home.scan.failed"), exc)
+                    handle_ui_exception(t("home.malware_action.failed"), exc)
+    with action_cols[1]:
+        with st.container(border=True):
+            st.markdown(f"### [Organization] {t('home.organization_action.title')}")
+            st.caption(t("home.organization_action.description"))
+            st.caption(
+                t(
+                    "home.organization_action.summary",
+                    days=stale_days,
+                    large_mb=max(1, int(large_file_bytes / (1024 * 1024))),
+                    subfolders=t("home.settings.subfolders_on") if recursive else t("home.settings.subfolders_off"),
+                    max_files=max_files,
+                    duplicate_detection=t("common.yes") if duplicate_detection else t("common.no"),
+                )
+            )
+            st.caption(_current_primary_action_label(_current_scan_options()))
+            if st.button(
+                t("home.organization_action.run_button"),
+                key="run_folder_organization_analysis",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
 
+                    def on_progress(scanned: int, cap: int) -> None:
+                        progress_bar.progress(min(1.0, scanned / max(1, cap)))
+                        status_text.text(t("home.organization_action.progress", count=scanned))
+
+                    result = scan_folder(
+                        folder_path,
+                        recursive=recursive,
+                        max_files=max_files,
+                        stale_days=stale_days,
+                        large_file_bytes=large_file_bytes,
+                        duplicate_detection=duplicate_detection,
+                        enable_malware_scan=False,
+                        malware_scan_timeout_seconds=malware_scan_timeout_seconds,
+                        malware_database_max_age_days=malware_database_max_age_days,
+                        malware_scan_policy=malware_scan_policy,
+                        progress_callback=on_progress,
+                    )
+                    result["result_id"] = uuid.uuid4().hex
+                    progress_bar.progress(1.0)
+                    status_text.text(t("home.organization_action.complete"))
+                    _store_analysis_result(_current_scan_options(), result)
+                    st.rerun()
+                except ScanPathError as exc:
+                    st.error(str(exc))
+                except PermissionError:
+                    st.error(t("home.scan.permission_denied"))
+                except FolderOrganizerError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    handle_ui_exception(t("home.organization_action.failed"), exc)
+
+
+def _render_malware_result_summary_card(result: dict[str, object]) -> None:
+    summary = cast(dict[str, object], result.get("summary") or {})
+    st.markdown(
+        f"""
+        <div class="so-card so-card-secondary so-card-compact">
+          <div class="card-title">{safe_display_text(t("home.malware_result.summary_title"))}</div>
+          <div class="card-muted">{safe_display_text(t("home.malware_result.summary_inline", clean=summary.get("clean_files", 0), suspicious=summary.get("suspicious_files", 0), infected=summary.get("infected_files", 0), incomplete=summary.get("incomplete_or_failed_scans", 0)))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button(
+        t("home.malware_result.reopen_button"),
+        key="reopen_folder_malware_result_dialog",
+        use_container_width=True,
+    ):
+        open_dialog_state(MALWARE_RESULT_DIALOG_KEY)
+
+
+def _render_analysis_result_summary_card(result: dict[str, object]) -> None:
+    records = [item for item in cast(list[object], result.get("records") or []) if isinstance(item, dict)]
+    candidates = [item for item in records if item.get("candidate_reasons")]
+    duplicate_files = sum(1 for item in records if str(item.get("duplicate_type") or "").strip())
+    st.markdown(
+        f"""
+        <div class="so-card so-card-secondary so-card-compact">
+          <div class="card-title">{safe_display_text(t("home.analysis_result.summary_title"))}</div>
+          <div class="card-muted">{safe_display_text(t("home.analysis_result.summary_inline", unused=result.get("stats", {}).get("stale_candidates", 0) if isinstance(result.get("stats"), dict) else 0, large=result.get("stats", {}).get("large_candidates", 0) if isinstance(result.get("stats"), dict) else 0, duplicate_files=duplicate_files, reclaimable=human_bytes(sum(safe_int(item.get("size_bytes")) for item in candidates))))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button(
+        t("home.analysis_result.reopen_button"),
+        key="reopen_folder_analysis_result_dialog",
+        use_container_width=True,
+    ):
+        open_dialog_state(ANALYSIS_RESULT_DIALOG_KEY)
+
+
+def _render_malware_result_dialog_body() -> None:
+    result = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_MALWARE_SCAN_RESULT))
+    if not isinstance(result, dict):
+        st.info(t("home.malware_result.empty"))
+        return
+    summary = cast(dict[str, object], result.get("summary") or {})
+    records = [item for item in cast(list[object], result.get("records") or []) if isinstance(item, dict)]
+    tabs = st.tabs(
+        [
+            t("home.malware_result.tabs.summary"),
+            t("home.malware_result.tabs.blocked"),
+            t("home.malware_result.tabs.all_files"),
+            t("home.malware_result.tabs.technical"),
+        ]
+    )
+    metrics = [
+        ("total_files_considered", "home.malware_result.metrics.total_files"),
+        ("files_successfully_scanned", "home.malware_result.metrics.scanned_files"),
+        ("clean_files", "home.malware_result.metrics.clean_files"),
+        ("infected_files", "home.malware_result.metrics.infected_files"),
+        ("incomplete_or_failed_scans", "home.malware_result.metrics.incomplete_files"),
+        ("cache_hits", "home.malware_result.metrics.cache_hits"),
+    ]
+    with tabs[0]:
+        metric_columns = st.columns(3, gap="small")
+        for index, (field, key) in enumerate(metrics):
+            with metric_columns[index % len(metric_columns)]:
+                st.metric(t(key), safe_int(summary.get(field)))
+        st.caption(
+            t(
+                "home.malware_result.performance",
+                total_bytes=human_bytes(safe_int(summary.get("total_bytes"))),
+                elapsed=f"{float(summary.get('elapsed_seconds') or 0.0):.2f}s",
+                throughput=_format_rate(
+                    float(summary.get("bytes_per_second") or 0.0),
+                    float(summary.get("files_per_second") or 0.0),
+                ),
+            )
+        )
+    with tabs[1]:
+        blocked_rows = [
+            {
+                "path": _safe_relative_path(result.get("path"), row.get("path")),
+                "verdict": _malware_scan_label(row.get("malware_status")),
+                "health": str(row.get("malware_scan_health") or ""),
+                "threat": str(row.get("malware_threat_name") or ""),
+                "message": str(row.get("malware_message") or ""),
+            }
+            for row in records
+            if str(row.get("malware_status") or "") != "clean"
+        ]
+        if blocked_rows:
+            st.dataframe(blocked_rows, use_container_width=True, hide_index=True)
+        else:
+            st.info(t("home.malware_result.no_blocked"))
+    with tabs[2]:
+        all_rows = [
+            {
+                "path": _safe_relative_path(result.get("path"), row.get("path")),
+                "verdict": _malware_scan_label(row.get("malware_status")),
+                "health": str(row.get("malware_scan_health") or ""),
+                "threat": str(row.get("malware_threat_name") or ""),
+                "backend": str(row.get("malware_backend") or ""),
+                "cache_hit": bool(row.get("malware_cache_hit")),
+                "scanned_at": str(row.get("malware_scanned_at") or ""),
+                "message": str(row.get("malware_message") or ""),
+            }
+            for row in records
+        ]
+        st.dataframe(all_rows, use_container_width=True, hide_index=True)
+    with tabs[3]:
+        st.caption(
+            t(
+                "home.malware_result.technical_summary",
+                backend=str(summary.get("backend") or "-"),
+                engine_version=str(summary.get("engine_version") or "-"),
+                database_version=str(summary.get("database_version") or "-"),
+                database_date=str(summary.get("database_date") or "-"),
+            )
+        )
+        with st.expander(t("home.malware_result.full_paths")):
+            for row in records:
+                st.code(str(row.get("path") or ""), language=None)
+    st.download_button(
+        t("home.malware_result.export_button"),
+        _export_malware_result_csv(result),
+        file_name="smart-organizer-malware-scan.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
+def _render_analysis_result_dialog_body() -> None:
+    result = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
+    if not isinstance(result, dict):
+        st.info(t("home.analysis_result.empty"))
+        return
+    records = [item for item in cast(list[object], result.get("records") or []) if isinstance(item, dict)]
+    stale_rows = [item for item in records if bool(item.get("is_stale"))]
+    large_rows = [item for item in records if bool(item.get("is_large"))]
+    duplicate_rows = [item for item in records if str(item.get("duplicate_type") or "").strip()]
+    stats = cast(dict[str, object], result.get("stats") or {})
+    tabs = st.tabs(
+        [
+            t("home.analysis_result.tabs.summary"),
+            t("home.analysis_result.tabs.unused_files"),
+            t("home.analysis_result.tabs.large_files"),
+            t("home.analysis_result.tabs.duplicates"),
+        ]
+    )
+    with tabs[0]:
+        st.caption(
+            t(
+                "home.analysis_result.metrics_inline",
+                total=stats.get("scanned_files", 0),
+                unused=len(stale_rows),
+                large=len(large_rows),
+                duplicate_groups=len({str(item.get('duplicate_reason') or item.get('duplicate_type') or '') for item in duplicate_rows}),
+                duplicate_files=len(duplicate_rows),
+                reclaimable=human_bytes(sum(safe_int(item.get("size_bytes")) for item in stale_rows + large_rows + duplicate_rows)),
+                elapsed=f"{float(result.get('elapsed_seconds') or 0.0):.2f}s",
+            )
+        )
+    for tab, rows in zip(
+        tabs[1:],
+        (stale_rows, large_rows, duplicate_rows),
+        strict=False,
+    ):
+        with tab:
+            table_rows = [
+                {
+                    "path": _safe_relative_path(result.get("path"), row.get("path")),
+                    "size": human_bytes(safe_int(row.get("size_bytes"))),
+                    "last_modified": format_timestamp_for_display(row.get("mtime")),
+                    "reason": _candidate_reason_text(row),
+                }
+                for row in rows
+            ]
+            if table_rows:
+                st.dataframe(table_rows, use_container_width=True, hide_index=True)
+            else:
+                st.info(t("home.analysis_result.no_rows"))
+    if st.button(t("home.analysis_result.go_to_review"), key="navigate_to_review_from_analysis_dialog", use_container_width=True):
+        st.session_state[SESSION_MAIN_TAB_OVERRIDE] = "review_results"
+        close_dialog_state(ANALYSIS_RESULT_DIALOG_KEY)
+        st.rerun()
 
 def _render_results_panel(
     context: UIContext,
@@ -1073,38 +1716,58 @@ def _render_quarantine_panel(
 
 
 def render_home(context: UIContext) -> None:
-    scan_options_obj = st.session_state.get(SESSION_FOLDER_SCAN_OPTIONS)
-    scan_options = cast(dict[str, object], scan_options_obj) if isinstance(scan_options_obj, dict) else {}
+    scan_options = _current_scan_options()
     stale_days = safe_int(scan_options.get("stale_days", 365))
     recursive = bool(scan_options.get("recursive", True))
     max_files = safe_int(scan_options.get("max_files", 5000))
     large_file_bytes = safe_int(scan_options.get("large_file_bytes", 250 * 1024 * 1024))
+    duplicate_detection = bool(scan_options.get("duplicate_detection", False))
     enable_malware_scan = bool(scan_options.get("enable_malware_scan", False))
     malware_scan_timeout_seconds = safe_int(scan_options.get("malware_scan_timeout_seconds", 30))
     malware_database_max_age_days = safe_int(scan_options.get("malware_database_max_age_days", 7))
+    malware_scan_policy = str(scan_options.get("malware_scan_policy") or "standard")
     folder_path = str(st.session_state.get(SESSION_FOLDER_SCAN_PATH) or "")
-    initial_scan = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
-    current_scan = cast(dict[str, object], initial_scan or {})
+    current_scan = _sync_analysis_with_malware_result(scan_options)
+    malware_result = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_MALWARE_SCAN_RESULT))
     _render_home_header()
+    _render_settings_summary_card(scan_options)
+    _render_folder_action_panel(
+        context,
+        folder_path=folder_path,
+        recursive=recursive,
+        max_files=max_files,
+        stale_days=stale_days,
+        large_file_bytes=large_file_bytes,
+        duplicate_detection=duplicate_detection,
+        enable_malware_scan=enable_malware_scan,
+        malware_scan_timeout_seconds=malware_scan_timeout_seconds,
+        malware_database_max_age_days=malware_database_max_age_days,
+        malware_scan_policy=malware_scan_policy,
+    )
+    _maybe_auto_open_result_dialog(
+        result=malware_result,
+        dialog_key=MALWARE_RESULT_DIALOG_KEY,
+        auto_open_key=SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
+        dismissed_key=SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
+    )
+    _maybe_auto_open_result_dialog(
+        result=current_scan,
+        dialog_key=ANALYSIS_RESULT_DIALOG_KEY,
+        auto_open_key=SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID,
+        dismissed_key=SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID,
+    )
 
-    top_col, action_col = st.columns([2, 1], gap="medium")
-    with top_col:
-        _render_scan_panel(
-            context,
-            folder_path=folder_path,
-            recursive=recursive,
-            max_files=max_files,
-            stale_days=stale_days,
-            large_file_bytes=large_file_bytes,
-            enable_malware_scan=enable_malware_scan,
-            malware_scan_timeout_seconds=malware_scan_timeout_seconds,
-            malware_database_max_age_days=malware_database_max_age_days,
-            scan=initial_scan,
-        )
-    with action_col:
+    summary_cols = st.columns(3, gap="medium")
+    with summary_cols[0]:
+        if isinstance(malware_result, dict):
+            _render_malware_result_summary_card(malware_result)
+    with summary_cols[1]:
+        if isinstance(current_scan, dict):
+            _render_analysis_result_summary_card(current_scan)
+    with summary_cols[2]:
         _render_quarantine_panel(
             folder_path=folder_path,
-            current_scan=current_scan,
+            current_scan=cast(dict[str, object], current_scan or {}),
             recursive=recursive,
             max_files=max_files,
             stale_days=stale_days,
@@ -1114,13 +1777,13 @@ def render_home(context: UIContext) -> None:
             malware_database_max_age_days=malware_database_max_age_days,
         )
 
-    scan = cast(dict[str, object] | None, st.session_state.get(SESSION_FOLDER_SCAN_CURRENT))
+    scan = current_scan
     warning_messages: list[str] = []
     records: list[dict[str, object]] = []
     candidates: list[dict[str, object]] = []
     current_quarantine_items: list[dict[str, object]] = []
     report_payload = ""
-    if scan:
+    if isinstance(scan, dict):
         current_quarantine_items, scan_quarantine_warnings = get_quarantine_items_safe(str(scan.get("path") or ""))
         records = [item for item in cast(list[object], scan.get("records") or []) if isinstance(item, dict)]
         candidates = [item for item in records if item.get("candidate_reasons")]
@@ -1147,14 +1810,15 @@ def render_home(context: UIContext) -> None:
             max_files=max_files,
             stale_days=stale_days,
             large_file_bytes=large_file_bytes,
-            enable_malware_scan=enable_malware_scan,
+            enable_malware_scan=bool(scan.get("enable_malware_scan")),
             malware_scan_timeout_seconds=malware_scan_timeout_seconds,
             malware_database_max_age_days=malware_database_max_age_days,
         )
     else:
-        st.info(t("home.scan.empty"))
+        st.info(t("home.organization_action.empty"))
 
     _render_home_dialogs(
+        context,
         warning_messages=warning_messages,
         report_payload=report_payload,
         records=records,

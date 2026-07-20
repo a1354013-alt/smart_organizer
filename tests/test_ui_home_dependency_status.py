@@ -9,6 +9,16 @@ from folder_models import Recommendation
 from i18n import t
 from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
+    _current_settings_draft,
+    _current_primary_action_label,
+    _default_processing_options,
+    _default_scan_options,
+    _discard_settings_draft,
+    _malware_primary_action_label,
+    _maybe_auto_open_result_dialog,
+    _open_settings_dialog,
+    _reset_settings_draft_to_defaults,
+    _save_settings_draft,
     _candidate_row,
     _duplicate_type_label,
     _render_candidate_editor,
@@ -19,6 +29,27 @@ from ui_home import (
     refresh_dependency_status,
     render_home,
     summarize_recommendations,
+    _store_analysis_result,
+    _store_malware_scan_result,
+)
+from ui_state import (
+    SESSION_AI_ENABLED,
+    SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID,
+    SESSION_FOLDER_ANALYSIS_DIALOG_OPEN,
+    SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID,
+    SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
+    SESSION_FOLDER_MALWARE_DIALOG_OPEN,
+    SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
+    SESSION_FOLDER_MALWARE_SCAN_RESULT,
+    SESSION_FOLDER_SCAN_OPTIONS,
+    SESSION_FOLDER_SCAN_OPTIONS_DRAFT,
+    SESSION_FOLDER_SETTINGS_DIALOG_OPEN,
+    SESSION_FOLDER_LAST_OPERATION_RESULT,
+    SESSION_FOLDER_REPORT_SNAPSHOT,
+    SESSION_FOLDER_RESTORE_RESULT,
+    SESSION_FOLDER_SCAN_CURRENT,
+    SESSION_FOLDER_SELECTED_PATHS,
+    SESSION_PROCESSING_OPTIONS,
 )
 from ui_labels import recommendation_display_label, topic_display_label
 
@@ -213,6 +244,7 @@ def test_render_home_candidate_metric_uses_candidate_count(monkeypatch):
         info=lambda *args, **kwargs: None,
         columns=lambda spec, **kwargs: [_Column() for _ in range(spec if isinstance(spec, int) else len(spec))],
         container=lambda **kwargs: nullcontext(),
+        selectbox=lambda _label, options, index=0, **kwargs: options[index],
         text_input=lambda *args, **kwargs: "C:/scan",
         button=lambda *args, **kwargs: False,
         progress=lambda *args, **kwargs: SimpleNamespace(progress=lambda value: None),
@@ -334,3 +366,239 @@ def test_candidate_editor_allows_not_scanned_when_malware_scan_disabled(monkeypa
     )
 
     assert selected == ["C:/scan/not-scanned.txt", "C:/scan/clean.txt"]
+
+
+def test_settings_dialog_open_and_discard_behavior(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_SCAN_OPTIONS: {"stale_days": 120, "recursive": False},
+        SESSION_PROCESSING_OPTIONS: {"enable_pdf_preview": True, "enable_ocr": False},
+        SESSION_AI_ENABLED: True,
+    }
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+
+    _open_settings_dialog()
+
+    assert session_state[SESSION_FOLDER_SETTINGS_DIALOG_OPEN] is True
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["stale_days"] == 120
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["enable_pdf_preview"] is True
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["ai_enabled"] is True
+
+    session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["stale_days"] = 999
+    _discard_settings_draft()
+
+    assert session_state[SESSION_FOLDER_SETTINGS_DIALOG_OPEN] is False
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["stale_days"] == 120
+
+
+def test_save_settings_applies_values_atomically(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_SCAN_OPTIONS: _default_scan_options(),
+        SESSION_PROCESSING_OPTIONS: _default_processing_options(),
+        SESSION_AI_ENABLED: False,
+        SESSION_FOLDER_SCAN_OPTIONS_DRAFT: {},
+        SESSION_FOLDER_SETTINGS_DIALOG_OPEN: True,
+    }
+    context = SimpleNamespace(processor=SimpleNamespace(pdf_preview_max_pages=2, pdf_ocr_max_pages=4))
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+
+    _save_settings_draft(
+        {
+            "stale_days": 45,
+            "large_file_bytes": 512,
+            "recursive": False,
+            "max_files": 777,
+            "duplicate_detection": True,
+            "enable_malware_scan": True,
+            "malware_scan_mode": "full",
+            "malware_scan_policy": "strict",
+            "malware_scan_timeout_seconds": 90,
+            "malware_database_max_age_days": 3,
+            "ai_enabled": True,
+            "enable_pdf_preview": True,
+            "enable_ocr": True,
+        },
+        context=context,
+    )
+
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["stale_days"] == 45
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["large_file_bytes"] == 512 * 1024 * 1024
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["recursive"] is False
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["max_files"] == 777
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["duplicate_detection"] is True
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["enable_malware_scan"] is True
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["malware_scan_mode"] == "full"
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS]["malware_scan_policy"] == "strict"
+    assert session_state[SESSION_AI_ENABLED] is True
+    assert session_state[SESSION_PROCESSING_OPTIONS]["enable_pdf_preview"] is True
+    assert session_state[SESSION_PROCESSING_OPTIONS]["enable_ocr"] is True
+    assert session_state[SESSION_FOLDER_SETTINGS_DIALOG_OPEN] is False
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT]["stale_days"] == 45
+
+
+def test_reset_settings_restores_defaults(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_SCAN_OPTIONS_DRAFT: {"stale_days": 45, "enable_pdf_preview": True, "ai_enabled": True}
+    }
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+
+    _reset_settings_draft_to_defaults()
+
+    assert session_state[SESSION_FOLDER_SCAN_OPTIONS_DRAFT] == {
+        **_default_scan_options(),
+        "ai_enabled": False,
+        "enable_pdf_preview": False,
+        "enable_ocr": False,
+    }
+
+
+def test_settings_persist_across_rerun_reads(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_SCAN_OPTIONS: {"stale_days": 88, "recursive": False},
+        SESSION_PROCESSING_OPTIONS: {"enable_pdf_preview": True, "enable_ocr": True},
+        SESSION_AI_ENABLED: True,
+    }
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+
+    draft = _current_settings_draft()
+
+    assert draft["stale_days"] == 88
+    assert draft["recursive"] is False
+    assert draft["enable_pdf_preview"] is True
+    assert draft["enable_ocr"] is True
+    assert draft["ai_enabled"] is True
+
+
+def test_primary_action_labels_change_with_settings():
+    assert _malware_primary_action_label({"enable_malware_scan": False}) == t("home.scan.primary_action_organization")
+    assert _malware_primary_action_label({"enable_malware_scan": True}) == t("home.scan.primary_action_secure")
+    assert _malware_primary_action_label({"malware_only_operation": True}) == t("home.scan.primary_action_malware_only")
+
+
+def test_current_primary_action_label_matches_requested_modes():
+    assert _current_primary_action_label({"enable_malware_scan": False}) == t("home.scan.primary_action_organization")
+    assert _current_primary_action_label({"enable_malware_scan": True}) == t("home.scan.primary_action_secure")
+    assert _current_primary_action_label({"malware_only_operation": True}) == t("home.scan.primary_action_malware_only")
+
+
+def test_auto_open_result_dialog_opens_once_and_respects_dismissed(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_MALWARE_DIALOG_OPEN: False,
+        SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID: "mal-1",
+        SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID: "",
+    }
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+
+    _maybe_auto_open_result_dialog(
+        result={"result_id": "mal-1"},
+        dialog_key=SESSION_FOLDER_MALWARE_DIALOG_OPEN,
+        auto_open_key=SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
+        dismissed_key=SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
+    )
+
+    assert session_state[SESSION_FOLDER_MALWARE_DIALOG_OPEN] is True
+    assert session_state[SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID] is None
+
+    session_state[SESSION_FOLDER_MALWARE_DIALOG_OPEN] = False
+    session_state[SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID] = "mal-1"
+    session_state[SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID] = "mal-1"
+
+    _maybe_auto_open_result_dialog(
+        result={"result_id": "mal-1"},
+        dialog_key=SESSION_FOLDER_MALWARE_DIALOG_OPEN,
+        auto_open_key=SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
+        dismissed_key=SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
+    )
+
+    assert session_state[SESSION_FOLDER_MALWARE_DIALOG_OPEN] is False
+    assert session_state[SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID] is None
+
+
+def test_store_result_helpers_prepare_dialog_and_persist_state(monkeypatch):
+    session_state = {
+        SESSION_FOLDER_MALWARE_SCAN_RESULT: None,
+        SESSION_FOLDER_SCAN_CURRENT: None,
+        SESSION_FOLDER_REPORT_SNAPSHOT: None,
+        SESSION_FOLDER_LAST_OPERATION_RESULT: {"stale": True},
+        SESSION_FOLDER_RESTORE_RESULT: {"stale": True},
+        SESSION_FOLDER_SELECTED_PATHS: ["C:/scan/old.txt"],
+        SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID: None,
+        SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID: "previous-analysis",
+        SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID: None,
+        SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID: "previous-malware",
+    }
+
+    monkeypatch.setattr("ui_home.st.session_state", session_state)
+    monkeypatch.setattr("ui_home.build_report_snapshot", lambda result: {"path": result["path"], "count": len(result["records"])})
+
+    malware_result = {
+        "result_id": "malware-1",
+        "path": "C:/scan",
+        "records": [
+            {
+                "path": "C:/scan/old.txt",
+                "malware_status": "clean",
+                "malware_scan_health": "ok",
+                "malware_backend": "clamav",
+                "malware_engine_version": "1.0",
+                "malware_database_version": "123",
+                "malware_database_date": "2026-07-20",
+                "malware_scanned_at": "2026-07-20T10:00:00+00:00",
+                "malware_cache_hit": False,
+                "malware_policy_name": "standard",
+                "malware_policy_version": "standard-v1",
+                "malware_file_sha256": "abc",
+                "malware_file_size": 4,
+                "malware_file_mtime_ns": 1,
+                "malware_file_inode": 2,
+            }
+        ],
+        "summary": {},
+    }
+    _store_malware_scan_result(
+        {
+            "enable_malware_scan": True,
+            "malware_scan_policy": "standard",
+            "malware_database_max_age_days": 7,
+        },
+        malware_result,
+    )
+
+    assert session_state[SESSION_FOLDER_MALWARE_SCAN_RESULT]["result_id"] == "malware-1"
+    assert session_state[SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID] == "malware-1"
+    assert session_state[SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID] == ""
+
+    analysis_result = {
+        "result_id": "analysis-1",
+        "path": "C:/scan",
+        "records": [
+            {
+                "path": "C:/scan/old.txt",
+                "name": "old.txt",
+                "candidate_reasons": ["stale"],
+                "size_bytes": 4,
+                "mtime": "2026-07-20T10:00:00+00:00",
+            }
+        ],
+        "stats": {"scanned_files": 1, "total_bytes": 4, "stale_candidates": 1, "large_candidates": 0},
+    }
+    _store_analysis_result(
+        {
+            "enable_malware_scan": True,
+            "malware_scan_policy": "standard",
+            "malware_database_max_age_days": 7,
+        },
+        analysis_result,
+    )
+
+    assert session_state[SESSION_FOLDER_SCAN_CURRENT]["result_id"] == "analysis-1"
+    assert session_state[SESSION_FOLDER_REPORT_SNAPSHOT] == {"path": "C:/scan", "count": 1}
+    assert session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] is None
+    assert session_state[SESSION_FOLDER_RESTORE_RESULT] is None
+    assert session_state[SESSION_FOLDER_SELECTED_PATHS] == []
+    assert session_state[SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID] == "analysis-1"
+    assert session_state[SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID] == ""

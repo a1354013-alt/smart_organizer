@@ -12,6 +12,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import cast
 
 from folder_models import (
     ACTIVE_QUARANTINE_STATUSES,
@@ -447,6 +448,8 @@ def _apply_malware_scan_results(
     *,
     timeout_seconds: int,
     max_database_age_days: int,
+    policy_name: str = "standard",
+    policy_version: str = "standard-v1",
 ) -> list[str]:
     notes: list[str] = []
     candidate_records = [record for record in records if record.candidate_reasons and not record.is_symlink]
@@ -467,9 +470,23 @@ def _apply_malware_scan_results(
         if scan_result is None:
             continue
         record.malware_status = scan_result.status
+        record.malware_verdict = scan_result.verdict
+        record.malware_scan_health = scan_result.scan_health
         record.malware_scanner = scan_result.scanner
+        record.malware_backend = scan_result.backend
+        record.malware_engine_version = scan_result.engine_version or ""
+        record.malware_database_version = scan_result.database_version or ""
+        record.malware_database_date = scan_result.database_date or ""
         record.malware_threat_name = scan_result.threat_name or ""
         record.malware_message = scan_result.message
+        record.malware_scanned_at = iso_now()
+        record.malware_cache_hit = bool(scan_result.cache_hit)
+        record.malware_policy_name = policy_name
+        record.malware_policy_version = policy_version
+        record.malware_file_sha256 = scan_result.file_sha256 or ""
+        record.malware_file_size = safe_int(scan_result.file_size)
+        record.malware_file_mtime_ns = safe_int(scan_result.file_mtime_ns)
+        record.malware_file_inode = scan_result.file_inode or ""
         if scan_result.status in {
             "infected",
             "suspicious",
@@ -484,19 +501,86 @@ def _apply_malware_scan_results(
     return notes
 
 
-def _operation_malware_payload(record: dict[str, object]) -> dict[str, str]:
+def _operation_malware_payload(record: dict[str, object]) -> dict[str, object]:
     return {
         "malware_status": str(record.get("malware_status") or "not_scanned"),
+        "malware_verdict": str(record.get("malware_verdict") or record.get("malware_status") or "not_scanned"),
+        "malware_scan_health": str(record.get("malware_scan_health") or "incomplete"),
         "malware_scanner": str(record.get("malware_scanner") or ""),
+        "malware_backend": str(record.get("malware_backend") or ""),
+        "malware_engine_version": str(record.get("malware_engine_version") or ""),
+        "malware_database_version": str(record.get("malware_database_version") or ""),
+        "malware_database_date": str(record.get("malware_database_date") or ""),
         "malware_threat_name": str(record.get("malware_threat_name") or ""),
         "malware_message": str(record.get("malware_message") or ""),
+        "malware_scanned_at": str(record.get("malware_scanned_at") or ""),
+        "malware_cache_hit": bool(record.get("malware_cache_hit")),
+        "malware_policy_name": str(record.get("malware_policy_name") or ""),
+        "malware_policy_version": str(record.get("malware_policy_version") or ""),
+        "malware_file_sha256": str(record.get("malware_file_sha256") or ""),
+        "malware_file_size": safe_int(record.get("malware_file_size")),
+        "malware_file_mtime_ns": safe_int(record.get("malware_file_mtime_ns")),
+        "malware_file_inode": str(record.get("malware_file_inode") or ""),
     }
+
+
+def _matches_malware_snapshot(path_obj: Path, record: dict[str, object]) -> bool:
+    expected_size = safe_int(record.get("malware_file_size"))
+    expected_mtime_ns = safe_int(record.get("malware_file_mtime_ns"))
+    expected_inode = str(record.get("malware_file_inode") or "").strip()
+    expected_sha256 = str(record.get("malware_file_sha256") or "").strip()
+    try:
+        stat_result = path_obj.stat()
+    except OSError:
+        return False
+    if expected_size and int(stat_result.st_size) != expected_size:
+        return False
+    if expected_mtime_ns and int(getattr(stat_result, "st_mtime_ns", 0)) != expected_mtime_ns:
+        return False
+    current_inode = f"{getattr(stat_result, 'st_dev', 0)}:{getattr(stat_result, 'st_ino', 0)}"
+    if expected_inode and current_inode != expected_inode:
+        return False
+    if expected_sha256:
+        current_sha256, hash_error = _hash_file(path_obj)
+        if hash_error is not None or current_sha256 != expected_sha256:
+            return False
+    return True
+
+
+def _malware_clean_verdict_is_compatible(record: dict[str, object]) -> tuple[bool, str]:
+    current_status = cast(ClamAvStatus | None, record.get("_current_clamav_status"))
+    current_policy_version = str(record.get("_active_malware_policy_version") or "").strip()
+    scan_health = str(record.get("malware_scan_health") or "").strip() or "incomplete"
+    status = str(record.get("malware_status") or "").strip() or "not_scanned"
+    if current_status is None or current_status.availability != "available":
+        message = current_status.message if current_status is not None else "Scanner status unavailable."
+        return False, f"{MALWARE_FILE_BLOCK_MESSAGE} {message}".strip()
+    if scan_health != "ok" or status != "clean":
+        message = str(record.get("malware_message") or "").strip()
+        return False, f"{MALWARE_FILE_BLOCK_MESSAGE} {message}".strip()
+    if current_policy_version and str(record.get("malware_policy_version") or "").strip() != current_policy_version:
+        return False, "Malware policy changed after the clean verdict. Re-run the malware scan before continuing."
+    database_version = str(record.get("malware_database_version") or "").strip()
+    database_date = str(record.get("malware_database_date") or "").strip()
+    if database_version != str(current_status.database_version or "").strip() or database_date != str(
+        current_status.database_date or ""
+    ).strip():
+        return False, "Malware database changed after the clean verdict. Re-run the malware scan before continuing."
+    return True, ""
 
 
 def _malware_block_message(record: dict[str, object]) -> str | None:
     status = str(record.get("malware_status") or "")
     enforce_malware_scan = bool(record.get("_enable_malware_scan"))
     if not is_malware_blocked_status(status, enable_malware_scan=enforce_malware_scan):
+        if not enforce_malware_scan:
+            return None
+        compatible, message = _malware_clean_verdict_is_compatible(record)
+        if not compatible:
+            return message
+        malware_path = str(record.get("_malware_validation_path") or record.get("path") or "").strip()
+        if malware_path and not _matches_malware_snapshot(Path(malware_path), record):
+            return "File content or identity changed after the clean malware verdict. Re-run the malware scan before continuing."
         return None
     if status == "infected":
         return INFECTED_FILE_BLOCK_MESSAGE
@@ -643,6 +727,8 @@ def scan_local_folder(
     enable_malware_scan: bool = False,
     malware_scan_timeout_seconds: int = 30,
     malware_database_max_age_days: int = 7,
+    malware_scan_policy: str = "standard",
+    malware_scan_policy_version: str = "standard-v1",
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
@@ -813,6 +899,8 @@ def scan_local_folder(
                 records,
                 timeout_seconds=int(malware_scan_timeout_seconds),
                 max_database_age_days=int(malware_database_max_age_days),
+                policy_name=str(malware_scan_policy or "standard"),
+                policy_version=str(malware_scan_policy_version or "standard-v1"),
             )
         )
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
@@ -832,6 +920,8 @@ def scan_local_folder(
         stale_days=int(stale_days),
         large_file_bytes=int(large_file_bytes),
         enable_malware_scan=bool(enable_malware_scan),
+        malware_scan_policy=str(malware_scan_policy or "standard"),
+        malware_scan_policy_version=str(malware_scan_policy_version or "standard-v1"),
         scanned_at=iso_now(),
         elapsed_seconds=round(time.perf_counter() - started, 3),
         records=records,
@@ -857,6 +947,9 @@ def run_folder_organizer(
     operation_id = uuid.uuid4().hex
     results: list[FolderOperationRow] = []
     enable_malware_scan = bool(scan_result.get("enable_malware_scan"))
+    current_clamav_status = get_clamav_status(
+        max(1, safe_int(scan_result.get("malware_database_max_age_days") or 7))
+    ) if enable_malware_scan else None
     with quarantine_manifest_guard(root):
         manifest = recover_quarantine_manifest(str(root))
         manifest_items = [dict_object(item) for item in object_list(manifest.get("items"))]
@@ -891,6 +984,11 @@ def run_folder_organizer(
             malware_payload = _operation_malware_payload(record)
             record_with_policy = dict(record)
             record_with_policy["_enable_malware_scan"] = enable_malware_scan
+            record_with_policy["_active_malware_policy_version"] = str(
+                scan_result.get("malware_scan_policy_version") or ""
+            )
+            record_with_policy["_current_clamav_status"] = current_clamav_status
+            record_with_policy["_malware_validation_path"] = str(record.get("path") or selected_path)
             malware_block_message = _malware_block_message(record_with_policy)
             if bool(record.get("is_symlink")):
                 malware_block_message = SYMLINK_BLOCK_MESSAGE
@@ -1108,7 +1206,15 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
             source = Path(str(item.get("quarantine_path") or ""))
             original = Path(str(item.get("original_path") or ""))
             malware_payload = _operation_malware_payload(item)
-            malware_block_message = _malware_block_message(item)
+            current_clamav_status = get_clamav_status(
+                max(1, safe_int(item.get("malware_database_max_age_days") or 7))
+            ) if str(item.get("malware_policy_version") or "").strip() else None
+            item_with_policy = dict(item)
+            item_with_policy["_enable_malware_scan"] = bool(str(item.get("malware_policy_version") or "").strip())
+            item_with_policy["_active_malware_policy_version"] = str(item.get("malware_policy_version") or "")
+            item_with_policy["_current_clamav_status"] = current_clamav_status
+            item_with_policy["_malware_validation_path"] = str(item.get("quarantine_path") or "")
+            malware_block_message = _malware_block_message(item_with_policy)
             if malware_block_message is not None:
                 results.append(
                     FolderOperationRow(

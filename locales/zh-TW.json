@@ -54,41 +54,92 @@
     "processing_options": "processing_options"
   },
   "malware": {
-    "enable_scan": "啟用 ClamAV 木馬掃描",
-    "timeout_seconds": "單檔掃描 timeout 秒數",
-    "database_max_age_days": "病毒資料庫過期天數",
-    "check_status": "檢查 ClamAV 狀態",
+    "enable_scan": "啟用病毒與木馬檢查",
+    "timeout_seconds": "單檔掃描逾時秒數",
+    "database_max_age_days": "病毒資料庫最長可接受天數",
+    "check_status": "檢查掃描器狀態",
     "update_database": "更新病毒資料庫",
     "status_available": "ClamAV 可用",
     "status_clamscan_missing": "找不到 clamscan",
-    "status_freshclam_missing": "找不到 freshclam，無法更新病毒碼",
+    "status_freshclam_missing": "找不到 freshclam，因此無法更新病毒資料庫",
     "status_database_missing": "找不到病毒資料庫",
-    "status_database_outdated": "病毒碼可能過期",
+    "status_database_outdated": "病毒資料庫可能已過期",
     "status_unknown": "無法判斷 ClamAV 狀態",
-    "database_version": "病毒資料庫版本：{version}",
-    "database_date": "病毒資料庫日期：{date}",
-    "database_age_days": "病毒資料庫年齡：{days} 天",
+    "database_version": "資料庫版本：{version}",
+    "database_date": "資料庫日期：{date}",
+    "database_age_days": "資料庫年齡：{days} 天",
+    "selected_backend": "目前後端：{backend}",
+    "engine_info": "掃描引擎：{engine} ({version})",
     "clamscan_path": "clamscan 路徑：{path}",
     "freshclam_path": "freshclam 路徑：{path}",
     "database_dir": "病毒資料庫目錄：{path}",
     "freshclam_ready": "freshclam 可用，可手動更新病毒資料庫。",
-    "scan_clean": "安全",
-    "scan_infected": "感染",
+    "scan_clean": "乾淨",
+    "scan_infected": "已感染",
     "scan_suspicious": "可疑",
     "scan_not_scanned": "未掃描",
     "scan_scanner_unavailable": "掃描器不可用",
-    "scan_database_missing": "病毒資料庫遺失",
-    "scan_database_outdated": "病毒碼過期",
+    "scan_database_missing": "資料庫缺失",
+    "scan_database_outdated": "資料庫過期",
     "scan_error": "掃描錯誤",
     "scan_timeout": "掃描逾時",
     "infected_warning": "此檔案被 ClamAV 標記為感染。Smart Organizer 不會移動、刪除或開啟此檔案，請使用防毒軟體處理。",
-    "blocked_warning": "此檔案尚未確認為安全（{status}）。Smart Organizer 會先跳過，直到木馬掃描狀態為乾淨。",
+    "blocked_warning": "此檔案尚未確認為乾淨（{status}）。Smart Organizer 會先跳過，直到病毒與木馬檢查結果為乾淨。",
     "selected_infected_warning": "已選取的感染檔案會被跳過且不會搬移：{files}",
-    "selected_blocked_warning": "已選取但掃描狀態被阻擋的檔案會被跳過且不會搬移：{files}"
+    "selected_blocked_warning": "已選取但掃描狀態受阻的檔案會被跳過且不會搬移：{files}"
   },
   "home": {
     "header": {
-      "subtitle": "主畫面保持精簡，需要細節時再開啟對話視窗。"
+      "subtitle": "整理分析與病毒檢查分開執行，主畫面只保留精簡摘要。"
+    },
+    "settings": {
+      "language_label": "介面語言",
+      "open_button": "掃描設定",
+      "edit_button": "修改設定",
+      "summary_title": "目前設定",
+      "summary_description": "整理分析與安全設定會在儲存後一起套用。",
+      "summary_inline": "模式 {scan_mode} | 病毒檢查 {malware_status} | 子資料夾 {subfolders} | 閒置 {days} 天 | 大檔案 {large_mb} MB | 上限 {max_files}",
+      "security_summary_title": "病毒與木馬",
+      "security_summary_inline": "檢查 {malware_required} | 模式 {scan_mode} | 政策 {policy}",
+      "organization_summary_title": "整理分析",
+      "organization_summary_inline": "子資料夾 {subfolders} | 閒置 {days} 天 | 大檔案 {large_mb} MB | 上限 {max_files} | 重複偵測 {duplicate_detection}",
+      "no_auto_move_delete": "掃描只會分析與預覽，不會自動移動或刪除檔案。",
+      "dialog_title": "掃描設定",
+      "dialog_description": "先在這裡調整草稿設定，按下儲存後才會一次套用。",
+      "organization_tab": "整理分析",
+      "security_tab": "病毒與木馬",
+      "save_button": "儲存設定",
+      "reset_button": "恢復預設值",
+      "cancel_button": "取消",
+      "subfolders_on": "開啟",
+      "subfolders_off": "關閉",
+      "malware_enabled": "啟用",
+      "malware_disabled": "停用",
+      "scan_mode": {
+        "fast": "快速",
+        "standard": "標準",
+        "full": "完整"
+      },
+      "security_policy": {
+        "standard": "標準",
+        "strict": "嚴格"
+      },
+      "organization": {
+        "unused_days": "未使用天數門檻",
+        "large_file_mb": "大檔案門檻 (MB)",
+        "include_subfolders": "包含子資料夾",
+        "max_files": "最多檔案數",
+        "duplicate_detection": "重複檔案偵測",
+        "secondary_section": "其他分析選項",
+        "enable_ai_summary": "AI 摘要",
+        "enable_pdf_preview": "PDF 預覽",
+        "enable_ocr": "OCR"
+      },
+      "malware": {
+        "scan_mode_label": "掃描模式",
+        "security_policy_label": "安全政策",
+        "engine_info": "掃描引擎：ClamAV"
+      }
     },
     "hero": {
       "title": "智慧檔案整理助理",
@@ -102,7 +153,7 @@
       "scan": "掃描資料夾，找出久未使用、過大、疑似重複或暫存類型檔案。",
       "preview": "先預覽候選檔案與原因，再決定是否採取動作。",
       "quarantine": "先移到隔離區，不直接刪除，後續仍可還原。",
-      "restore": "右側面板可用來還原隔離檔案或匯出報表。"
+      "restore": "使用整理暫存區與還原卡片來還原隔離檔案或匯出報表。"
     },
     "dialogs": {
       "help_button": "使用說明",
@@ -124,21 +175,24 @@
     "safety_notice": "此工具不會直接刪除檔案。所有整理動作都會先移到隔離區，之後仍可還原。",
     "process_title": "操作流程",
     "process": {
-      "step1_title": "① 掃描資料夾",
+      "step1_title": "1. 掃描資料夾",
       "step1_desc": "輸入資料夾路徑後開始掃描，先看有哪些可能需要整理的檔案。",
-      "step2_title": "② 預覽候選檔案",
+      "step2_title": "2. 預覽候選檔案",
       "step2_desc": "先確認建議與原因，再決定哪些檔案要進一步處理。",
-      "step3_title": "③ 移至隔離區",
+      "step3_title": "3. 移至隔離區",
       "step3_desc": "整理動作會先移到隔離區，不會直接刪除原始檔案。",
-      "step4_title": "④ 可還原或匯出報表",
+      "step4_title": "4. 還原或匯出報表",
       "step4_desc": "之後可以還原檔案，也可以匯出 Markdown 或 CSV 報表。"
     },
     "scan": {
       "title": "掃描資料夾",
-      "description": "這裡只會讀取檔案中繼資料，協助你先找出可能需要整理的檔案。",
+      "description": "這個頁面只會分析與預覽，不會自動移動或刪除任何檔案。",
       "input_label": "要掃描的資料夾",
       "input_placeholder": "例如：C:\\Users\\you\\Downloads",
       "button": "開始掃描",
+      "primary_action_secure": "開始安全掃描與整理分析",
+      "primary_action_organization": "開始整理分析",
+      "primary_action_malware_only": "開始病毒與木馬掃描",
       "progress": "掃描中，已檢查 {count} 個檔案",
       "complete": "掃描完成。",
       "permission_denied": "掃描此資料夾時權限不足。",
@@ -147,7 +201,26 @@
       "status_empty": "請先輸入資料夾路徑，開始一頁式掃描。",
       "status_input_ready": "準備掃描：{path}",
       "status_ready": "目前掃描：{path} | 已檢查 {scanned} 個檔案",
-      "empty": "還沒有掃描結果：請先輸入資料夾路徑並按「開始掃描」。"
+      "empty": "還沒有掃描結果：請先輸入資料夾路徑並按下按鈕。"
+    },
+    "malware_action": {
+      "title": "病毒與木馬掃描",
+      "description": "只執行病毒與木馬檢查，不會進行整理分析。",
+      "summary": "模式 {scan_mode} | 政策 {policy} | 狀態 {database_status} | 資料庫年齡 {database_age}",
+      "run_button": "開始病毒與木馬掃描",
+      "progress": "病毒與木馬掃描中，已處理 {count} 個檔案",
+      "complete": "病毒與木馬掃描完成。",
+      "failed": "病毒與木馬掃描失敗。"
+    },
+    "organization_action": {
+      "title": "整理分析",
+      "description": "只執行整理分析，不會自動啟動病毒與木馬檢查。",
+      "summary": "閒置 {days} 天 | 大檔案 {large_mb} MB | 子資料夾 {subfolders} | 上限 {max_files} | 重複偵測 {duplicate_detection}",
+      "run_button": "開始整理分析",
+      "progress": "整理分析中，已檢查 {count} 個檔案",
+      "complete": "整理分析完成。",
+      "failed": "整理分析失敗。",
+      "empty": "尚未有整理分析結果。請先執行整理分析。"
     },
     "metrics": {
       "scanned_files": "已掃描檔案",
@@ -165,6 +238,48 @@
       "quarantined_this_session": "本次已移入隔離區：{count}",
       "restored_this_session": "本次已還原：{count}",
       "inline": "已掃描 {scanned} | 候選 {candidates} | 可複查空間 {size} | 已隔離 {quarantined} | 已還原 {restored}"
+    },
+    "malware_result": {
+      "dialog_title": "病毒與木馬掃描結果",
+      "summary_title": "最近一次病毒與木馬掃描",
+      "summary_inline": "乾淨 {clean} | 可疑 {suspicious} | 感染 {infected} | 不完整 {incomplete}",
+      "reopen_button": "查看掃描結果",
+      "empty": "尚未有病毒與木馬掃描結果。",
+      "tabs": {
+        "summary": "摘要",
+        "blocked": "受阻項目",
+        "all_files": "全部檔案",
+        "technical": "技術資訊"
+      },
+      "metrics": {
+        "total_files": "納入檢查",
+        "scanned_files": "成功掃描",
+        "clean_files": "乾淨",
+        "infected_files": "感染",
+        "incomplete_files": "不完整",
+        "cache_hits": "快取命中"
+      },
+      "performance": "總大小 {total_bytes} | 耗時 {elapsed} | 吞吐量 {throughput}",
+      "no_blocked": "所有檔案目前都屬於乾淨狀態。",
+      "technical_summary": "後端 {backend} | 引擎版本 {engine_version} | 資料庫版本 {database_version} | 資料庫日期 {database_date}",
+      "full_paths": "完整路徑",
+      "export_button": "匯出掃描結果 CSV"
+    },
+    "analysis_result": {
+      "dialog_title": "整理分析結果",
+      "summary_title": "最近一次整理分析",
+      "summary_inline": "久未使用 {unused} | 大檔案 {large} | 重複檔案 {duplicate_files} | 可複查空間 {reclaimable}",
+      "reopen_button": "查看分析結果",
+      "empty": "尚未有整理分析結果。",
+      "tabs": {
+        "summary": "摘要",
+        "unused_files": "久未使用",
+        "large_files": "大檔案",
+        "duplicates": "重複檔案"
+      },
+      "metrics_inline": "總檔案 {total} | 久未使用 {unused} | 大檔案 {large} | 重複群組 {duplicate_groups} | 重複檔案 {duplicate_files} | 可複查空間 {reclaimable} | 耗時 {elapsed}",
+      "no_rows": "這個分類目前沒有資料。",
+      "go_to_review": "前往檢視分析結果"
     },
     "candidates": {
       "title": "候選檔案",
@@ -200,7 +315,7 @@
         "name": "檔名",
         "recommendation": "建議",
         "risk_level": "風險等級",
-        "malware_status": "木馬掃描",
+        "malware_status": "病毒與木馬結果",
         "malware_scanner": "掃描器",
         "malware_threat_name": "威脅名稱",
         "duplicate_type": "重複分類",
@@ -235,11 +350,11 @@
       "title": "建議分佈"
     },
     "quarantine": {
-      "title": "隔離區與還原狀態",
-      "description": "隔離區只是暫存整理結果，不代表檔案已刪除；確認後仍可隨時還原。",
-      "restore_label": "選擇要還原的隔離檔案",
+      "title": "整理暫存區與還原",
+      "description": "整理暫存區是安全暫放區，不代表刪除。你可以隨時還原檔案。",
+      "restore_label": "選擇要還原的暫存檔案",
       "restore_button": "還原選取檔案",
-      "empty": "目前這個資料夾沒有可還原的隔離檔案。"
+      "empty": "目前這個資料夾沒有可還原的暫存檔案。"
     }
   },
   "upload": {
@@ -285,7 +400,7 @@
     "decision_reason": "決策原因",
     "topic_preview_failed": "分類預覽失敗。",
     "generate_ai_summary": "產生 AI 摘要",
-    "enable_ai_first": "請先在側邊欄開啟 AI 摘要。",
+    "enable_ai_first": "請先在設定中開啟 AI 摘要。",
     "summary_label": "摘要",
     "summary_value": "摘要：{summary}",
     "ai_tags": "AI 標籤：{tags}",

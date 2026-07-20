@@ -21,7 +21,7 @@ from ui_home import render_home, render_sidebar
 from ui_records import render_records
 from ui_review import render_review
 from ui_search import render_search
-from ui_state import init_session_state
+from ui_state import SESSION_MAIN_TAB_OVERRIDE, init_session_state
 from ui_upload import render_upload
 
 _REGISTERED_STORAGE_CLOSE_IDS: set[int] = set()
@@ -37,7 +37,11 @@ def _optional_import(module_name: str) -> Any:
 
 
 def _configure_page() -> None:
-    st.set_page_config(page_title=t("app.page_title", lang=DEFAULT_LANGUAGE), layout="wide")
+    st.set_page_config(
+        page_title=t("app.page_title", lang=DEFAULT_LANGUAGE),
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     inject_browser_storage_sanitizer(enabled=True)
     setup_logging()
 
@@ -118,14 +122,18 @@ def _build_context(runtime_config: RuntimeConfig | None = None) -> UIContext:
     )
 
 
-def get_main_tab_labels() -> list[str]:
+def get_main_tab_specs() -> list[tuple[str, str]]:
     return [
-        t("app.tabs.folder_scan"),
-        t("app.tabs.upload_analysis"),
-        t("app.tabs.review_results"),
-        t("app.tabs.execute_organization"),
-        t("app.tabs.search_records"),
+        ("folder_scan", t("app.tabs.folder_scan")),
+        ("upload_analysis", t("app.tabs.upload_analysis")),
+        ("review_results", t("app.tabs.review_results")),
+        ("execute_organization", t("app.tabs.execute_organization")),
+        ("search_records", t("app.tabs.search_records")),
     ]
+
+
+def get_main_tab_labels() -> list[str]:
+    return [label for _tab_id, label in get_main_tab_specs()]
 
 
 def main() -> None:
@@ -135,8 +143,16 @@ def main() -> None:
     inject_global_css()
     init_session_state()
     render_sidebar(context)
+    tab_specs = get_main_tab_specs()
+    tab_labels = [label for _tab_id, label in tab_specs]
+    override_tab_id = str(st.session_state.pop(SESSION_MAIN_TAB_OVERRIDE, "") or "").strip()
+    default_tab_label = next((label for tab_id, label in tab_specs if tab_id == override_tab_id), tab_labels[0])
 
-    tab_folder_scan, tab_upload, tab_review, tab_execute, tab_search_records = st.tabs(get_main_tab_labels())
+    tab_folder_scan, tab_upload, tab_review, tab_execute, tab_search_records = st.tabs(
+        tab_labels,
+        default=default_tab_label,
+        key="main_tabs",
+    )
     with tab_folder_scan:
         render_home(context)
     with tab_upload:

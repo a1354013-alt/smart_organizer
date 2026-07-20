@@ -109,9 +109,23 @@ class FolderScanRecord:
     confidence: float = 0.0
     risk_level: str = RiskLevel.DO_NOT_TOUCH.value
     malware_status: str = "not_scanned"
+    malware_verdict: str = "not_scanned"
+    malware_scan_health: str = "incomplete"
     malware_scanner: str = ""
+    malware_backend: str = ""
+    malware_engine_version: str = ""
+    malware_database_version: str = ""
+    malware_database_date: str = ""
     malware_threat_name: str = ""
     malware_message: str = ""
+    malware_scanned_at: str = ""
+    malware_cache_hit: bool = False
+    malware_policy_name: str = ""
+    malware_policy_version: str = ""
+    malware_file_sha256: str = ""
+    malware_file_size: int = 0
+    malware_file_mtime_ns: int = 0
+    malware_file_inode: str = ""
     reason_codes: list[str] | None = None
     file_age_score: float = 0.0
     size_score: float = 0.0
@@ -146,6 +160,8 @@ class FolderScanResult:
     stale_days: int
     large_file_bytes: int
     enable_malware_scan: bool
+    malware_scan_policy: str
+    malware_scan_policy_version: str
     scanned_at: str
     elapsed_seconds: float
     records: list[FolderScanRecord]
@@ -161,6 +177,8 @@ class FolderScanResult:
             "stale_days": self.stale_days,
             "large_file_bytes": self.large_file_bytes,
             "enable_malware_scan": self.enable_malware_scan,
+            "malware_scan_policy": self.malware_scan_policy,
+            "malware_scan_policy_version": self.malware_scan_policy_version,
             "scanned_at": self.scanned_at,
             "elapsed_seconds": self.elapsed_seconds,
             "records": [record.to_dict() for record in self.records],
@@ -184,9 +202,23 @@ class FolderOperationRow:
     error_message: str | None
     operation_id: str | None
     malware_status: str = "not_scanned"
+    malware_verdict: str = "not_scanned"
+    malware_scan_health: str = "incomplete"
     malware_scanner: str = ""
+    malware_backend: str = ""
+    malware_engine_version: str = ""
+    malware_database_version: str = ""
+    malware_database_date: str = ""
     malware_threat_name: str = ""
     malware_message: str = ""
+    malware_scanned_at: str = ""
+    malware_cache_hit: bool = False
+    malware_policy_name: str = ""
+    malware_policy_version: str = ""
+    malware_file_sha256: str = ""
+    malware_file_size: int = 0
+    malware_file_mtime_ns: int = 0
+    malware_file_inode: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -235,9 +267,23 @@ class ManifestItem(TypedDict, total=False):
     duplicate_type: str
     duplicate_reason: str
     malware_status: str
+    malware_verdict: str
+    malware_scan_health: str
     malware_scanner: str
+    malware_backend: str
+    malware_engine_version: str
+    malware_database_version: str
+    malware_database_date: str
     malware_threat_name: str
     malware_message: str
+    malware_scanned_at: str
+    malware_cache_hit: bool
+    malware_policy_name: str
+    malware_policy_version: str
+    malware_file_sha256: str
+    malware_file_size: int
+    malware_file_mtime_ns: int
+    malware_file_inode: str
 
 
 def human_bytes(num_bytes: int | None) -> str:
@@ -372,9 +418,23 @@ def _normalize_manifest_items(items: object) -> list[ManifestItem]:
                 "duplicate_type": str(item.get("duplicate_type") or ""),
                 "duplicate_reason": str(item.get("duplicate_reason") or ""),
                 "malware_status": str(item.get("malware_status") or "not_scanned"),
+                "malware_verdict": str(item.get("malware_verdict") or item.get("malware_status") or "not_scanned"),
+                "malware_scan_health": str(item.get("malware_scan_health") or "incomplete"),
                 "malware_scanner": str(item.get("malware_scanner") or ""),
+                "malware_backend": str(item.get("malware_backend") or ""),
+                "malware_engine_version": str(item.get("malware_engine_version") or ""),
+                "malware_database_version": str(item.get("malware_database_version") or ""),
+                "malware_database_date": str(item.get("malware_database_date") or ""),
                 "malware_threat_name": str(item.get("malware_threat_name") or ""),
                 "malware_message": str(item.get("malware_message") or ""),
+                "malware_scanned_at": str(item.get("malware_scanned_at") or ""),
+                "malware_cache_hit": bool(item.get("malware_cache_hit")),
+                "malware_policy_name": str(item.get("malware_policy_name") or ""),
+                "malware_policy_version": str(item.get("malware_policy_version") or ""),
+                "malware_file_sha256": str(item.get("malware_file_sha256") or ""),
+                "malware_file_size": safe_int(item.get("malware_file_size")),
+                "malware_file_mtime_ns": safe_int(item.get("malware_file_mtime_ns")),
+                "malware_file_inode": str(item.get("malware_file_inode") or ""),
             }
         )
     return normalized

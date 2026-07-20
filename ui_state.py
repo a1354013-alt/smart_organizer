@@ -14,9 +14,19 @@ SESSION_FOLDER_REPORT_SNAPSHOT = "folder_report_snapshot"
 SESSION_FOLDER_LAST_OPERATION_RESULT = "folder_last_operation_result"
 SESSION_FOLDER_SCAN_ACTIONS = "folder_scan_actions"
 SESSION_FOLDER_SCAN_OPTIONS = "folder_scan_options"
+SESSION_FOLDER_SCAN_OPTIONS_DRAFT = "folder_scan_options_draft"
+SESSION_FOLDER_SETTINGS_DIALOG_OPEN = "folder_settings_dialog_open"
+SESSION_FOLDER_MALWARE_SCAN_RESULT = "folder_malware_scan_result"
+SESSION_FOLDER_MALWARE_DIALOG_OPEN = "folder_malware_dialog_open"
+SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID = "folder_malware_auto_open_result_id"
+SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID = "folder_malware_dismissed_result_id"
+SESSION_FOLDER_ANALYSIS_DIALOG_OPEN = "folder_analysis_dialog_open"
+SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID = "folder_analysis_auto_open_result_id"
+SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID = "folder_analysis_dismissed_result_id"
 SESSION_FOLDER_RESTORE_RESULT = "folder_restore_result"
 SESSION_FOLDER_SCAN_PATH = "folder_scan_path"
 SESSION_FOLDER_SELECTED_PATHS = "folder_selected_paths"
+SESSION_MAIN_TAB_OVERRIDE = "main_tab_override"
 SESSION_PROCESSING_OPTIONS = "processing_options"
 SESSION_AI_ENABLED = "ai_enabled"
 SESSION_DEBUG_MODE = "debug_mode"
@@ -41,13 +51,27 @@ SESSION_DEFAULTS: dict[str, object] = {
         "recursive": True,
         "max_files": 5000,
         "large_file_bytes": 250 * 1024 * 1024,
+        "duplicate_detection": False,
         "enable_malware_scan": False,
+        "malware_scan_mode": "standard",
+        "malware_scan_policy": "standard",
         "malware_scan_timeout_seconds": 30,
         "malware_database_max_age_days": 7,
+        "malware_only_operation": False,
     },
+    SESSION_FOLDER_SCAN_OPTIONS_DRAFT: {},
+    SESSION_FOLDER_SETTINGS_DIALOG_OPEN: False,
+    SESSION_FOLDER_MALWARE_SCAN_RESULT: None,
+    SESSION_FOLDER_MALWARE_DIALOG_OPEN: False,
+    SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID: None,
+    SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID: None,
+    SESSION_FOLDER_ANALYSIS_DIALOG_OPEN: False,
+    SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID: None,
+    SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID: None,
     SESSION_FOLDER_RESTORE_RESULT: None,
     SESSION_FOLDER_SCAN_PATH: "",
     SESSION_FOLDER_SELECTED_PATHS: [],
+    SESSION_MAIN_TAB_OVERRIDE: None,
     SESSION_PROCESSING_OPTIONS: {
         "enable_pdf_preview": False,
         "enable_ocr": False,

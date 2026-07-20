@@ -19,8 +19,10 @@ class _Column:
 def test_render_home_header_shows_dialog_buttons(monkeypatch):
     button_labels: list[str] = []
     fake_st = SimpleNamespace(
+        session_state={},
         markdown=lambda *args, **kwargs: None,
         columns=lambda spec, **kwargs: [_Column() for _ in range(len(spec))],
+        selectbox=lambda _label, options, index=0, **kwargs: options[index],
         button=lambda label, **kwargs: button_labels.append(label) or False,
     )
 
@@ -29,6 +31,7 @@ def test_render_home_header_shows_dialog_buttons(monkeypatch):
     _render_home_header()
 
     assert button_labels == [
+        t("home.settings.open_button"),
         t("home.dialogs.help_button"),
         t("home.dialogs.safety_button"),
         t("home.dialogs.workflow_button"),
@@ -43,6 +46,7 @@ def test_render_home_does_not_render_process_steps_until_dialog_opens(monkeypatc
         columns=lambda spec, **kwargs: [_Column() for _ in range(spec if isinstance(spec, int) else len(spec))],
         button=lambda *args, **kwargs: False,
         container=lambda **kwargs: nullcontext(),
+        selectbox=lambda _label, options, index=0, **kwargs: options[index],
         text_input=lambda *args, **kwargs: "",
         caption=lambda *args, **kwargs: None,
         info=lambda *args, **kwargs: None,

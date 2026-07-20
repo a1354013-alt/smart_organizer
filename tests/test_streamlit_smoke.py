@@ -62,7 +62,8 @@ class _FakeStreamlit:
     def set_page_config(self, **kwargs) -> None:  # noqa: ANN003
         self.calls.append(("set_page_config", kwargs))
 
-    def tabs(self, labels: list[str]):
+    def tabs(self, labels: list[str], **kwargs):
+        del kwargs
         self.calls.append(("tabs", tuple(labels)))
         return tuple(nullcontext() for _ in labels)
 
@@ -72,7 +73,7 @@ class _FakeStreamlit:
 
     def button(self, label: str, **kwargs) -> bool:  # noqa: ANN003
         self.calls.append(("button", label))
-        return label == t("sidebar.check_dependencies")
+        return False
 
     def checkbox(self, label: str, value: bool = False, **kwargs) -> bool:  # noqa: ANN003
         self.calls.append(("checkbox", label))
@@ -123,7 +124,14 @@ def test_page_config_smoke(monkeypatch):
 
     app_main._configure_page()
 
-    assert ("set_page_config", {"page_title": t("app.page_title", lang=DEFAULT_LANGUAGE), "layout": "wide"}) in fake_st.calls
+    assert (
+        "set_page_config",
+        {
+            "page_title": t("app.page_title", lang=DEFAULT_LANGUAGE),
+            "layout": "wide",
+            "initial_sidebar_state": "collapsed",
+        },
+    ) in fake_st.calls
 
 
 def test_session_state_defaults_are_initialized_without_existing_keys(monkeypatch):
@@ -171,36 +179,35 @@ def test_app_main_renders_tabs_with_mocked_sections(monkeypatch, tmp_path: Path)
     assert rendered == ["css", "state", "sidebar", "home", "upload", "review", "execute", "search", "records"]
 
 
-def test_sidebar_dependency_fallback_smoke(monkeypatch, tmp_path: Path):
+def test_sidebar_initializes_settings_state_without_rendering_panel(monkeypatch, tmp_path: Path):
     fake_st = _FakeStreamlit()
     monkeypatch.setattr(ui_home, "st", fake_st)
-    monkeypatch.setattr(ui_home, "render_dependency_status", lambda status: fake_st.calls.append(("deps", status)))
     context = cast(
         UIContext,
         SimpleNamespace(
-        processor=SimpleNamespace(
-            pdf_ocr_max_pages=3,
-            pdf_preview_max_pages=1,
-            get_dependency_status=lambda: {
-                "python": {"pdf2image": False, "pytesseract": False},
-                "system": {"ffmpeg": False},
-                "config": {"poppler_path": False},
-            },
-        ),
-        project_root=tmp_path,
-        upload_dir=tmp_path / "uploads",
-        repo_root=tmp_path / "repo",
-        db_path=tmp_path / "app.db",
-        max_upload_bytes=1024,
+            processor=SimpleNamespace(
+                pdf_ocr_max_pages=3,
+                pdf_preview_max_pages=1,
+                get_dependency_status=lambda: {
+                    "python": {"pdf2image": False, "pytesseract": False},
+                    "system": {"ffmpeg": False},
+                    "config": {"poppler_path": False},
+                },
+            ),
+            project_root=tmp_path,
+            upload_dir=tmp_path / "uploads",
+            repo_root=tmp_path / "repo",
+            db_path=tmp_path / "app.db",
+            max_upload_bytes=1024,
         ),
     )
 
     ui_home.render_sidebar(context)
 
-    assert ("success", t("sidebar.dependency_check_success")) in fake_st.calls
-    assert any(
-        call[0] == "deps"
-        and isinstance(call[1], dict)
-        and call[1]["system"]["ffmpeg"] is False
-        for call in fake_st.calls
-    )
+    assert fake_st.calls == []
+    assert "folder_scan_options" in fake_st.session_state
+    assert "folder_scan_options_draft" in fake_st.session_state
+    assert fake_st.session_state["folder_settings_dialog_open"] is False
+    assert fake_st.session_state["folder_malware_dialog_open"] is False
+    assert fake_st.session_state["folder_analysis_dialog_open"] is False
+    assert fake_st.session_state["folder_malware_scan_result"] is None
