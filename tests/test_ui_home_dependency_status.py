@@ -9,19 +9,22 @@ from folder_models import Recommendation
 from i18n import t
 from ui_home import (
     DEPENDENCY_STATUS_SESSION_KEY,
-    _current_settings_draft,
+    _candidate_row,
     _current_primary_action_label,
+    _current_settings_draft,
     _default_processing_options,
     _default_scan_options,
     _discard_settings_draft,
+    _duplicate_type_label,
     _malware_primary_action_label,
     _maybe_auto_open_result_dialog,
     _open_settings_dialog,
+    _render_candidate_editor,
+    _render_home_dialogs,
     _reset_settings_draft_to_defaults,
     _save_settings_draft,
-    _candidate_row,
-    _duplicate_type_label,
-    _render_candidate_editor,
+    _store_analysis_result,
+    _store_malware_scan_result,
     cache_dependency_status,
     get_cached_dependency_status,
     limit_candidate_rows,
@@ -29,29 +32,27 @@ from ui_home import (
     refresh_dependency_status,
     render_home,
     summarize_recommendations,
-    _store_analysis_result,
-    _store_malware_scan_result,
 )
+from ui_labels import recommendation_display_label, topic_display_label
 from ui_state import (
     SESSION_AI_ENABLED,
     SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID,
     SESSION_FOLDER_ANALYSIS_DIALOG_OPEN,
     SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID,
+    SESSION_FOLDER_LAST_OPERATION_RESULT,
     SESSION_FOLDER_MALWARE_AUTO_OPEN_RESULT_ID,
     SESSION_FOLDER_MALWARE_DIALOG_OPEN,
     SESSION_FOLDER_MALWARE_DISMISSED_RESULT_ID,
     SESSION_FOLDER_MALWARE_SCAN_RESULT,
-    SESSION_FOLDER_SCAN_OPTIONS,
-    SESSION_FOLDER_SCAN_OPTIONS_DRAFT,
-    SESSION_FOLDER_SETTINGS_DIALOG_OPEN,
-    SESSION_FOLDER_LAST_OPERATION_RESULT,
     SESSION_FOLDER_REPORT_SNAPSHOT,
     SESSION_FOLDER_RESTORE_RESULT,
     SESSION_FOLDER_SCAN_CURRENT,
+    SESSION_FOLDER_SCAN_OPTIONS,
+    SESSION_FOLDER_SCAN_OPTIONS_DRAFT,
     SESSION_FOLDER_SELECTED_PATHS,
+    SESSION_FOLDER_SETTINGS_DIALOG_OPEN,
     SESSION_PROCESSING_OPTIONS,
 )
-from ui_labels import recommendation_display_label, topic_display_label
 
 
 class _Column:
@@ -602,3 +603,27 @@ def test_store_result_helpers_prepare_dialog_and_persist_state(monkeypatch):
     assert session_state[SESSION_FOLDER_SELECTED_PATHS] == []
     assert session_state[SESSION_FOLDER_ANALYSIS_AUTO_OPEN_RESULT_ID] == "analysis-1"
     assert session_state[SESSION_FOLDER_ANALYSIS_DISMISSED_RESULT_ID] == ""
+
+
+def test_result_dialogs_use_large_width(monkeypatch, tmp_path):
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "ui_home.render_dialog",
+        lambda **kwargs: captured.append((kwargs["key"], kwargs.get("width", "small"))),
+    )
+
+    context = SimpleNamespace(
+        processor=SimpleNamespace(),
+        storage=SimpleNamespace(),
+        project_root=tmp_path,
+        upload_dir=tmp_path / "uploads",
+        repo_root=tmp_path,
+        db_path=tmp_path / "app.db",
+        max_upload_bytes=1024,
+    )
+
+    _render_home_dialogs(context)
+
+    widths = dict(captured)
+    assert widths[SESSION_FOLDER_MALWARE_DIALOG_OPEN] == "large"
+    assert widths[SESSION_FOLDER_ANALYSIS_DIALOG_OPEN] == "large"

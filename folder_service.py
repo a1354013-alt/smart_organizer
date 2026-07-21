@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import cast
 
-from folder_models import FolderActionResult, FolderOrganizerError, ScanPathError
+from folder_models import FolderActionResult, FolderOrganizerError, ScanPathError, safe_int
 from folder_organizer import (
     FolderOrganizer,
     list_quarantine_items,
@@ -20,6 +20,62 @@ from folder_organizer import (
 )
 from malware_scanner import MalwareScanner, ScanPolicy
 from path_utils import canonical_path_key
+
+_FAST_SCAN_SUFFIXES = {
+    ".7z",
+    ".apk",
+    ".bat",
+    ".cab",
+    ".cmd",
+    ".com",
+    ".dll",
+    ".doc",
+    ".docm",
+    ".docx",
+    ".exe",
+    ".hta",
+    ".iso",
+    ".jar",
+    ".js",
+    ".lnk",
+    ".msi",
+    ".pdf",
+    ".ppt",
+    ".pptm",
+    ".pptx",
+    ".ps1",
+    ".rar",
+    ".rtf",
+    ".scr",
+    ".sh",
+    ".vbs",
+    ".xls",
+    ".xlsb",
+    ".xlsm",
+    ".xlsx",
+    ".zip",
+}
+_STANDARD_SKIP_SUFFIXES = {
+    ".avi",
+    ".bmp",
+    ".flac",
+    ".gif",
+    ".heic",
+    ".jpeg",
+    ".jpg",
+    ".m4a",
+    ".mkv",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".wav",
+    ".webm",
+    ".webp",
+    ".wmv",
+}
 
 
 def build_folder_organizer(scan_root: Path | str, quarantine_root: Path | str) -> FolderOrganizer:
@@ -73,11 +129,15 @@ def _iter_folder_files(
     *,
     recursive: bool,
     max_files: int,
-) -> tuple[list[dict[str, object]], list[str], list[str], int]:
+) -> tuple[list[dict[str, object]], list[str], list[str], int, dict[str, int | bool]]:
     records: list[dict[str, object]] = []
     errors: list[str] = []
     notes: list[str] = []
     visited = 0
+    permission_failures = 0
+    skipped_symlinks = 0
+    enumeration_errors = 0
+    limit_reached = False
 
     def append_record(path_obj: Path, stat_result: os.stat_result) -> None:
         nonlocal visited
@@ -104,57 +164,162 @@ def _iter_folder_files(
                 dir_path = Path(dirpath) / name
                 try:
                     if dir_path.is_symlink():
+                        skipped_symlinks += 1
                         notes.append(f"Skipped symlink directory for safety: {dir_path}")
                         continue
                 except OSError:
+                    enumeration_errors += 1
                     notes.append(f"Skipped unreadable directory entry: {dir_path}")
                     continue
                 kept_dirnames.append(name)
             dirnames[:] = kept_dirnames
             for filename in filenames:
                 if len(records) >= int(max_files):
+                    limit_reached = True
                     break
                 path_obj = Path(dirpath) / filename
                 try:
                     stat_result = path_obj.lstat()
                     if path_obj.is_symlink():
+                        skipped_symlinks += 1
                         notes.append(f"Skipped symlink file for safety: {path_obj}")
                         continue
                     append_record(path_obj, stat_result)
                 except PermissionError:
+                    permission_failures += 1
                     errors.append(f"Permission denied: {path_obj}")
                 except FileNotFoundError:
                     continue
                 except OSError as exc:
+                    enumeration_errors += 1
                     errors.append(f"Failed to inspect {path_obj}: {exc}")
             if len(records) >= int(max_files):
+                limit_reached = True
                 break
     else:
         try:
             for entry in os.scandir(str(root)):
                 if len(records) >= int(max_files):
+                    limit_reached = True
                     break
                 try:
                     if entry.is_symlink():
+                        skipped_symlinks += 1
                         notes.append(f"Skipped symlink file for safety: {entry.path}")
                         continue
                 except OSError:
+                    enumeration_errors += 1
                     continue
                 if not entry.is_file(follow_symlinks=False):
                     continue
                 try:
                     append_record(Path(entry.path), entry.stat(follow_symlinks=False))
                 except PermissionError:
+                    permission_failures += 1
                     errors.append(f"Permission denied: {entry.path}")
                 except FileNotFoundError:
                     continue
                 except OSError as exc:
+                    enumeration_errors += 1
                     errors.append(f"Failed to inspect {entry.path}: {exc}")
         except PermissionError:
+            permission_failures += 1
             errors.append(f"Permission denied: {root}")
         except OSError as exc:
+            enumeration_errors += 1
             errors.append(f"Failed to scan {root}: {exc}")
-    return records, errors, notes, visited
+    return records, errors, notes, visited, {
+        "permission_failures": permission_failures,
+        "skipped_symlinks": skipped_symlinks,
+        "enumeration_errors": enumeration_errors,
+        "limit_reached": limit_reached,
+    }
+
+
+def _normalize_scan_mode(scan_mode: str) -> str:
+    normalized = str(scan_mode or "standard").strip().lower() or "standard"
+    if normalized not in {"fast", "standard", "full"}:
+        return "standard"
+    return normalized
+
+
+def _is_file_in_scan_scope(path_value: object, *, scan_mode: str) -> bool:
+    path = Path(str(path_value or ""))
+    suffix = path.suffix.lower()
+    normalized_mode = _normalize_scan_mode(scan_mode)
+    if normalized_mode == "full":
+        return True
+    if normalized_mode == "fast":
+        return suffix in _FAST_SCAN_SUFFIXES
+    return suffix not in _STANDARD_SKIP_SUFFIXES
+
+
+def _scan_mode_exclusion_message(scan_mode: str, relative_path: str) -> str:
+    normalized_mode = _normalize_scan_mode(scan_mode)
+    if normalized_mode == "fast":
+        return f"Excluded from fast coverage: {relative_path}"
+    return f"Excluded from standard coverage: {relative_path}"
+
+
+def _coverage_scope_description(scan_mode: str) -> str:
+    normalized_mode = _normalize_scan_mode(scan_mode)
+    if normalized_mode == "fast":
+        return "Partial coverage of high-risk file types."
+    if normalized_mode == "standard":
+        return "Standard coverage excludes low-risk media-style file types."
+    return "Full coverage of every eligible regular file."
+
+
+def _build_incomplete_record(
+    item: dict[str, object],
+    *,
+    scanned_at: str,
+    policy: ScanPolicy,
+    status: str = "not_scanned",
+    scan_health: str = "incomplete",
+    message: str,
+    backend: str = "",
+    scanner: str = "",
+    engine_version: str = "",
+    database_version: str = "",
+    database_date: str = "",
+) -> dict[str, object]:
+    return {
+        **item,
+        "malware_status": status,
+        "malware_verdict": "not_scanned",
+        "malware_scan_health": scan_health,
+        "malware_scanner": scanner,
+        "malware_backend": backend,
+        "malware_engine_version": engine_version,
+        "malware_database_version": database_version,
+        "malware_database_date": database_date,
+        "malware_threat_name": "",
+        "malware_message": message,
+        "malware_scanned_at": scanned_at,
+        "malware_cache_hit": False,
+        "malware_policy_name": policy.name,
+        "malware_policy_version": policy.policy_version,
+        "malware_file_sha256": "",
+        "malware_file_size": safe_int(item.get("size_bytes")),
+        "malware_file_mtime_ns": safe_int(item.get("mtime_ns")),
+        "malware_file_inode": str(item.get("file_inode") or ""),
+    }
+
+
+def _validate_malware_summary(summary: dict[str, object]) -> None:
+    total_records = safe_int(summary.get("result_records"))
+    reconciled = (
+        safe_int(summary.get("clean_files"))
+        + safe_int(summary.get("suspicious_files"))
+        + safe_int(summary.get("infected_files"))
+        + safe_int(summary.get("not_scanned_files"))
+    )
+    if reconciled != total_records:
+        raise FolderOrganizerError(
+            "Malware scan summary inconsistent: "
+            f"clean+suspicious+infected+not_scanned={reconciled}, records={total_records}."
+        )
 
 
 def scan_folder(
@@ -193,6 +358,7 @@ def scan_folder_malware(
     *,
     recursive: bool,
     max_files: int,
+    malware_scan_mode: str = "standard",
     malware_scan_timeout_seconds: int = 30,
     malware_database_max_age_days: int = 7,
     malware_scan_policy: str = "standard",
@@ -210,14 +376,16 @@ def scan_folder_malware(
         policy=policy,
     )
     status = scanner.get_status()
-    records, errors, notes, visited = _iter_folder_files(
+    scan_mode = _normalize_scan_mode(malware_scan_mode)
+    records, errors, notes, visited, enumeration_stats = _iter_folder_files(
         root,
         recursive=recursive,
         max_files=max_files,
     )
     if status.message:
         notes.append(f"ClamAV: {status.message}")
-    path_records = [Path(str(item["path"])) for item in records]
+    scannable_records = [item for item in records if _is_file_in_scan_scope(item.get("path"), scan_mode=scan_mode)]
+    path_records = [Path(str(item["path"])) for item in scannable_records]
     results = scanner.scan_paths(
         path_records,
         progress_callback=(
@@ -229,10 +397,30 @@ def scan_folder_malware(
     metrics = scanner.get_metrics()
     scanned_at = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
     enriched_records: list[dict[str, object]] = []
+    missing_result_files = 0
     for item in records:
+        if not _is_file_in_scan_scope(item.get("path"), scan_mode=scan_mode):
+            enriched_records.append(
+                _build_incomplete_record(
+                    item,
+                    scanned_at=scanned_at,
+                    policy=policy,
+                    message=_scan_mode_exclusion_message(scan_mode, str(item.get("relative_path") or item.get("path") or "")),
+                )
+            )
+            continue
         path_key = str(Path(str(item["path"])).expanduser().resolve(strict=False))
         result = results.get(path_key)
         if result is None:
+            missing_result_files += 1
+            enriched_records.append(
+                _build_incomplete_record(
+                    item,
+                    scanned_at=scanned_at,
+                    policy=policy,
+                    message="scanner returned no result",
+                )
+            )
             continue
         enriched_records.append(
             {
@@ -252,8 +440,8 @@ def scan_folder_malware(
                 "malware_policy_name": policy.name,
                 "malware_policy_version": policy.policy_version,
                 "malware_file_sha256": result.file_sha256 or "",
-                "malware_file_size": int(result.file_size or item["size_bytes"]),
-                "malware_file_mtime_ns": int(result.file_mtime_ns or item["mtime_ns"]),
+                "malware_file_size": safe_int(result.file_size or item["size_bytes"]),
+                "malware_file_mtime_ns": safe_int(result.file_mtime_ns or item["mtime_ns"]),
                 "malware_file_inode": result.file_inode or str(item["file_inode"]),
             }
         )
@@ -262,17 +450,63 @@ def scan_folder_malware(
     clean_count = sum(1 for item in enriched_records if item.get("malware_status") == "clean")
     suspicious_count = sum(1 for item in enriched_records if item.get("malware_status") == "suspicious")
     infected_count = sum(1 for item in enriched_records if item.get("malware_status") == "infected")
+    not_scanned_count = sum(1 for item in enriched_records if item.get("malware_status") == "not_scanned")
     incomplete_count = sum(
         1
         for item in enriched_records
-        if str(item.get("malware_scan_health") or "") != "ok" or str(item.get("malware_status") or "") not in {"clean", "suspicious", "infected"}
+        if str(item.get("malware_scan_health") or "") != "ok"
+    )
+    completed_count = len(enriched_records) - incomplete_count
+    cache_hits = sum(1 for item in enriched_records if bool(item.get("malware_cache_hit")))
+    scan_error_count = sum(
+        1
+        for item in enriched_records
+        if str(item.get("malware_scan_health") or "") in {"scanner_unavailable", "database_missing", "database_outdated", "timeout", "error"}
     )
     result_id = uuid.uuid4().hex
+    summary = {
+        "scan_mode": scan_mode,
+        "coverage_scope": _coverage_scope_description(scan_mode),
+        "coverage_is_partial": scan_mode != "full",
+        "total_files_considered": len(records),
+        "enumerated_files": len(records),
+        "result_records": len(enriched_records),
+        "files_successfully_scanned": sum(
+            1
+            for item in enriched_records
+            if str(item.get("malware_scan_health") or "") == "ok"
+        ),
+        "completed_files": completed_count,
+        "clean_files": clean_count,
+        "suspicious_files": suspicious_count,
+        "infected_files": infected_count,
+        "not_scanned_files": not_scanned_count,
+        "incomplete_files": incomplete_count,
+        "incomplete_or_failed_scans": incomplete_count,
+        "missing_result_files": missing_result_files,
+        "cache_hits": cache_hits,
+        "files_sent_to_scanner": int(metrics.files_sent_to_scanner),
+        "permission_failures": safe_int(enumeration_stats["permission_failures"]),
+        "skipped_symlinks": safe_int(enumeration_stats["skipped_symlinks"]),
+        "scan_errors": scan_error_count,
+        "limit_reached": bool(enumeration_stats["limit_reached"]),
+        "total_bytes": total_bytes,
+        "elapsed_seconds": elapsed_seconds,
+        "files_per_second": (len(enriched_records) / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
+        "bytes_per_second": (total_bytes / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
+        "backend": status.selected_backend,
+        "engine_version": status.engine_version or "",
+        "database_version": status.database_version or "",
+        "database_date": status.database_date or "",
+    }
+    _validate_malware_summary(summary)
     return {
         "result_id": result_id,
         "path": str(root),
         "recursive": bool(recursive),
         "max_files": int(max_files),
+        "scan_mode": scan_mode,
+        "coverage_scope": _coverage_scope_description(scan_mode),
         "visited_files": visited,
         "policy_name": policy.name,
         "policy_version": policy.policy_version,
@@ -290,26 +524,7 @@ def scan_folder_malware(
             "database_age_days": status.database_age_days,
             "message": status.message,
         },
-        "summary": {
-            "total_files_considered": len(enriched_records),
-            "files_successfully_scanned": sum(
-                1 for item in enriched_records if str(item.get("malware_scan_health") or "") == "ok"
-            ),
-            "clean_files": clean_count,
-            "suspicious_files": suspicious_count,
-            "infected_files": infected_count,
-            "incomplete_or_failed_scans": incomplete_count,
-            "cache_hits": int(metrics.cache_hits),
-            "files_sent_to_scanner": int(metrics.files_sent_to_scanner),
-            "total_bytes": total_bytes,
-            "elapsed_seconds": elapsed_seconds,
-            "files_per_second": (len(enriched_records) / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
-            "bytes_per_second": (total_bytes / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
-            "backend": status.selected_backend,
-            "engine_version": status.engine_version or "",
-            "database_version": status.database_version or "",
-            "database_date": status.database_date or "",
-        },
+        "summary": summary,
     }
 
 

@@ -4,8 +4,8 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 from i18n import t
-from ui_common import render_dialog
-from ui_home import _render_home_header, render_home
+from ui_common import render_dialog, reset_dialog_render_cycle
+from ui_home import _malware_result_conclusion, _render_home_header, render_home
 
 
 class _Column:
@@ -63,6 +63,7 @@ def test_render_home_does_not_render_process_steps_until_dialog_opens(monkeypatc
 
 
 def test_render_dialog_fallback_closes_without_streamlit_dialog(monkeypatch):
+    reset_dialog_render_cycle()
     session_state = {"dialog_demo": True}
     render_body_calls: list[str] = []
     button_keys: list[str] = []
@@ -84,3 +85,75 @@ def test_render_dialog_fallback_closes_without_streamlit_dialog(monkeypatch):
     assert render_body_calls == ["body", "rerun"]
     assert button_keys == ["dialog_demo_close_fallback"]
     assert session_state["dialog_demo"] is False
+
+
+def test_render_dialog_passes_width_and_updates_session_state_on_dismiss(monkeypatch):
+    reset_dialog_render_cycle()
+    session_state = {"dialog_demo": True, "dialog_cleanup": "keep"}
+    captured: dict[str, object] = {}
+
+    def fake_dialog(title, *, width="small", dismissible=True, on_dismiss=None, **kwargs):  # noqa: ANN001, ANN003
+        captured["title"] = title
+        captured["kwargs"] = {
+            **kwargs,
+            "width": width,
+            "dismissible": dismissible,
+            "on_dismiss": on_dismiss,
+        }
+
+        def decorator(func):
+            func()
+            return func
+
+        return decorator
+
+    fake_st = SimpleNamespace(
+        session_state=session_state,
+        dialog=fake_dialog,
+        container=lambda **kwargs: nullcontext(),
+        button=lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr("ui_common.st", fake_st)
+
+    render_dialog(
+        key="dialog_demo",
+        title="Dialog Demo",
+        width="large",
+        render_body=lambda: None,
+        on_dismiss=lambda: session_state.__setitem__("dismissed", True),
+        dismiss_state_keys=("dialog_cleanup",),
+    )
+
+    dismiss_callback = captured["kwargs"]["on_dismiss"]
+    dismiss_callback()
+
+    assert captured["kwargs"]["width"] == "large"
+    assert session_state["dialog_demo"] is False
+    assert session_state["dialog_cleanup"] is None
+    assert session_state["dismissed"] is True
+
+
+def test_malware_conclusion_avoids_all_clean_for_partial_or_truncated_coverage():
+    incomplete = _malware_result_conclusion(
+        {
+            "infected_files": 0,
+            "suspicious_files": 0,
+            "incomplete_files": 0,
+            "missing_result_files": 0,
+            "coverage_is_partial": True,
+            "limit_reached": False,
+        }
+    )
+    truncated = _malware_result_conclusion(
+        {
+            "infected_files": 0,
+            "suspicious_files": 0,
+            "incomplete_files": 0,
+            "missing_result_files": 0,
+            "coverage_is_partial": False,
+            "limit_reached": True,
+        }
+    )
+
+    assert "clean" not in incomplete.lower()
+    assert "clean" not in truncated.lower()

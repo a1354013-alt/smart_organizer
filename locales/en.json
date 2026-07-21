@@ -54,7 +54,7 @@
     "processing_options": "processing_options"
   },
   "malware": {
-    "enable_scan": "Enable virus and malware check",
+    "enable_scan": "Require a compatible clean malware result before moving or restoring files",
     "timeout_seconds": "Single-file scan timeout (seconds)",
     "database_max_age_days": "Virus database max age (days)",
     "check_status": "Check scanner status",
@@ -100,7 +100,7 @@
       "summary_description": "Organization analysis and security settings are applied together only after you save.",
       "summary_inline": "Mode {scan_mode} | Malware {malware_status} | Subfolders {subfolders} | Unused {days} days | Large {large_mb} MB | Max {max_files}",
       "security_summary_title": "Virus and malware",
-      "security_summary_inline": "Check {malware_required} | Mode {scan_mode} | Policy {policy}",
+      "security_summary_inline": "Protection {malware_required} | Mode {scan_mode} | Policy {policy}",
       "organization_summary_title": "Organization analysis",
       "organization_summary_inline": "Subfolders {subfolders} | Unused {days} days | Large {large_mb} MB | Max {max_files} | Duplicate detection {duplicate_detection}",
       "no_auto_move_delete": "Scanning only analyzes and previews. It does not automatically move or delete files.",
@@ -113,8 +113,8 @@
       "cancel_button": "Cancel",
       "subfolders_on": "On",
       "subfolders_off": "Off",
-      "malware_enabled": "Enabled",
-      "malware_disabled": "Disabled",
+      "malware_enabled": "Required before move or restore",
+      "malware_disabled": "Manual scan only",
       "scan_mode": {
         "fast": "Fast",
         "standard": "Standard",
@@ -247,22 +247,83 @@
       "empty": "No virus and malware scan results yet.",
       "tabs": {
         "summary": "Summary",
-        "blocked": "Blocked items",
+        "blocked": "Suspicious and infected",
+        "incomplete": "Incomplete scans",
         "all_files": "All files",
         "technical": "Technical details"
       },
       "metrics": {
-        "total_files": "Files considered",
-        "scanned_files": "Files scanned",
+        "enumerated_files": "Enumerated",
+        "completed_files": "Completed",
         "clean_files": "Clean",
+        "suspicious_files": "Suspicious",
         "infected_files": "Infected",
         "incomplete_files": "Incomplete",
-        "cache_hits": "Cache hits"
+        "cache_hits": "Cache hits",
+        "actually_scanned": "Actually scanned"
       },
+      "columns": {
+        "file_name": "File name",
+        "relative_path": "Relative path",
+        "verdict": "Verdict",
+        "health": "Scan health",
+        "threat": "Threat",
+        "message": "Details",
+        "cache_hit": "Cache hit",
+        "scanned_at": "Scanned at",
+        "cause": "Incomplete reason",
+        "count": "Count",
+        "metric": "Metric",
+        "value": "Value"
+      },
+      "health": {
+        "ok": "Completed",
+        "scanner_unavailable": "Scanner unavailable",
+        "database_missing": "Database missing",
+        "database_outdated": "Database outdated",
+        "timeout": "Timed out",
+        "backend_error": "Backend error",
+        "limit_exceeded": "Limit exceeded",
+        "other_incomplete": "Other incomplete result"
+      },
+      "incomplete_groups": {
+        "scanner_unavailable": "Scanner unavailable",
+        "database_missing": "Database missing",
+        "database_outdated": "Database outdated",
+        "timeout": "Timed out",
+        "limit_exceeded": "Limit exceeded",
+        "permission_denied": "Permission denied",
+        "backend_error": "Backend error",
+        "missing_backend_result": "Missing backend result",
+        "other_incomplete": "Other incomplete result"
+      },
+      "conclusion": {
+        "infected": "Infected files were found. Do not treat this folder as clean.",
+        "suspicious": "Suspicious files were found in {count} item(s). Review them carefully.",
+        "incomplete": "Scan coverage was incomplete. Do not treat the whole folder as clean yet.",
+        "clean": "All considered files completed and came back clean."
+      },
+      "completion": "{completed} / {total} completed ({percent}%)",
+      "coverage": "Mode {mode} | Coverage {coverage} | Recursive {recursive} | Max files {max_files} | Truncated {truncated}",
       "performance": "Total bytes {total_bytes} | Elapsed {elapsed} | Throughput {throughput}",
-      "no_blocked": "All files are currently marked clean.",
-      "technical_summary": "Backend {backend} | Engine version {engine_version} | Database version {database_version} | Database date {database_date}",
+      "no_blocked": "No suspicious or infected files were found.",
+      "no_incomplete": "No incomplete scan rows were recorded.",
       "full_paths": "Full paths",
+      "technical": {
+        "mode": "Selected scan mode",
+        "coverage": "Actual coverage",
+        "recursive": "Recursive",
+        "max_files": "Maximum file count",
+        "truncated": "Truncated by max-files limit",
+        "backend": "Backend",
+        "engine_version": "Engine version",
+        "database_version": "Database version",
+        "database_date": "Database date",
+        "elapsed": "Elapsed time",
+        "total_bytes": "Total bytes",
+        "throughput": "Throughput",
+        "scanned_at": "Scanned at"
+      },
       "export_button": "Export scan results CSV"
     },
     "analysis_result": {
@@ -273,12 +334,36 @@
       "empty": "No organization analysis results yet.",
       "tabs": {
         "summary": "Summary",
-        "unused_files": "Unused files",
-        "large_files": "Large files",
-        "duplicates": "Duplicates"
+        "candidates": "Organization candidates",
+        "duplicates": "Duplicates",
+        "technical": "Warnings and technical details"
       },
-      "metrics_inline": "Total files {total} | Unused {unused} | Large {large} | Duplicate groups {duplicate_groups} | Duplicate files {duplicate_files} | Reviewable space {reclaimable} | Elapsed {elapsed}",
+      "metrics": {
+        "total_files": "Total files analyzed",
+        "unique_candidates": "Unique organization candidates",
+        "unused_candidates": "Unused candidates",
+        "large_candidates": "Large-file candidates",
+        "duplicate_groups": "Duplicate groups",
+        "duplicate_files": "Duplicate files",
+        "unique_candidate_bytes": "Unique candidate bytes",
+        "elapsed": "Elapsed time"
+      },
+      "review_notice": "These organization candidates need human review. They are not a malware safety approval.",
+      "duplicate_enabled": "Duplicate detection was enabled for this analysis.",
+      "duplicate_disabled": "Duplicate detection was disabled for this analysis pass.",
+      "columns": {
+        "file_name": "File name",
+        "relative_path": "Relative path",
+        "size": "Size",
+        "modified_time": "Modified time",
+        "candidate_reasons": "Candidate reasons",
+        "recommendation": "Recommendation",
+        "risk_level": "Risk level",
+        "duplicate_info": "Duplicate type or group"
+      },
+      "max_files_warning": "Analysis stopped after the configured maximum of {count} files.",
       "no_rows": "No rows to show for this category.",
+      "no_warnings": "No analysis warnings were recorded.",
       "go_to_review": "Go to Review Results"
     },
     "candidates": {

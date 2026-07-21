@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -107,21 +108,27 @@ def inject_global_css() -> None:
           }
 
           html,
-          body,
-          .stApp,
-          [data-testid="stAppViewContainer"] {
-            height: 100vh;
-            max-height: 100vh;
-            overflow: hidden;
+          body {
+            min-height: 100vh;
+            min-height: 100dvh;
+            overflow-x: hidden;
+            overflow-y: visible;
           }
 
           body {
             color: var(--so-text);
           }
 
+          .stApp,
+          [data-testid="stAppViewContainer"],
           [data-testid="stAppViewContainer"] > .main {
-            height: 100vh;
-            overflow: hidden;
+            min-height: 100vh;
+            min-height: 100dvh;
+          }
+
+          [data-testid="stAppViewContainer"],
+          [data-testid="stAppViewContainer"] > .main {
+            overflow: visible;
           }
 
           .stApp {
@@ -129,11 +136,14 @@ def inject_global_css() -> None:
                         radial-gradient(780px 420px at 95% 0%, rgba(255, 75, 110, 0.10), transparent 52%),
                         var(--so-bg);
             color: var(--so-text);
+            overflow: visible;
           }
 
           .block-container {
-            height: calc(100vh - var(--so-header-height));
-            max-height: calc(100vh - var(--so-header-height));
+            min-height: calc(100vh - var(--so-header-height));
+            min-height: calc(100dvh - var(--so-header-height));
+            display: flex;
+            flex-direction: column;
             overflow-y: auto;
             overflow-x: hidden;
             padding-top: 1rem;
@@ -143,15 +153,34 @@ def inject_global_css() -> None:
           }
 
           section[data-testid="stSidebar"] {
-            height: 100vh;
+            min-height: 100vh;
+            min-height: 100dvh;
             overflow: hidden;
             background: rgba(255, 255, 255, 0.86);
             border-right: 1px solid rgba(15, 23, 42, 0.06);
           }
 
           section[data-testid="stSidebar"] > div:first-child {
-            height: 100vh;
+            min-height: 100vh;
+            min-height: 100dvh;
             overflow-y: auto;
+          }
+
+          .st-key-home_shell {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            min-height: 100%;
+          }
+
+          .st-key-home_viewport {
+            flex: 1 1 auto;
+            min-height: 0;
+          }
+
+          .st-key-home_footer {
+            margin-top: auto;
+            padding-top: 0.75rem;
           }
 
           section[data-testid="stSidebar"],
@@ -378,32 +407,39 @@ def inject_global_css() -> None:
             body,
             .stApp,
             [data-testid="stAppViewContainer"] {
-              height: auto;
-              max-height: none;
-              overflow: auto;
-            }
-
-            [data-testid="stAppViewContainer"] > .main {
-              height: auto;
+              min-height: 0;
               overflow: visible;
             }
 
+            [data-testid="stAppViewContainer"] > .main {
+              min-height: 0;
+            }
+
             .block-container {
-              height: auto;
-              max-height: none;
+              min-height: 0;
               overflow: visible;
               padding-left: 0.75rem;
               padding-right: 0.75rem;
             }
 
             section[data-testid="stSidebar"] {
-              height: auto;
+              min-height: 0;
               overflow: visible;
             }
 
             section[data-testid="stSidebar"] > div:first-child {
-              height: auto;
+              min-height: 0;
               overflow-y: visible;
+            }
+
+            .st-key-home_shell,
+            .st-key-home_viewport {
+              display: block;
+              min-height: 0;
+            }
+
+            .st-key-home_footer {
+              margin-top: 0;
             }
 
             .so-header,
@@ -439,28 +475,60 @@ def close_dialog_state(key: str) -> None:
     st.session_state[key] = False
 
 
-def render_dialog(*, key: str, title: str, render_body: Callable[[], None]) -> None:
+_dialog_rendered_this_run = False
+
+
+def reset_dialog_render_cycle() -> None:
+    global _dialog_rendered_this_run
+    _dialog_rendered_this_run = False
+
+
+def render_dialog(
+    *,
+    key: str,
+    title: str,
+    render_body: Callable[[], None],
+    width: str = "small",
+    dismissible: bool = True,
+    on_dismiss: Callable[[], None] | None = None,
+    dismiss_state_keys: tuple[str, ...] = (),
+) -> None:
+    global _dialog_rendered_this_run
     if not st.session_state.get(key):
         return
+    if _dialog_rendered_this_run:
+        return
+
+    def _handle_dismiss() -> None:
+        close_dialog_state(key)
+        for dismiss_key in dismiss_state_keys:
+            st.session_state[dismiss_key] = None
+        if on_dismiss is not None:
+            on_dismiss()
 
     if hasattr(st, "dialog"):
+        dialog_params: dict[str, Any] = {"width": width, "dismissible": dismissible}
+        if "on_dismiss" in inspect.signature(st.dialog).parameters:
+            dialog_params["on_dismiss"] = _handle_dismiss if dismissible else "ignore"
 
-        @st.dialog(title)
+        @st.dialog(title, **dialog_params)
         def _dialog() -> None:
             with st.container():
                 render_body()
             if st.button(t("common.close"), key=f"{key}_close"):
-                close_dialog_state(key)
+                _handle_dismiss()
                 st.rerun()
 
+        _dialog_rendered_this_run = True
         _dialog()
         return
 
     with st.expander(title, expanded=True):
         render_body()
         if st.button(t("common.close"), key=f"{key}_close_fallback"):
-            close_dialog_state(key)
+            _handle_dismiss()
             st.rerun()
+    _dialog_rendered_this_run = True
 
 
 def is_debug() -> bool:
