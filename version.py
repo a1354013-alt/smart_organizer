@@ -8,7 +8,7 @@ from __future__ import annotations
 
 __all__ = ["__version__", "APP_NAME", "APP_TITLE"]
 
-__version__ = "2.8.5rc10"
+__version__ = "2.8.5rc11"
 
 APP_NAME = "Smart Organizer"
 APP_TITLE = f"{APP_NAME} (v{__version__})"

@@ -21,6 +21,8 @@ from folder_report import export_folder_report_csv, export_folder_report_markdow
 from folder_service import (
     build_report_snapshot,
     get_quarantine_items_safe,
+    malware_result_conclusion_key,
+    malware_result_severity,
     merge_malware_scan_into_analysis,
     preview_selected_actions,
     quarantine_selected_files,
@@ -471,6 +473,8 @@ def _export_malware_result_csv(result: dict[str, object]) -> str:
     writer = csv.DictWriter(
         buffer,
         fieldnames=[
+            "overall_severity",
+            "overall_status",
             "scan_mode",
             "coverage_scope",
             "relative_path",
@@ -486,9 +490,12 @@ def _export_malware_result_csv(result: dict[str, object]) -> str:
         ],
     )
     writer.writeheader()
+    summary = cast(dict[str, object], result.get("summary") or {})
     for row in cast(list[dict[str, object]], result.get("records") or []):
         writer.writerow(
             {
+                "overall_severity": str(summary.get("overall_severity") or ""),
+                "overall_status": str(summary.get("overall_status") or ""),
                 "scan_mode": str(result.get("scan_mode") or ""),
                 "coverage_scope": str(result.get("coverage_scope") or ""),
                 "relative_path": _safe_relative_path(result.get("path"), row.get("path")),
@@ -541,18 +548,10 @@ def _malware_completion_banner(summary: dict[str, object]) -> str:
 
 
 def _malware_result_conclusion(summary: dict[str, object]) -> str:
-    if safe_int(summary.get("infected_files")) > 0:
-        return t("home.malware_result.conclusion.infected")
-    if safe_int(summary.get("suspicious_files")) > 0:
-        return t("home.malware_result.conclusion.suspicious", count=safe_int(summary.get("suspicious_files")))
-    if (
-        safe_int(summary.get("incomplete_files")) > 0
-        or safe_int(summary.get("missing_result_files")) > 0
-        or bool(summary.get("limit_reached"))
-        or bool(summary.get("coverage_is_partial"))
-    ):
-        return t("home.malware_result.conclusion.incomplete")
-    return t("home.malware_result.conclusion.clean")
+    key = malware_result_conclusion_key(summary)
+    if key.endswith(".suspicious"):
+        return t(key, count=safe_int(summary.get("suspicious_files")))
+    return t(key)
 
 
 def _analysis_reviewable_bytes(records: list[dict[str, object]]) -> int:
@@ -1480,9 +1479,10 @@ def _render_malware_result_dialog_body() -> None:
     summary = cast(dict[str, object], result.get("summary") or {})
     records = [item for item in cast(list[object], result.get("records") or []) if isinstance(item, dict)]
     conclusion = _malware_result_conclusion(summary)
-    if safe_int(summary.get("infected_files")) > 0:
+    severity = malware_result_severity(summary)
+    if severity == "danger":
         st.error(conclusion)
-    elif safe_int(summary.get("suspicious_files")) > 0 or safe_int(summary.get("incomplete_files")) > 0:
+    elif severity == "warning":
         st.warning(conclusion)
     else:
         st.success(conclusion)

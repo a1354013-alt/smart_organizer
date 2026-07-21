@@ -12,6 +12,12 @@ def test_version_is_single_source_and_consistent():
 
     readme = Path("README.md").read_text(encoding="utf-8")
     assert f"(v{__version__}" in readme, "README version must match version.py"
+    readme_zh = Path("README.zh-TW.md").read_text(encoding="utf-8")
+    assert f"(v{__version__}" in readme_zh, "Traditional Chinese README version must match version.py"
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert f'version = "{__version__}"' in pyproject, "pyproject version must match version.py"
+    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+    assert __version__ in changelog, "CHANGELOG must include the current version"
 
     # App UI should not hardcode old versions
     app_py = Path("app.py").read_text(encoding="utf-8")

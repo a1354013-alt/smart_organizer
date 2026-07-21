@@ -4,9 +4,9 @@ import datetime
 import os
 import time
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, TypedDict, cast
 
 from folder_models import FolderActionResult, FolderOrganizerError, ScanPathError, safe_int
 from folder_organizer import (
@@ -76,6 +76,96 @@ _STANDARD_SKIP_SUFFIXES = {
     ".webp",
     ".wmv",
 }
+
+MalwareResultSeverity = Literal["danger", "warning", "success"]
+
+
+class MalwareScanSummary(TypedDict, total=False):
+    scan_mode: str
+    coverage_scope: str
+    coverage_is_partial: bool
+    total_files_considered: int
+    enumerated_files: int
+    result_records: int
+    files_successfully_scanned: int
+    completed_files: int
+    clean_files: int
+    suspicious_files: int
+    infected_files: int
+    not_scanned_files: int
+    incomplete_files: int
+    incomplete_or_failed_scans: int
+    missing_result_files: int
+    cache_hits: int
+    files_sent_to_scanner: int
+    permission_failures: int
+    enumeration_errors: int
+    skipped_symlinks: int
+    scan_errors: int
+    scanner_unavailable_files: int
+    database_missing_files: int
+    database_outdated_files: int
+    timeout_files: int
+    backend_error_files: int
+    limit_exceeded_files: int
+    mode_excluded_files: int
+    limit_reached: bool
+    total_bytes: int
+    elapsed_seconds: float
+    files_per_second: float
+    bytes_per_second: float
+    backend: str
+    engine_version: str
+    database_version: str
+    database_date: str
+    availability: str
+    scanner_available: bool
+    database_fresh: bool
+    enumeration_incomplete: bool
+    totals_consistent: bool
+    overall_severity: MalwareResultSeverity
+    overall_status: str
+
+
+def malware_result_severity(summary: Mapping[str, object]) -> MalwareResultSeverity:
+    if safe_int(summary.get("infected_files")) > 0:
+        return "danger"
+
+    warning_conditions = (
+        safe_int(summary.get("suspicious_files")) > 0,
+        safe_int(summary.get("incomplete_files")) > 0,
+        safe_int(summary.get("not_scanned_files")) > 0,
+        safe_int(summary.get("missing_result_files")) > 0,
+        safe_int(summary.get("scanner_unavailable_files")) > 0,
+        safe_int(summary.get("database_missing_files")) > 0,
+        safe_int(summary.get("database_outdated_files")) > 0,
+        safe_int(summary.get("timeout_files")) > 0,
+        safe_int(summary.get("limit_exceeded_files")) > 0,
+        safe_int(summary.get("backend_error_files")) > 0,
+        safe_int(summary.get("permission_failures")) > 0,
+        safe_int(summary.get("enumeration_errors")) > 0,
+        bool(summary.get("limit_reached")),
+        bool(summary.get("coverage_is_partial")),
+        bool(summary.get("enumeration_incomplete")),
+        safe_int(summary.get("mode_excluded_files")) > 0,
+        not bool(summary.get("totals_consistent", True)),
+        not bool(summary.get("database_fresh", True)),
+        not bool(summary.get("scanner_available", True)),
+    )
+    if any(warning_conditions):
+        return "warning"
+    return "success"
+
+
+def malware_result_conclusion_key(summary: Mapping[str, object]) -> str:
+    severity = malware_result_severity(summary)
+    if severity == "danger":
+        return "home.malware_result.conclusion.infected"
+    if safe_int(summary.get("suspicious_files")) > 0:
+        return "home.malware_result.conclusion.suspicious"
+    if severity == "warning":
+        return "home.malware_result.conclusion.incomplete"
+    return "home.malware_result.conclusion.clean"
 
 
 def build_folder_organizer(scan_root: Path | str, quarantine_root: Path | str) -> FolderOrganizer:
@@ -307,7 +397,7 @@ def _build_incomplete_record(
     }
 
 
-def _validate_malware_summary(summary: dict[str, object]) -> None:
+def _validate_malware_summary(summary: Mapping[str, object]) -> bool:
     total_records = safe_int(summary.get("result_records"))
     reconciled = (
         safe_int(summary.get("clean_files"))
@@ -315,11 +405,7 @@ def _validate_malware_summary(summary: dict[str, object]) -> None:
         + safe_int(summary.get("infected_files"))
         + safe_int(summary.get("not_scanned_files"))
     )
-    if reconciled != total_records:
-        raise FolderOrganizerError(
-            "Malware scan summary inconsistent: "
-            f"clean+suspicious+infected+not_scanned={reconciled}, records={total_records}."
-        )
+    return reconciled == total_records
 
 
 def scan_folder(
@@ -451,6 +537,17 @@ def scan_folder_malware(
     suspicious_count = sum(1 for item in enriched_records if item.get("malware_status") == "suspicious")
     infected_count = sum(1 for item in enriched_records if item.get("malware_status") == "infected")
     not_scanned_count = sum(1 for item in enriched_records if item.get("malware_status") == "not_scanned")
+    scanner_unavailable_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "scanner_unavailable")
+    database_missing_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "database_missing")
+    database_outdated_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "database_outdated")
+    timeout_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "timeout")
+    backend_error_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "error")
+    limit_exceeded_count = sum(1 for item in enriched_records if item.get("malware_scan_health") == "limit_exceeded")
+    mode_excluded_count = sum(
+        1
+        for item in enriched_records
+        if "excluded from " in str(item.get("malware_message") or "").strip().lower()
+    )
     incomplete_count = sum(
         1
         for item in enriched_records
@@ -487,8 +584,16 @@ def scan_folder_malware(
         "cache_hits": cache_hits,
         "files_sent_to_scanner": int(metrics.files_sent_to_scanner),
         "permission_failures": safe_int(enumeration_stats["permission_failures"]),
+        "enumeration_errors": safe_int(enumeration_stats["enumeration_errors"]),
         "skipped_symlinks": safe_int(enumeration_stats["skipped_symlinks"]),
         "scan_errors": scan_error_count,
+        "scanner_unavailable_files": scanner_unavailable_count,
+        "database_missing_files": database_missing_count,
+        "database_outdated_files": database_outdated_count,
+        "timeout_files": timeout_count,
+        "backend_error_files": backend_error_count,
+        "limit_exceeded_files": limit_exceeded_count,
+        "mode_excluded_files": mode_excluded_count,
         "limit_reached": bool(enumeration_stats["limit_reached"]),
         "total_bytes": total_bytes,
         "elapsed_seconds": elapsed_seconds,
@@ -498,8 +603,14 @@ def scan_folder_malware(
         "engine_version": status.engine_version or "",
         "database_version": status.database_version or "",
         "database_date": status.database_date or "",
+        "availability": status.availability,
+        "scanner_available": status.selected_backend != "unavailable" and status.availability != "clamscan_missing",
+        "database_fresh": status.availability != "database_outdated",
+        "enumeration_incomplete": bool(enumeration_stats["permission_failures"] or enumeration_stats["enumeration_errors"]),
     }
-    _validate_malware_summary(summary)
+    summary["totals_consistent"] = _validate_malware_summary(summary)
+    summary["overall_severity"] = malware_result_severity(summary)
+    summary["overall_status"] = str(summary["overall_severity"])
     return {
         "result_id": result_id,
         "path": str(root),
