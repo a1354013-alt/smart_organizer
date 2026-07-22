@@ -32,14 +32,18 @@ def _get_long_path_name(path: str) -> str:
     return buffer.value or path
 
 
-def canonical_path_key(path: PathLikeStr) -> str:
+def canonical_path(path: PathLikeStr) -> str:
     raw = os.fspath(path)
     absolute = os.path.abspath(raw)
     real = os.path.realpath(absolute)
     normalized = os.path.normpath(real)
     if os.name == "nt":
         normalized = _get_long_path_name(normalized)
-    return os.path.normcase(normalized)
+    return normalized
+
+
+def canonical_path_key(path: PathLikeStr) -> str:
+    return os.path.normcase(canonical_path(path))
 
 
 def paths_refer_to_same_location(left: PathLikeStr, right: PathLikeStr) -> bool:

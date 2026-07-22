@@ -22,10 +22,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.dont_write_bytecode = True
 
+from path_utils import canonical_path  # noqa: E402
 from storage import StorageManager  # noqa: E402
 
 # Keep pytest temp writes outside the repo so delivery cleanliness tests stay meaningful.
-TEST_TMP = Path(tempfile.gettempdir()) / f"smart_organizer_tests_{uuid.uuid4().hex}"
+TEST_TMP = Path(canonical_path(Path(tempfile.gettempdir()) / f"smart_organizer_tests_{uuid.uuid4().hex}"))
 TEST_TMP.mkdir(parents=True, exist_ok=True)
 os.environ["TMP"] = str(TEST_TMP)
 os.environ["TEMP"] = str(TEST_TMP)
@@ -207,7 +208,7 @@ def _clear_project_service_cache():
 
 @pytest.fixture
 def tmp_path():
-    path = TEST_TMP / f"case_{uuid.uuid4().hex}"
+    path = Path(canonical_path(TEST_TMP / f"case_{uuid.uuid4().hex}"))
     path.mkdir(parents=True, exist_ok=True)
     try:
         yield path
