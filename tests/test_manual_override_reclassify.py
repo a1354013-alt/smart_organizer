@@ -17,6 +17,11 @@ def _as_int(value: object) -> int:
     return int(str(value or 0))
 
 
+def _assert_same_existing_path(actual: object, expected: Path) -> None:
+    assert actual is not None
+    assert Path(str(actual)).samefile(expected)
+
+
 def test_manual_override_persists_and_reclassify_resets(tmp_path: Path):
     db = tmp_path / "t.db"
     repo = tmp_path / "repo"
@@ -109,7 +114,7 @@ def test_reclassify_preserves_existing_preview_when_new_metadata_has_none(tmp_pa
 
     info = storage.get_file_by_id(file_id)
     assert info is not None
-    assert _as_text(info.get("preview_path")) == str(preview)
+    _assert_same_existing_path(info.get("preview_path"), preview)
 
 
 def test_reclassify_updates_preview_when_new_metadata_provides_one(tmp_path: Path, monkeypatch):
@@ -155,7 +160,7 @@ def test_reclassify_updates_preview_when_new_metadata_provides_one(tmp_path: Pat
 
     info = storage.get_file_by_id(file_id)
     assert info is not None
-    assert _as_text(info.get("preview_path")) == str(new_preview)
+    _assert_same_existing_path(info.get("preview_path"), new_preview)
 
 
 def test_reclassify_clears_missing_preview_when_no_valid_replacement_exists(tmp_path: Path, monkeypatch):
