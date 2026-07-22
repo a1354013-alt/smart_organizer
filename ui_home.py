@@ -112,6 +112,7 @@ _MALWARE_SCAN_LABEL_KEYS = {
     "infected": "malware.scan_infected",
     "suspicious": "malware.scan_suspicious",
     "not_scanned": "malware.scan_not_scanned",
+    "mode_excluded": "malware.scan_not_scanned",
     "scanner_unavailable": "malware.scan_scanner_unavailable",
     "database_missing": "malware.scan_database_missing",
     "database_outdated": "malware.scan_database_outdated",
@@ -129,6 +130,7 @@ _MALWARE_SCAN_HEALTH_LABEL_KEYS = {
     "error": "home.malware_result.health.backend_error",
     "limit_exceeded": "home.malware_result.health.limit_exceeded",
     "incomplete": "home.malware_result.health.other_incomplete",
+    "mode_excluded": "home.malware_result.health.other_incomplete",
 }
 _CLAMAV_STATUS_LABEL_KEYS = {
     "available": "malware.status_available",
@@ -186,6 +188,8 @@ def _malware_scan_health_label(value: object) -> str:
 def _malware_incomplete_group(health: object, message: object) -> str:
     normalized = str(health or "incomplete").strip() or "incomplete"
     message_text = str(message or "").strip().lower()
+    if normalized == "mode_excluded":
+        return "mode_excluded"
     if normalized in {
         "scanner_unavailable",
         "database_missing",
@@ -206,7 +210,27 @@ def _malware_incomplete_group(health: object, message: object) -> str:
 
 
 def _malware_incomplete_group_label(group: str) -> str:
+    if group == "mode_excluded":
+        group = "other_incomplete"
     return t(f"home.malware_result.incomplete_groups.{group}")
+
+
+def _analysis_settings_snapshot(scan_options: dict[str, object]) -> dict[str, object]:
+    return {
+        "recursive": bool(scan_options.get("recursive")),
+        "max_files": safe_int(scan_options.get("max_files", 5000)),
+        "stale_days": safe_int(scan_options.get("stale_days", 30)),
+        "large_file_bytes": safe_int(scan_options.get("large_file_bytes", 250 * 1024 * 1024)),
+        "duplicate_detection": bool(scan_options.get("duplicate_detection")),
+        "enable_malware_scan": bool(scan_options.get("enable_malware_scan")),
+        "malware_scan_mode": str(scan_options.get("malware_scan_mode") or "standard"),
+        "malware_scan_policy": str(scan_options.get("malware_scan_policy") or "standard"),
+        "malware_scan_policy_version": "strict-v1"
+        if str(scan_options.get("malware_scan_policy") or "standard").strip().lower() == "strict"
+        else "standard-v1",
+        "malware_scan_timeout_seconds": safe_int(scan_options.get("malware_scan_timeout_seconds", 30)),
+        "malware_database_max_age_days": safe_int(scan_options.get("malware_database_max_age_days", 7)),
+    }
 
 
 def _blocked_candidate_warning(item: dict[str, object], *, enable_malware_scan: bool = False) -> str | None:
@@ -1277,6 +1301,7 @@ def _store_analysis_result(scan_options: dict[str, object], result: dict[str, ob
         malware_scan_policy=str(scan_options.get("malware_scan_policy") or "standard"),
         malware_database_max_age_days=safe_int(scan_options.get("malware_database_max_age_days", 7)),
     )
+    merged["analysis_settings"] = _analysis_settings_snapshot(scan_options)
     st.session_state[SESSION_FOLDER_SCAN_CURRENT] = merged
     st.session_state[SESSION_FOLDER_REPORT_SNAPSHOT] = build_report_snapshot(merged)
     st.session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] = None
@@ -1362,6 +1387,7 @@ def _render_folder_action_panel(
                     malware_database_max_age_days=malware_database_max_age_days,
                     malware_scan_policy=malware_scan_policy,
                     progress_callback=on_malware_progress,
+                    storage=context.storage,
                 )
                 progress_bar.progress(1.0)
                 status_text.text(t("home.malware_action.complete"))
@@ -1614,7 +1640,7 @@ def _render_malware_result_dialog_body() -> None:
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.database_version"), t("home.malware_result.columns.value"): str(summary.get("database_version") or "-")},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.database_date"), t("home.malware_result.columns.value"): str(summary.get("database_date") or "-")},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.elapsed"), t("home.malware_result.columns.value"): f"{float(cast(float | int | str, summary.get('elapsed_seconds') or 0.0)):.2f}s"},
-                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.total_bytes"), t("home.malware_result.columns.value"): human_bytes(safe_int(summary.get("total_bytes")))},
+                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.total_bytes"), t("home.malware_result.columns.value"): human_bytes(safe_int(summary.get("scanned_bytes") or summary.get("total_bytes")))},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.throughput"), t("home.malware_result.columns.value"): _format_rate(float(cast(float | int | str, summary.get("bytes_per_second") or 0.0)), float(cast(float | int | str, summary.get("files_per_second") or 0.0)))},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.scanned_at"), t("home.malware_result.columns.value"): format_timestamp_for_display(result.get("scanned_at"))},
             ],
@@ -1643,9 +1669,16 @@ def _render_analysis_result_dialog_body() -> None:
     large_rows = [item for item in records if bool(item.get("is_large"))]
     duplicate_rows = [item for item in records if str(item.get("duplicate_type") or "").strip()]
     stats = cast(dict[str, object], result.get("stats") or {})
-    duplicate_detection_enabled = bool(_current_scan_options().get("duplicate_detection"))
+    analysis_settings = cast(dict[str, object], result.get("analysis_settings") or {})
+    duplicate_detection_enabled = bool(analysis_settings.get("duplicate_detection"))
     unique_candidate_bytes = _analysis_reviewable_bytes(records)
-    duplicate_groups = len({str(item.get("duplicate_reason") or item.get("duplicate_type") or "") for item in duplicate_rows if str(item.get("duplicate_reason") or item.get("duplicate_type") or "").strip()})
+    duplicate_groups = len(
+        {
+            str(item.get("duplicate_group_id") or "")
+            for item in duplicate_rows
+            if str(item.get("duplicate_group_id") or "").strip()
+        }
+    )
     tabs = st.tabs(
         [
             t("home.analysis_result.tabs.summary"),
@@ -1714,7 +1747,7 @@ def _render_analysis_result_dialog_body() -> None:
         warnings: list[str] = []
         warnings.extend(_coerce_message_list(result.get("errors")))
         warnings.extend(_coerce_message_list(result.get("notes")))
-        if safe_int(result.get("max_files")) and safe_int(stats.get("scanned_files")) >= safe_int(result.get("max_files")):
+        if bool(result.get("limit_reached")):
             warnings.append(t("home.analysis_result.max_files_warning", count=safe_int(result.get("max_files"))))
         if warnings:
             for message in warnings:

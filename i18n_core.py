@@ -29,7 +29,7 @@ def normalize_language(value: object) -> str:
 @cache
 def load_locale(language: str) -> dict[str, Any]:
     locale_path = _LOCALES_DIR / f"{normalize_language(language)}.json"
-    with locale_path.open("r", encoding="utf-8") as handle:
+    with locale_path.open("r", encoding="utf-8-sig") as handle:
         payload = json.load(handle)
     return payload if isinstance(payload, dict) else {}
 

@@ -597,6 +597,19 @@ def test_store_result_helpers_prepare_dialog_and_persist_state(monkeypatch):
     )
 
     assert session_state[SESSION_FOLDER_SCAN_CURRENT]["result_id"] == "analysis-1"
+    assert session_state[SESSION_FOLDER_SCAN_CURRENT]["analysis_settings"] == {
+        "recursive": False,
+        "max_files": 5000,
+        "stale_days": 30,
+        "large_file_bytes": 262144000,
+        "duplicate_detection": False,
+        "enable_malware_scan": True,
+        "malware_scan_mode": "standard",
+        "malware_scan_policy": "standard",
+        "malware_scan_policy_version": "standard-v1",
+        "malware_scan_timeout_seconds": 30,
+        "malware_database_max_age_days": 7,
+    }
     assert session_state[SESSION_FOLDER_REPORT_SNAPSHOT] == {"path": "C:/scan", "count": 1}
     assert session_state[SESSION_FOLDER_LAST_OPERATION_RESULT] is None
     assert session_state[SESSION_FOLDER_RESTORE_RESULT] is None

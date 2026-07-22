@@ -25,4 +25,5 @@ def test_inject_global_css_contains_responsive_full_height_layout_rules(monkeypa
     assert ".st-key-home_footer" in css
     assert 'section[data-testid="stSidebar"] > div:first-child' in css
     assert "@media (max-width: 900px)" in css
-    assert "overflow: hidden;" not in css.split(".block-container", 1)[0]
+    assert "overflow-y: hidden;" in css
+    assert "overscroll-behavior: contain;" in css

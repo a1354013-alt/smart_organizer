@@ -106,6 +106,7 @@ class FolderScanRecord:
     category: str = "general"
     duplicate_type: str | None = None
     duplicate_reason: str | None = None
+    duplicate_group_id: str | None = None
     confidence: float = 0.0
     risk_level: str = RiskLevel.DO_NOT_TOUCH.value
     malware_status: str = "not_scanned"
@@ -162,12 +163,14 @@ class FolderScanResult:
     enable_malware_scan: bool
     malware_scan_policy: str
     malware_scan_policy_version: str
+    limit_reached: bool
     scanned_at: str
     elapsed_seconds: float
     records: list[FolderScanRecord]
     errors: list[str]
     notes: list[str]
     stats: FolderScanStats
+    analysis_settings: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -179,12 +182,14 @@ class FolderScanResult:
             "enable_malware_scan": self.enable_malware_scan,
             "malware_scan_policy": self.malware_scan_policy,
             "malware_scan_policy_version": self.malware_scan_policy_version,
+            "limit_reached": self.limit_reached,
             "scanned_at": self.scanned_at,
             "elapsed_seconds": self.elapsed_seconds,
             "records": [record.to_dict() for record in self.records],
             "errors": list(self.errors),
             "notes": list(self.notes),
             "stats": self.stats.to_dict(),
+            "analysis_settings": dict(self.analysis_settings or {}),
         }
 
 
@@ -196,6 +201,7 @@ class FolderOperationRow:
     reason: str | None
     duplicate_type: str | None
     duplicate_reason: str | None
+    duplicate_group_id: str | None
     file_size: int
     last_modified: str | None
     processed_at: str

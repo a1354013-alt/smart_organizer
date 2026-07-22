@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc11)
+# Smart Organizer (v2.8.5rc12)
 
 Smart Organizer 是一個以本機優先為核心的安全檔案整理助手。它能協助你檢視上傳檔案或本機資料夾、說明哪些檔案值得注意、先做 dry-run 預覽，再把你選擇的檔案移入 quarantine，之後也能安全還原並匯出報告。
 
@@ -113,7 +113,7 @@ python -m pip install -r requirements.lock.txt
 streamlit run app.py
 ```
 
-Streamlit 首頁在桌機寬度下會使用精簡的 `100vh` dashboard 版面。使用說明、安全規則、操作流程、掃描警告、報表預覽與統計明細都移到上方對話視窗按鈕中；若螢幕較小，版面會自動退回一般可捲動模式。
+Streamlit 首頁在桌機寬度下會使用穩定單一捲動的 `100dvh` dashboard 版面。使用說明、安全規則、操作流程、掃描警告、報表預覽與統計明細都移到上方對話視窗按鈕中；若螢幕較小，版面會自動退回一般可捲動模式。
 
 ## 在 VS Code 用 F5 啟動
 

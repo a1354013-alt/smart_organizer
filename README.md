@@ -1,4 +1,4 @@
-# Smart Organizer (v2.8.5rc11)
+# Smart Organizer (v2.8.5rc12)
 
 Smart Organizer is a local-first safe file organization assistant. It helps users inspect uploads or a local folder, explain why files may need attention, preview a reversible action, move selected files into quarantine, restore them later, and export a report.
 
@@ -133,7 +133,7 @@ python -m pip install -r requirements.lock.txt
 streamlit run app.py
 ```
 
-The Streamlit home tab uses a compact `100vh` dashboard layout on desktop widths. Help, safety rules, workflow notes, warning details, report preview, and stats are available from dialog buttons instead of expanding the main page. On smaller screens the layout falls back to normal scrolling so the UI remains usable.
+The Streamlit home tab uses a stable single-scroll `100dvh` dashboard layout on desktop widths. Help, safety rules, workflow notes, warning details, report preview, and stats are available from dialog buttons instead of expanding the main page. On smaller screens the layout falls back to normal scrolling so the UI remains usable.
 
 ## Run In VS Code
 

@@ -340,6 +340,10 @@ def _classify_duplicates(
     large_file_bytes: int,
     deep_compare_large_files: bool,
 ) -> list[str]:
+    def assign_group_id(grouped_records: list[FolderScanRecord], duplicate_type: str) -> str:
+        key_material = "|".join(sorted(canonical_path_key(record.path) for record in grouped_records))
+        return hashlib.sha256(f"{duplicate_type}|{key_material}".encode("utf-8")).hexdigest()[:16]
+
     notes: list[str] = []
     by_name: dict[str, list[FolderScanRecord]] = {}
     by_size: dict[int, list[FolderScanRecord]] = {}
@@ -373,21 +377,25 @@ def _classify_duplicates(
     for grouped_records in by_hash.values():
         if len(grouped_records) < 2:
             continue
+        group_id = assign_group_id(grouped_records, SAME_CONTENT_DUPLICATE)
         for record in grouped_records:
             record.duplicate_type = SAME_CONTENT_DUPLICATE
             reason = "duplicate candidate: same content hash and size match another file"
             record.duplicate_reason = reason
+            record.duplicate_group_id = group_id
             if reason not in record.candidate_reasons:
                 record.candidate_reasons.append(reason)
 
     for grouped_records in by_name.values():
         if len(grouped_records) > 1:
+            group_id = assign_group_id(grouped_records, SAME_NAME_CANDIDATE)
             for record in grouped_records:
                 if record.duplicate_type == SAME_CONTENT_DUPLICATE:
                     continue
                 record.duplicate_type = SAME_NAME_CANDIDATE
                 reason = "duplicate candidate: same filename appears more than once"
                 record.duplicate_reason = reason
+                record.duplicate_group_id = group_id
                 if reason not in record.candidate_reasons:
                     record.candidate_reasons.append(reason)
     return list(dict.fromkeys(notes))
@@ -693,11 +701,14 @@ def _looks_similar_name(left: str, right: str) -> bool:
 def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
     notes: list[str] = []
     buckets: dict[tuple[str, str, int], list[FolderScanRecord]] = defaultdict(list)
+    similar_edges: dict[str, set[str]] = defaultdict(set)
+    record_lookup: dict[str, FolderScanRecord] = {}
     for record in records:
         if record.is_symlink:
             continue
         if record.duplicate_type == SAME_CONTENT_DUPLICATE:
             continue
+        record_lookup[canonical_path_key(record.path)] = record
         buckets[_similar_name_bucket_key(record)].append(record)
 
     comparisons = 0
@@ -721,6 +732,10 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
                 candidate_name = _normalized_name_token(candidate.name)
                 if _looks_similar_name(base_name, candidate_name):
                     reason = "duplicate candidate: filename is similar to another file"
+                    left_key = canonical_path_key(record.path)
+                    right_key = canonical_path_key(candidate.path)
+                    similar_edges[left_key].add(right_key)
+                    similar_edges[right_key].add(left_key)
                     if record.duplicate_type != SAME_NAME_CANDIDATE:
                         record.duplicate_type = SIMILAR_NAME_CANDIDATE
                         record.duplicate_reason = reason
@@ -735,6 +750,28 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
         notes.append(
             f"Similar-name detection skipped {skipped_buckets} oversized bucket(s) to keep large scans responsive."
         )
+    visited: set[str] = set()
+    for start_key, neighbors in similar_edges.items():
+        if start_key in visited or not neighbors:
+            continue
+        stack = [start_key]
+        component: list[str] = []
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.append(current)
+            stack.extend(sorted(similar_edges.get(current, set()) - visited))
+        if len(component) < 2:
+            continue
+        group_id = hashlib.sha256(
+            f"{SIMILAR_NAME_CANDIDATE}|{'|'.join(sorted(component))}".encode("utf-8")
+        ).hexdigest()[:16]
+        for key in component:
+            record = record_lookup.get(key)
+            if record is not None and record.duplicate_type == SIMILAR_NAME_CANDIDATE:
+                record.duplicate_group_id = group_id
     return notes
 
 
@@ -762,6 +799,7 @@ def scan_local_folder(
     stale_delta = datetime.timedelta(days=max(0, int(stale_days)))
     scanned = 0
     visited = 0
+    limit_reached = False
 
     def append_record(path_obj: Path, stat_result: os.stat_result) -> None:
         nonlocal scanned
@@ -822,6 +860,7 @@ def scan_local_folder(
             dirnames[:] = kept_dirnames
             for filename in filenames:
                 if scanned >= int(max_files):
+                    limit_reached = True
                     break
                 path_obj = Path(dirpath) / filename
                 visited += 1
@@ -863,6 +902,7 @@ def scan_local_folder(
         try:
             for entry in os.scandir(str(root)):
                 if scanned >= int(max_files):
+                    limit_reached = True
                     break
                 try:
                     if entry.is_symlink():
@@ -944,12 +984,14 @@ def scan_local_folder(
         enable_malware_scan=bool(enable_malware_scan),
         malware_scan_policy=str(malware_scan_policy or "standard"),
         malware_scan_policy_version=str(malware_scan_policy_version or "standard-v1"),
+        limit_reached=limit_reached,
         scanned_at=iso_now(),
         elapsed_seconds=round(time.perf_counter() - started, 3),
         records=records,
         errors=errors[:50],
         notes=notes[:20],
         stats=stats,
+        analysis_settings=None,
     ).to_dict()
 
 
@@ -988,6 +1030,7 @@ def run_folder_organizer(
                         reason="Not found in current scan result",
                         duplicate_type=None,
                         duplicate_reason=None,
+                        duplicate_group_id=None,
                         file_size=0,
                         last_modified=None,
                         processed_at=iso_now(),
@@ -1023,6 +1066,7 @@ def run_folder_organizer(
                         reason=reasons,
                         duplicate_type=str(record.get("duplicate_type") or "") or None,
                         duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(record.get("duplicate_group_id") or "") or None,
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
@@ -1050,6 +1094,7 @@ def run_folder_organizer(
                             reason=reasons,
                             duplicate_type=str(record.get("duplicate_type") or "") or None,
                             duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                            duplicate_group_id=str(record.get("duplicate_group_id") or "") or None,
                             file_size=file_size,
                             last_modified=str(last_modified) if last_modified is not None else None,
                             processed_at=iso_now(),
@@ -1067,6 +1112,7 @@ def run_folder_organizer(
                             reason=reasons,
                             duplicate_type=str(record.get("duplicate_type") or "") or None,
                             duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                            duplicate_group_id=str(record.get("duplicate_group_id") or "") or None,
                             file_size=file_size,
                             last_modified=str(last_modified) if last_modified is not None else None,
                             processed_at=iso_now(),
@@ -1110,6 +1156,7 @@ def run_folder_organizer(
                     "last_error": "",
                     "duplicate_type": str(record.get("duplicate_type") or ""),
                     "duplicate_reason": str(record.get("duplicate_reason") or ""),
+                    "duplicate_group_id": str(record.get("duplicate_group_id") or ""),
                     "malware_status": malware_payload["malware_status"],
                     "malware_scanner": malware_payload["malware_scanner"],
                     "malware_threat_name": malware_payload["malware_threat_name"],
@@ -1131,6 +1178,7 @@ def run_folder_organizer(
                         reason=reasons,
                         duplicate_type=str(record.get("duplicate_type") or "") or None,
                         duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(record.get("duplicate_group_id") or "") or None,
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
@@ -1158,6 +1206,7 @@ def run_folder_organizer(
                         reason=reasons,
                         duplicate_type=str(record.get("duplicate_type") or "") or None,
                         duplicate_reason=str(record.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(record.get("duplicate_group_id") or "") or None,
                         file_size=file_size,
                         last_modified=str(last_modified) if last_modified is not None else None,
                         processed_at=iso_now(),
@@ -1216,6 +1265,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         reason="Manifest entry not found",
                         duplicate_type=None,
                         duplicate_reason=None,
+                        duplicate_group_id=None,
                         file_size=0,
                         last_modified=None,
                         processed_at=iso_now(),
@@ -1246,6 +1296,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         reason=str(item.get("reason") or ""),
                         duplicate_type=str(item.get("duplicate_type") or "") or None,
                         duplicate_reason=str(item.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(item.get("duplicate_group_id") or "") or None,
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),
@@ -1281,6 +1332,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         reason=str(item.get("reason") or ""),
                         duplicate_type=str(item.get("duplicate_type") or "") or None,
                         duplicate_reason=str(item.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(item.get("duplicate_group_id") or "") or None,
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),
@@ -1298,6 +1350,7 @@ def restore_quarantined_items(folder_path: str, quarantine_paths: list[str]) -> 
                         reason=str(item.get("reason") or ""),
                         duplicate_type=str(item.get("duplicate_type") or "") or None,
                         duplicate_reason=str(item.get("duplicate_reason") or "") or None,
+                        duplicate_group_id=str(item.get("duplicate_group_id") or "") or None,
                         file_size=safe_int(item.get("file_size")),
                         last_modified=str(item.get("last_modified") or "") or None,
                         processed_at=iso_now(),
