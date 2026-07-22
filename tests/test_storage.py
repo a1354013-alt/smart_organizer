@@ -105,7 +105,9 @@ def test_update_metadata_allows_preview_under_explicit_safe_roots(tmp_path: Path
         },
     )
 
-    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] == str(upload_preview)
+    stored_preview = _require_record(storage.get_file_by_id(file_id))["preview_path"]
+    assert stored_preview is not None
+    assert Path(str(stored_preview)).samefile(upload_preview)
 
     repo_preview = tmp_path / "repo" / "previews" / "preview.png"
     repo_preview.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +124,9 @@ def test_update_metadata_allows_preview_under_explicit_safe_roots(tmp_path: Path
         },
     )
 
-    assert _require_record(storage.get_file_by_id(file_id))["preview_path"] == str(repo_preview)
+    stored_preview = _require_record(storage.get_file_by_id(file_id))["preview_path"]
+    assert stored_preview is not None
+    assert Path(str(stored_preview)).samefile(repo_preview)
 
 
 def test_update_metadata_rejects_preview_under_project_sibling_and_traversal(tmp_path: Path):
@@ -165,6 +169,7 @@ def test_update_metadata_rejects_preview_under_project_sibling_and_traversal(tmp
 
 def test_mem_storage_file_map_operations_are_thread_safe():
     storage = StorageManager(":memory:", ":memory:", ":memory:")
+    assert storage._mem_files is not None
     storage._mem_files["mem://uploads/source.bin"] = b"payload"
 
     def worker(index: int) -> None:
@@ -325,7 +330,7 @@ def test_initialization_failure_closes_keepalive_connection(tmp_path: Path, monk
             closed["count"] += 1
             self._real.close()
 
-    def tracking_connect(target: object, **kwargs: object) -> TrackingConnection | sqlite3.Connection:
+    def tracking_connect(target: str | os.PathLike[str], **kwargs: object) -> TrackingConnection | sqlite3.Connection:
         conn = real_connect(target, **kwargs)
         if str(target) == shared_db:
             return TrackingConnection(conn)
