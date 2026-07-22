@@ -5,7 +5,6 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EN_PATH = PROJECT_ROOT / "locales" / "en.json"
 ZH_PATH = PROJECT_ROOT / "locales" / "zh-TW.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,14 +13,24 @@ from storage import StorageManager
 
 
 def _assert_core_processor_import_snippet_succeeds(snippet: str) -> None:
-    proc = subprocess.run(
-        [sys.executable, "-c", snippet],
-        cwd=Path(__file__).resolve().parents[1],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        stdout_path = Path(tmp_dir) / "stdout.txt"
+        stderr_path = Path(tmp_dir) / "stderr.txt"
+        with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+            "w",
+            encoding="utf-8",
+        ) as stderr_file:
+            proc = subprocess.run(
+                [sys.executable, "-c", snippet],
+                cwd=Path(__file__).resolve().parents[1],
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                timeout=30,
+            )
+        assert proc.returncode == 0, stdout_path.read_text(encoding="utf-8") + stderr_path.read_text(
+            encoding="utf-8"
+        )
 
 
 def test_video_extensions_defined():

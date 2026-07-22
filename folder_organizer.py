@@ -12,7 +12,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from folder_models import (
     ACTIVE_QUARANTINE_STATUSES,
@@ -74,6 +74,28 @@ SYMLINK_BLOCK_MESSAGE = (
 LARGE_FILE_DEEP_COMPARE_MESSAGE = (
     "Large-file duplicate hashing was skipped. Enable deep compare to verify same-content duplicates."
 )
+
+
+if TYPE_CHECKING:
+    class OperationMalwarePayload(TypedDict):
+        malware_status: str
+        malware_verdict: str
+        malware_scan_health: str
+        malware_scanner: str
+        malware_backend: str
+        malware_engine_version: str
+        malware_database_version: str
+        malware_database_date: str
+        malware_threat_name: str
+        malware_message: str
+        malware_scanned_at: str
+        malware_cache_hit: bool
+        malware_policy_name: str
+        malware_policy_version: str
+        malware_file_sha256: str
+        malware_file_size: int
+        malware_file_mtime_ns: int
+        malware_file_inode: str
 
 
 def _resolve_path(path_value: Path | str) -> Path:
@@ -501,7 +523,7 @@ def _apply_malware_scan_results(
     return notes
 
 
-def _operation_malware_payload(record: dict[str, object]) -> dict[str, object]:
+def _operation_malware_payload(record: dict[str, object]) -> OperationMalwarePayload:
     return {
         "malware_status": str(record.get("malware_status") or "not_scanned"),
         "malware_verdict": str(record.get("malware_verdict") or record.get("malware_status") or "not_scanned"),

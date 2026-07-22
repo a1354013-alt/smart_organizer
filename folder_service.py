@@ -532,7 +532,7 @@ def scan_folder_malware(
             }
         )
     elapsed_seconds = round(time.perf_counter() - started, 3)
-    total_bytes = sum(int(item.get("size_bytes") or 0) for item in enriched_records)
+    total_bytes = sum(safe_int(item.get("size_bytes")) for item in enriched_records)
     clean_count = sum(1 for item in enriched_records if item.get("malware_status") == "clean")
     suspicious_count = sum(1 for item in enriched_records if item.get("malware_status") == "suspicious")
     infected_count = sum(1 for item in enriched_records if item.get("malware_status") == "infected")

@@ -1349,7 +1349,7 @@ def _render_folder_action_panel(
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
-                def on_progress(processed: int, total: int, _stage: str) -> None:
+                def on_malware_progress(processed: int, total: int, _stage: str) -> None:
                     progress_bar.progress(min(1.0, processed / max(1, total)))
                     status_text.text(t("home.malware_action.progress", count=processed))
 
@@ -1361,7 +1361,7 @@ def _render_folder_action_panel(
                     malware_scan_timeout_seconds=malware_scan_timeout_seconds,
                     malware_database_max_age_days=malware_database_max_age_days,
                     malware_scan_policy=malware_scan_policy,
-                    progress_callback=on_progress,
+                    progress_callback=on_malware_progress,
                 )
                 progress_bar.progress(1.0)
                 status_text.text(t("home.malware_action.complete"))
@@ -1399,7 +1399,7 @@ def _render_folder_action_panel(
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
-                def on_progress(scanned: int, cap: int) -> None:
+                def on_analysis_progress(scanned: int, cap: int) -> None:
                     progress_bar.progress(min(1.0, scanned / max(1, cap)))
                     status_text.text(t("home.organization_action.progress", count=scanned))
 
@@ -1414,7 +1414,7 @@ def _render_folder_action_panel(
                     malware_scan_timeout_seconds=malware_scan_timeout_seconds,
                     malware_database_max_age_days=malware_database_max_age_days,
                     malware_scan_policy=malware_scan_policy,
-                    progress_callback=on_progress,
+                    progress_callback=on_analysis_progress,
                 )
                 result["result_id"] = uuid.uuid4().hex
                 progress_bar.progress(1.0)
@@ -1458,7 +1458,7 @@ def _render_analysis_result_summary_card(result: dict[str, object]) -> None:
         f"""
         <div class="so-card so-card-secondary so-card-compact">
           <div class="card-title">{safe_display_text(t("home.analysis_result.summary_title"))}</div>
-          <div class="card-muted">{safe_display_text(t("home.analysis_result.summary_inline", unused=result.get("stats", {}).get("stale_candidates", 0) if isinstance(result.get("stats"), dict) else 0, large=result.get("stats", {}).get("large_candidates", 0) if isinstance(result.get("stats"), dict) else 0, duplicate_files=duplicate_files, reclaimable=human_bytes(sum(safe_int(item.get("size_bytes")) for item in candidates))))}</div>
+          <div class="card-muted">{safe_display_text(t("home.analysis_result.summary_inline", unused=cast(dict[str, object], result.get("stats")).get("stale_candidates", 0) if isinstance(result.get("stats"), dict) else 0, large=cast(dict[str, object], result.get("stats")).get("large_candidates", 0) if isinstance(result.get("stats"), dict) else 0, duplicate_files=duplicate_files, reclaimable=human_bytes(sum(safe_int(item.get("size_bytes")) for item in candidates))))}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1525,10 +1525,10 @@ def _render_malware_result_dialog_body() -> None:
             t(
                 "home.malware_result.performance",
                 total_bytes=human_bytes(safe_int(summary.get("total_bytes"))),
-                elapsed=f"{float(summary.get('elapsed_seconds') or 0.0):.2f}s",
+                elapsed=f"{float(cast(float | int | str, summary.get('elapsed_seconds') or 0.0)):.2f}s",
                 throughput=_format_rate(
-                    float(summary.get("bytes_per_second") or 0.0),
-                    float(summary.get("files_per_second") or 0.0),
+                    float(cast(float | int | str, summary.get("bytes_per_second") or 0.0)),
+                    float(cast(float | int | str, summary.get("files_per_second") or 0.0)),
                 ),
             )
         )
@@ -1613,9 +1613,9 @@ def _render_malware_result_dialog_body() -> None:
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.engine_version"), t("home.malware_result.columns.value"): str(summary.get("engine_version") or "-")},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.database_version"), t("home.malware_result.columns.value"): str(summary.get("database_version") or "-")},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.database_date"), t("home.malware_result.columns.value"): str(summary.get("database_date") or "-")},
-                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.elapsed"), t("home.malware_result.columns.value"): f"{float(summary.get('elapsed_seconds') or 0.0):.2f}s"},
+                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.elapsed"), t("home.malware_result.columns.value"): f"{float(cast(float | int | str, summary.get('elapsed_seconds') or 0.0)):.2f}s"},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.total_bytes"), t("home.malware_result.columns.value"): human_bytes(safe_int(summary.get("total_bytes")))},
-                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.throughput"), t("home.malware_result.columns.value"): _format_rate(float(summary.get("bytes_per_second") or 0.0), float(summary.get("files_per_second") or 0.0))},
+                {t("home.malware_result.columns.metric"): t("home.malware_result.technical.throughput"), t("home.malware_result.columns.value"): _format_rate(float(cast(float | int | str, summary.get("bytes_per_second") or 0.0)), float(cast(float | int | str, summary.get("files_per_second") or 0.0)))},
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.scanned_at"), t("home.malware_result.columns.value"): format_timestamp_for_display(result.get("scanned_at"))},
             ],
             use_container_width=True,
@@ -1663,7 +1663,7 @@ def _render_analysis_result_dialog_body() -> None:
             (t("home.analysis_result.metrics.duplicate_groups"), duplicate_groups),
             (t("home.analysis_result.metrics.duplicate_files"), len(duplicate_rows)),
             (t("home.analysis_result.metrics.unique_candidate_bytes"), human_bytes(unique_candidate_bytes)),
-            (t("home.analysis_result.metrics.elapsed"), f"{float(result.get('elapsed_seconds') or 0.0):.2f}s"),
+            (t("home.analysis_result.metrics.elapsed"), f"{float(cast(float | int | str, result.get('elapsed_seconds') or 0.0)):.2f}s"),
         ]
         metric_columns = st.columns(4, gap="small")
         for index, (label, value) in enumerate(metric_pairs):
