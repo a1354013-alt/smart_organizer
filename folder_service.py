@@ -20,7 +20,7 @@ from folder_organizer import (
     scan_local_folder,
     validate_scan_root_path,
 )
-from malware_scanner import MalwareScanResult, MalwareScanner, ScanPolicy
+from malware_scanner import MalwareScanner, MalwareScanResult, ScanHealth, ScanPolicy, Verdict
 from path_utils import canonical_path_key
 from storage import StorageManager
 
@@ -660,8 +660,8 @@ def scan_folder_malware(
                         mtime_ns=safe_int(payload.get("file_mtime_ns") or item["mtime_ns"]),
                         file_identity=str(payload.get("file_inode") or item["file_inode"]),
                         result=MalwareScanResult(
-                            verdict=cast(str, payload.get("verdict") or "not_scanned"),
-                            scan_health=cast(str, payload.get("scan_health") or "incomplete"),
+                            verdict=cast(Verdict, payload.get("verdict") or "not_scanned"),
+                            scan_health=cast(ScanHealth, payload.get("scan_health") or "incomplete"),
                             scanner=str(payload.get("scanner") or "ClamAV"),
                             file_path=path_key,
                             backend=str(payload.get("backend") or status.selected_backend),

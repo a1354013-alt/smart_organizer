@@ -342,7 +342,7 @@ def _classify_duplicates(
 ) -> list[str]:
     def assign_group_id(grouped_records: list[FolderScanRecord], duplicate_type: str) -> str:
         key_material = "|".join(sorted(canonical_path_key(record.path) for record in grouped_records))
-        return hashlib.sha256(f"{duplicate_type}|{key_material}".encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(f"{duplicate_type}|{key_material}".encode()).hexdigest()[:16]
 
     notes: list[str] = []
     by_name: dict[str, list[FolderScanRecord]] = {}
@@ -766,12 +766,12 @@ def _apply_similar_name_detection(records: list[FolderScanRecord]) -> list[str]:
         if len(component) < 2:
             continue
         group_id = hashlib.sha256(
-            f"{SIMILAR_NAME_CANDIDATE}|{'|'.join(sorted(component))}".encode("utf-8")
+            f"{SIMILAR_NAME_CANDIDATE}|{'|'.join(sorted(component))}".encode()
         ).hexdigest()[:16]
         for key in component:
-            record = record_lookup.get(key)
-            if record is not None and record.duplicate_type == SIMILAR_NAME_CANDIDATE:
-                record.duplicate_group_id = group_id
+            similar_record = record_lookup.get(key)
+            if similar_record is not None and similar_record.duplicate_type == SIMILAR_NAME_CANDIDATE:
+                similar_record.duplicate_group_id = group_id
     return notes
 
 
