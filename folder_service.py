@@ -524,47 +524,66 @@ def scan_folder_malware(
                 "file_size": safe_int(result.file_size or item["size_bytes"]),
                 "file_mtime_ns": safe_int(result.file_mtime_ns or item["mtime_ns"]),
                 "file_inode": result.file_inode or str(item["file_inode"]),
+                "file_streamed_bytes": safe_int(result.file_streamed_bytes),
             }
         return dict(result)
+
+    def cache_payload(cached_result: Mapping[str, object], *, path_key: str, item: Mapping[str, object]) -> dict[str, object]:
+        verdict = str(cached_result.get("verdict") or "not_scanned")
+        return {
+            "verdict": verdict,
+            "scan_health": str(cached_result.get("scan_health") or "incomplete"),
+            "scanner": "ClamAV",
+            "backend": str(cached_result.get("scanner_backend") or status.selected_backend),
+            "threat_name": str(cached_result.get("threat_name") or "").strip() or None,
+            "message": str(cached_result.get("message") or "").strip(),
+            "elapsed_seconds": float(cast(float | int | str, cached_result.get("elapsed_seconds") or 0.0)),
+            "engine_version": str(cached_result.get("engine_version") or "").strip() or None,
+            "database_version": str(cached_result.get("database_version") or "").strip() or None,
+            "database_date": str(cached_result.get("database_date") or "").strip() or None,
+            "cache_hit": True,
+            "file_sha256": str(cached_result.get("sha256") or file_hashes.get(path_key) or ""),
+            "file_size": safe_int(item.get("size_bytes")),
+            "file_mtime_ns": safe_int(item.get("mtime_ns")),
+            "file_inode": str(item.get("file_inode") or ""),
+            "status": verdict if verdict in {"clean", "suspicious", "infected"} else "not_scanned",
+        }
+
     for item in scannable_records:
         path_obj = Path(str(item["path"]))
         path_key = str(path_obj.expanduser().resolve(strict=False))
         cached_result = None
         if storage is not None and cacheable_backend:
-            file_hash = _hash_file_for_cache(path_obj)
-            if file_hash is not None:
-                file_hashes[path_key] = file_hash
-                cached_result = storage.get_malware_scan_cache(
-                    sha256=file_hash,
+            cached_result = storage.get_malware_scan_cache_for_unchanged_file(
+                canonical_path=path_key,
+                size_bytes=safe_int(item.get("size_bytes")),
+                mtime_ns=safe_int(item.get("mtime_ns")),
+                file_identity=str(item.get("file_inode") or "") or None,
+                scanner_backend=status.selected_backend,
+                engine_version=status.engine_version,
+                database_version=status.database_version,
+                database_date=status.database_date,
+                scan_policy_version=policy.policy_version,
+            )
+            if cached_result is not None:
+                metrics.files_skipped_unchanged += 1
+            else:
+                file_hash = _hash_file_for_cache(path_obj)
+                if file_hash is not None:
+                    file_hashes[path_key] = file_hash
+                    cached_result = storage.get_malware_scan_cache_by_content(
+                        sha256=file_hash,
                     scanner_backend=status.selected_backend,
+                        engine_version=status.engine_version,
                     database_version=status.database_version,
                     database_date=status.database_date,
                     scan_policy_version=policy.policy_version,
-                    size_bytes=safe_int(item.get("size_bytes")),
-                    mtime_ns=safe_int(item.get("mtime_ns")),
-                )
-                if cached_result is None:
-                    metrics.cache_misses += 1
+                    )
+                    if cached_result is None:
+                        metrics.cache_misses += 1
             if cached_result is not None:
                 metrics.cache_hits += 1
-                results[path_key] = {
-                    "verdict": str(cached_result.get("verdict") or "not_scanned"),
-                    "scan_health": str(cached_result.get("scan_health") or "incomplete"),
-                    "scanner": "ClamAV",
-                    "backend": str(cached_result.get("scanner_backend") or status.selected_backend),
-                    "threat_name": str(cached_result.get("threat_name") or "").strip() or None,
-                    "message": str(cached_result.get("message") or "").strip(),
-                    "elapsed_seconds": float(cast(float | int | str, cached_result.get("elapsed_seconds") or 0.0)),
-                    "engine_version": str(cached_result.get("engine_version") or "").strip() or None,
-                    "database_version": str(cached_result.get("database_version") or "").strip() or None,
-                    "database_date": str(cached_result.get("database_date") or "").strip() or None,
-                    "cache_hit": True,
-                    "file_sha256": file_hashes.get(path_key) or "",
-                    "file_size": safe_int(item.get("size_bytes")),
-                    "file_mtime_ns": safe_int(item.get("mtime_ns")),
-                    "file_inode": str(item.get("file_inode") or ""),
-                    "status": "clean" if str(cached_result.get("verdict") or "") == "clean" else str(cached_result.get("verdict") or "not_scanned"),
-                }
+                results[path_key] = cache_payload(cached_result, path_key=path_key, item=item)
                 processed += 1
                 if progress_callback is not None:
                     progress_callback(processed, total_scannable, "malware_scanning")
@@ -611,35 +630,62 @@ def scan_folder_malware(
             continue
         payload = result_payload(result, path_key=path_key, item=item)
         if storage is not None and cacheable_backend and not bool(payload.get("cache_hit")):
-            file_hash = file_hashes.get(path_key) or _hash_file_for_cache(Path(path_key))
+            file_hash = str(payload.get("file_sha256") or file_hashes.get(path_key) or "")
+            if not file_hash:
+                file_hash = _hash_file_for_cache(Path(path_key)) or ""
             if file_hash:
                 file_hashes[path_key] = file_hash
-                storage.upsert_malware_scan_cache(
-                    sha256=file_hash,
-                    canonical_path=path_key,
-                    size_bytes=safe_int(payload.get("file_size") or item["size_bytes"]),
-                    mtime_ns=safe_int(payload.get("file_mtime_ns") or item["mtime_ns"]),
-                    file_identity=str(payload.get("file_inode") or item["file_inode"]),
-                    result=MalwareScanResult(
-                        verdict=cast(str, payload.get("verdict") or "not_scanned"),
-                        scan_health=cast(str, payload.get("scan_health") or "incomplete"),
-                        scanner=str(payload.get("scanner") or "ClamAV"),
-                        file_path=path_key,
-                        backend=str(payload.get("backend") or status.selected_backend),
-                        threat_name=cast(str | None, payload.get("threat_name")),
-                        message=str(payload.get("message") or ""),
-                        elapsed_seconds=float(cast(float | int | str, payload.get("elapsed_seconds") or 0.0)),
-                        engine_version=cast(str | None, payload.get("engine_version")),
-                        database_version=cast(str | None, payload.get("database_version")),
-                        database_date=cast(str | None, payload.get("database_date")),
-                        cache_hit=False,
-                        file_sha256=file_hash,
-                        file_size=safe_int(payload.get("file_size") or item["size_bytes"]),
-                        file_mtime_ns=safe_int(payload.get("file_mtime_ns") or item["mtime_ns"]),
-                        file_inode=str(payload.get("file_inode") or item["file_inode"]),
-                    ),
-                    scan_policy_version=policy.policy_version,
-                )
+                current_hash = file_hash if status.selected_backend == "clamd" else (_hash_file_for_cache(Path(path_key)) or "")
+                content_stable = current_hash == file_hash
+                if status.selected_backend == "clamscan_batch" and str(payload.get("verdict")) == "clean":
+                    current_size = current_mtime_ns = None
+                    current_inode = None
+                    try:
+                        stat_result = Path(path_key).stat()
+                        current_size = int(stat_result.st_size)
+                        current_mtime_ns = int(getattr(stat_result, "st_mtime_ns", 0))
+                        current_inode = f"{getattr(stat_result, 'st_dev', 0)}:{getattr(stat_result, 'st_ino', 0)}"
+                    except OSError:
+                        content_stable = False
+                    content_stable = content_stable and (
+                        current_size == safe_int(payload.get("file_size") or item["size_bytes"])
+                        and current_mtime_ns == safe_int(payload.get("file_mtime_ns") or item["mtime_ns"])
+                        and (not current_inode or current_inode == str(payload.get("file_inode") or item["file_inode"]))
+                    )
+                if content_stable:
+                    cache_saved = storage.upsert_malware_scan_cache(
+                        sha256=file_hash,
+                        canonical_path=path_key,
+                        size_bytes=safe_int(payload.get("file_size") or item["size_bytes"]),
+                        mtime_ns=safe_int(payload.get("file_mtime_ns") or item["mtime_ns"]),
+                        file_identity=str(payload.get("file_inode") or item["file_inode"]),
+                        result=MalwareScanResult(
+                            verdict=cast(str, payload.get("verdict") or "not_scanned"),
+                            scan_health=cast(str, payload.get("scan_health") or "incomplete"),
+                            scanner=str(payload.get("scanner") or "ClamAV"),
+                            file_path=path_key,
+                            backend=str(payload.get("backend") or status.selected_backend),
+                            threat_name=cast(str | None, payload.get("threat_name")),
+                            message=str(payload.get("message") or ""),
+                            elapsed_seconds=float(cast(float | int | str, payload.get("elapsed_seconds") or 0.0)),
+                            engine_version=cast(str | None, payload.get("engine_version")),
+                            database_version=cast(str | None, payload.get("database_version")),
+                            database_date=cast(str | None, payload.get("database_date")),
+                            cache_hit=False,
+                            file_sha256=file_hash,
+                            file_size=safe_int(payload.get("file_size") or item["size_bytes"]),
+                            file_mtime_ns=safe_int(payload.get("file_mtime_ns") or item["mtime_ns"]),
+                            file_inode=str(payload.get("file_inode") or item["file_inode"]),
+                        ),
+                        scan_policy_version=policy.policy_version,
+                    )
+                    if not cache_saved:
+                        notes.append(f"Malware scan cache write failed for {Path(path_key).name}; scan verdict was preserved.")
+                elif str(payload.get("verdict")) == "clean":
+                    payload["verdict"] = "not_scanned"
+                    payload["status"] = "not_scanned"
+                    payload["scan_health"] = "incomplete"
+                    payload["message"] = "File changed during malware scanning; the clean result was discarded."
         enriched_records.append(
             {
                 **item,
@@ -682,7 +728,7 @@ def scan_folder_malware(
         if str(item.get("malware_scan_health") or "") not in {"ok", "mode_excluded"}
     )
     files_successfully_scanned = sum(1 for item in enriched_records if str(item.get("malware_scan_health") or "") == "ok")
-    completed_count = files_successfully_scanned + mode_excluded_count
+    completed_count = files_successfully_scanned
     cache_hits = int(metrics.cache_hits)
     scanned_bytes = int(getattr(metrics, "bytes_scanned", 0))
     files_sent_to_scanner = int(getattr(metrics, "files_sent_to_scanner", 0))
@@ -700,6 +746,7 @@ def scan_folder_malware(
         "enumerated_files": len(records),
         "result_records": len(enriched_records),
         "files_successfully_scanned": files_successfully_scanned,
+        "files_in_scope": len(scannable_records),
         "completed_files": completed_count,
         "clean_files": clean_count,
         "suspicious_files": suspicious_count,

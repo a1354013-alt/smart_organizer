@@ -284,7 +284,8 @@
         "timeout": "掃描逾時",
         "backend_error": "後端錯誤",
         "limit_exceeded": "超過掃描限制",
-        "other_incomplete": "其他不完整結果"
+        "other_incomplete": "其他不完整結果",
+        "mode_excluded": "Excluded by scan mode"
       },
       "incomplete_groups": {
         "scanner_unavailable": "掃描器不可用",
@@ -295,7 +296,8 @@
         "permission_denied": "權限不足",
         "backend_error": "後端錯誤",
         "missing_backend_result": "掃描器未回傳結果",
-        "other_incomplete": "其他不完整結果"
+        "other_incomplete": "其他不完整結果",
+        "mode_excluded": "Excluded by scan mode"
       },
       "conclusion": {
         "infected": "至少有一個檔案被判定為感染。請先處理這些風險項目。",

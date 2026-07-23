@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.8.5rc13 - 2026-07-23
+
+- hardened ClamD scan-content consistency by calculating SHA-256 from the exact bounded INSTREAM chunks and reconciling pre/post file identity
+- added conservative ClamScan fallback stability checks before clean results can become reusable cache entries
+- split folder malware caching into unchanged-file and content-hash lookup stages with engine-version compatibility
+- corrected `mode_excluded` semantics so mode exclusions are partial coverage evidence, not completed scanner results
+- preserved enumeration boundary safety while exposing in-scope, completed, incomplete, and mode-excluded counts distinctly
+- kept scanner metrics tied to actual scanner work and unchanged-file cache skips
+- removed the inner `.block-container` page scroll surface for a stable single-scroll viewport layout
+- preserved duplicate-group identity stability and finalized release documentation for the rc13 stabilization pass
+
 ## v2.8.5rc12 - 2026-07-22
 
 - switched `clamd` file scans to true streamed `INSTREAM` uploads instead of whole-file `read_bytes()` loads

@@ -152,6 +152,22 @@ def test_schema_inspection_upgrade_and_expected_tables_support_shared_memory_uri
     assert "file_content_fts" in tables
 
 
+def test_schema_18_adds_malware_cache_lookup_indexes(tmp_path: Path):
+    db_path = tmp_path / "schema18.db"
+    _create_schema_db(db_path, "17")
+
+    upgraded = upgrade_database_schema(db_path)
+
+    with open_sqlite(db_path) as conn:
+        index_names = {
+            str(row[1])
+            for row in conn.execute("PRAGMA index_list('malware_scan_cache')").fetchall()
+        }
+    assert upgraded == CURRENT_SCHEMA_VERSION == 18
+    assert "idx_malware_scan_cache_lookup" in index_names
+    assert "idx_malware_scan_cache_unchanged_file" in index_names
+
+
 def test_expected_runtime_tables_supports_uri_with_query_parameters():
     uri = (
         f"file:smart_organizer_schema_query_{uuid.uuid4().hex}"

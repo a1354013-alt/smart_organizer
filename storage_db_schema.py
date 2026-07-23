@@ -15,7 +15,7 @@ from sqlite_utils import (
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 MIN_SUPPORTED_SCHEMA_VERSION = 1
 
 REQUIRED_SCHEMA_TABLES = frozenset({"sys_config", "files"})
@@ -197,7 +197,17 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_lookup
-        ON malware_scan_cache(sha256, database_version, database_date, scan_policy_version)
+        ON malware_scan_cache(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
+        ON malware_scan_cache(
+            canonical_path_key, size_bytes, mtime_ns, file_identity,
+            scanner_backend, engine_version, database_version, database_date, scan_policy_version,
+            verdict, scan_health
+        )
         """
     )
     cursor.execute(

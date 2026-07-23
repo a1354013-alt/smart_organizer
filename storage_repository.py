@@ -182,16 +182,15 @@ class StorageRepositoryMixin:
         normalized["malware_message"] = str(normalized.get("malware_message") or "").strip() or None
         return normalized
 
-    def get_malware_scan_cache(
+    def get_malware_scan_cache_by_content(
         self: Any,
         *,
         sha256: str,
         scanner_backend: str,
+        engine_version: str | None,
         database_version: str | None,
         database_date: str | None,
         scan_policy_version: str,
-        size_bytes: int | None = None,
-        mtime_ns: int | None = None,
     ) -> dict[str, object] | None:
         conn: sqlite3.Connection | None = None
         try:
@@ -204,27 +203,120 @@ class StorageRepositoryMixin:
                 FROM malware_scan_cache
                 WHERE sha256 = ?
                   AND scanner_backend = ?
+                  AND COALESCE(engine_version, '') = COALESCE(?, '')
                   AND COALESCE(database_version, '') = COALESCE(?, '')
                   AND COALESCE(database_date, '') = COALESCE(?, '')
                   AND scan_policy_version = ?
                 ORDER BY scanned_at DESC, cache_id DESC
                 LIMIT 1
                 """,
-                (sha256, scanner_backend, database_version, database_date, scan_policy_version),
+                (sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version),
             )
             row = cursor.fetchone()
             if row is None:
                 return None
             payload = dict(row)
-            if payload.get("scan_health") in {"timeout", "scanner_unavailable", "error", "incomplete", "limit_exceeded"}:
-                return None
-            if size_bytes is not None and payload.get("size_bytes") not in (None, size_bytes):
-                return None
-            if mtime_ns is not None and payload.get("mtime_ns") not in (None, mtime_ns):
+            if payload.get("scan_health") in {
+                "timeout",
+                "scanner_unavailable",
+                "database_missing",
+                "database_outdated",
+                "error",
+                "incomplete",
+                "limit_exceeded",
+                "mode_excluded",
+            }:
                 return None
             return payload
         except sqlite3.Error:
-            logger.debug("get_malware_scan_cache failed", exc_info=True)
+            logger.debug("get_malware_scan_cache_by_content failed", exc_info=True)
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+    def get_malware_scan_cache(
+        self: Any,
+        *,
+        sha256: str,
+        scanner_backend: str,
+        database_version: str | None,
+        database_date: str | None,
+        scan_policy_version: str,
+        size_bytes: int | None = None,
+        mtime_ns: int | None = None,
+        engine_version: str | None = None,
+    ) -> dict[str, object] | None:
+        payload = self.get_malware_scan_cache_by_content(
+            sha256=sha256,
+            scanner_backend=scanner_backend,
+            engine_version=engine_version,
+            database_version=database_version,
+            database_date=database_date,
+            scan_policy_version=scan_policy_version,
+        )
+        if payload is None:
+            return None
+        if size_bytes is not None and payload.get("size_bytes") not in (None, size_bytes):
+            return None
+        if mtime_ns is not None and payload.get("mtime_ns") not in (None, mtime_ns):
+            return None
+        return payload
+
+    def get_malware_scan_cache_for_unchanged_file(
+        self: Any,
+        *,
+        canonical_path: str,
+        size_bytes: int,
+        mtime_ns: int,
+        file_identity: str | None,
+        scanner_backend: str,
+        engine_version: str | None,
+        database_version: str | None,
+        database_date: str | None,
+        scan_policy_version: str,
+    ) -> dict[str, object] | None:
+        if not file_identity:
+            return None
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM malware_scan_cache
+                WHERE canonical_path_key = ?
+                  AND size_bytes = ?
+                  AND mtime_ns = ?
+                  AND file_identity = ?
+                  AND scanner_backend = ?
+                  AND COALESCE(engine_version, '') = COALESCE(?, '')
+                  AND COALESCE(database_version, '') = COALESCE(?, '')
+                  AND COALESCE(database_date, '') = COALESCE(?, '')
+                  AND scan_policy_version = ?
+                  AND verdict = 'clean'
+                  AND scan_health = 'ok'
+                ORDER BY scanned_at DESC, cache_id DESC
+                LIMIT 1
+                """,
+                (
+                    canonical_path_key(canonical_path),
+                    size_bytes,
+                    mtime_ns,
+                    file_identity,
+                    scanner_backend,
+                    engine_version,
+                    database_version,
+                    database_date,
+                    scan_policy_version,
+                ),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row is not None else None
+        except sqlite3.Error:
+            logger.debug("get_malware_scan_cache_for_unchanged_file failed", exc_info=True)
             return None
         finally:
             if conn:
@@ -240,7 +332,18 @@ class StorageRepositoryMixin:
         file_identity: str | None,
         result: MalwareScanResult,
         scan_policy_version: str,
-    ) -> None:
+    ) -> bool:
+        if result.scan_health in {
+            "scanner_unavailable",
+            "database_missing",
+            "database_outdated",
+            "timeout",
+            "error",
+            "incomplete",
+            "limit_exceeded",
+            "mode_excluded",
+        }:
+            return False
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -286,8 +389,10 @@ class StorageRepositoryMixin:
                 ),
             )
             conn.commit()
+            return True
         except sqlite3.Error:
             logger.debug("upsert_malware_scan_cache failed", exc_info=True)
+            return False
         finally:
             if conn:
                 conn.close()

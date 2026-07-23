@@ -112,7 +112,7 @@ _MALWARE_SCAN_LABEL_KEYS = {
     "infected": "malware.scan_infected",
     "suspicious": "malware.scan_suspicious",
     "not_scanned": "malware.scan_not_scanned",
-    "mode_excluded": "malware.scan_not_scanned",
+    "mode_excluded": "home.malware_result.health.mode_excluded",
     "scanner_unavailable": "malware.scan_scanner_unavailable",
     "database_missing": "malware.scan_database_missing",
     "database_outdated": "malware.scan_database_outdated",
@@ -130,7 +130,7 @@ _MALWARE_SCAN_HEALTH_LABEL_KEYS = {
     "error": "home.malware_result.health.backend_error",
     "limit_exceeded": "home.malware_result.health.limit_exceeded",
     "incomplete": "home.malware_result.health.other_incomplete",
-    "mode_excluded": "home.malware_result.health.other_incomplete",
+    "mode_excluded": "home.malware_result.health.mode_excluded",
 }
 _CLAMAV_STATUS_LABEL_KEYS = {
     "available": "malware.status_available",
@@ -210,8 +210,6 @@ def _malware_incomplete_group(health: object, message: object) -> str:
 
 
 def _malware_incomplete_group_label(group: str) -> str:
-    if group == "mode_excluded":
-        group = "other_incomplete"
     return t(f"home.malware_result.incomplete_groups.{group}")
 
 

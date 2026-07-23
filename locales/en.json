@@ -284,6 +284,7 @@
         "timeout": "Timed out",
         "backend_error": "Backend error",
         "limit_exceeded": "Limit exceeded",
+        "mode_excluded": "Excluded by scan mode",
         "other_incomplete": "Other incomplete result"
       },
       "incomplete_groups": {
@@ -295,6 +296,7 @@
         "permission_denied": "Permission denied",
         "backend_error": "Backend error",
         "missing_backend_result": "Missing backend result",
+        "mode_excluded": "Excluded by scan mode",
         "other_incomplete": "Other incomplete result"
       },
       "conclusion": {

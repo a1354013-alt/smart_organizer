@@ -84,6 +84,7 @@ def _scan_upload_before_processing(
         max_database_age_days=max(1, int(processing_options.get("malware_database_max_age_days", 7))),
         policy=policy,
     )
+    status = scanner.get_status()
     record = storage.get_file_by_id(file_id) or {}
     raw_mtime_ns = record.get("mtime_ns")
     mtime_ns = raw_mtime_ns if isinstance(raw_mtime_ns, int) else None
@@ -91,9 +92,10 @@ def _scan_upload_before_processing(
     size_bytes = raw_size_bytes if isinstance(raw_size_bytes, int) else None
     cached = storage.get_malware_scan_cache(
         sha256=file_hash,
-        scanner_backend=scanner.get_status().selected_backend,
-        database_version=scanner.get_status().database_version,
-        database_date=scanner.get_status().database_date,
+        scanner_backend=status.selected_backend,
+        engine_version=getattr(status, "engine_version", None),
+        database_version=getattr(status, "database_version", None),
+        database_date=getattr(status, "database_date", None),
         scan_policy_version=policy.policy_version,
         size_bytes=size_bytes,
         mtime_ns=mtime_ns,
@@ -117,7 +119,6 @@ def _scan_upload_before_processing(
         storage.update_file_malware_scan(file_id, result, cache_hit=True)
         return result
 
-    status = scanner.get_status()
     if status.selected_backend == "clamd":
         result = scanner.scan_bytes(uploaded.content, uploaded.name)
     else:

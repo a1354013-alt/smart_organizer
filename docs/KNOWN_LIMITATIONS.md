@@ -1,7 +1,7 @@
 # Known Limitations
 
 - Folder scan decisions rely on file metadata and filesystem timestamps, primarily metadata, `mtime`, `atime`, and file size. The homepage scan does not inspect full file contents.
-- Optional ClamAV integration scans candidate files one file at a time without unpacking archives. It reports the local scanner result only and must not be treated as a guarantee that a file is safe.
+- Optional ClamAV integration does not unpack archives beyond the local ClamAV engine's own behavior. `clamd` streaming binds SHA-256 to the exact bytes sent through INSTREAM, while batched `clamscan` uses conservative pre/post file identity and hash checks for cacheable clean results. The fallback scanner still cannot provide mathematically perfect snapshot isolation against every possible filesystem race.
 - ClamAV binaries and virus databases are not bundled with Smart Organizer. Users must install `clamscan` and `freshclam` separately and maintain their local virus database.
 - If ClamAV is unavailable, misconfigured, missing its database, or has an outdated database, Smart Organizer surfaces that state in the UI instead of silently treating files as clean.
 - Candidate scoring is deterministic and rule-based. It explains confidence, risk level, and reasons, but it is still a review aid rather than a guarantee that a file should be moved.

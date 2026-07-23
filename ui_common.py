@@ -112,7 +112,7 @@ def inject_global_css() -> None:
             min-height: 100vh;
             min-height: 100dvh;
             overflow-x: hidden;
-            overflow-y: hidden;
+            overflow-y: auto;
           }
 
           body {
@@ -128,7 +128,8 @@ def inject_global_css() -> None:
 
           [data-testid="stAppViewContainer"],
           [data-testid="stAppViewContainer"] > .main {
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: visible;
           }
 
           .stApp {
@@ -136,21 +137,17 @@ def inject_global_css() -> None:
                         radial-gradient(780px 420px at 95% 0%, rgba(255, 75, 110, 0.10), transparent 52%),
                         var(--so-bg);
             color: var(--so-text);
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: visible;
           }
 
           .block-container {
-            height: calc(100vh - var(--so-header-height));
-            height: calc(100dvh - var(--so-header-height));
             min-height: calc(100vh - var(--so-header-height));
             min-height: calc(100dvh - var(--so-header-height));
-            max-height: calc(100vh - var(--so-header-height));
-            max-height: calc(100dvh - var(--so-header-height));
             display: flex;
             flex-direction: column;
-            overflow-y: auto;
+            overflow-y: visible;
             overflow-x: hidden;
-            overscroll-behavior: contain;
             padding-top: 1rem;
             padding-bottom: 1rem;
             padding-left: 1rem;
