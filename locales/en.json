@@ -254,10 +254,12 @@
       },
       "metrics": {
         "enumerated_files": "Enumerated",
+        "files_in_scope": "In scope",
         "completed_files": "Completed",
         "clean_files": "Clean",
         "suspicious_files": "Suspicious",
         "infected_files": "Infected",
+        "mode_excluded_files": "Excluded by mode",
         "incomplete_files": "Incomplete",
         "cache_hits": "Cache hits",
         "actually_scanned": "Actually scanned"

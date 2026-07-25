@@ -213,6 +213,10 @@ def _malware_incomplete_group_label(group: str) -> str:
     return t(f"home.malware_result.incomplete_groups.{group}")
 
 
+def _is_incomplete_malware_row(row: Mapping[str, object]) -> bool:
+    return str(row.get("malware_scan_health") or "") not in {"ok", "mode_excluded"}
+
+
 def _analysis_settings_snapshot(scan_options: dict[str, object]) -> dict[str, object]:
     return {
         "recursive": bool(scan_options.get("recursive")),
@@ -1522,10 +1526,12 @@ def _render_malware_result_dialog_body() -> None:
     )
     metrics = [
         ("enumerated_files", "home.malware_result.metrics.enumerated_files"),
+        ("files_in_scope", "home.malware_result.metrics.files_in_scope"),
         ("completed_files", "home.malware_result.metrics.completed_files"),
         ("clean_files", "home.malware_result.metrics.clean_files"),
         ("suspicious_files", "home.malware_result.metrics.suspicious_files"),
         ("infected_files", "home.malware_result.metrics.infected_files"),
+        ("mode_excluded_files", "home.malware_result.metrics.mode_excluded_files"),
         ("incomplete_files", "home.malware_result.metrics.incomplete_files"),
         ("cache_hits", "home.malware_result.metrics.cache_hits"),
         ("files_sent_to_scanner", "home.malware_result.metrics.actually_scanned"),
@@ -1575,7 +1581,7 @@ def _render_malware_result_dialog_body() -> None:
             st.info(t("home.malware_result.no_blocked"))
     with tabs[2]:
         incomplete_rows = [
-            row for row in records if str(row.get("malware_scan_health") or "") != "ok"
+            row for row in records if _is_incomplete_malware_row(row)
         ]
         grouped_causes: dict[str, int] = {}
         for row in incomplete_rows:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import nullcontext
 from types import SimpleNamespace
 
 from i18n import t
 from ui_common import render_dialog, reset_dialog_render_cycle
-from ui_home import _malware_result_conclusion, _render_home_header, render_home
+from ui_home import _is_incomplete_malware_row, _malware_result_conclusion, _render_home_header, _render_malware_result_dialog_body, render_home
 
 
 class _Column:
@@ -157,3 +158,113 @@ def test_malware_conclusion_avoids_all_clean_for_partial_or_truncated_coverage()
 
     assert "clean" not in incomplete.lower()
     assert "clean" not in truncated.lower()
+
+
+def test_is_incomplete_malware_row_excludes_mode_excluded():
+    assert _is_incomplete_malware_row({"malware_scan_health": "incomplete"}) is True
+    assert _is_incomplete_malware_row({"malware_scan_health": "error"}) is True
+    assert _is_incomplete_malware_row({"malware_scan_health": "ok"}) is False
+    assert _is_incomplete_malware_row({"malware_scan_health": "mode_excluded"}) is False
+
+
+class _Tab:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _Expander:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+def test_render_malware_result_dialog_excludes_mode_excluded_from_incomplete_and_shows_metric(monkeypatch):
+    session_state = {
+        "folder_malware_scan_result": {
+            "scan_mode": "fast",
+            "coverage_scope": "executables only",
+            "recursive": False,
+            "max_files": 10,
+            "path": "C:/scan-root",
+            "scanned_at": "2026-07-25T12:00:00+00:00",
+            "summary": {
+                "enumerated_files": 3,
+                "files_in_scope": 1,
+                "completed_files": 1,
+                "clean_files": 1,
+                "suspicious_files": 0,
+                "infected_files": 0,
+                "mode_excluded_files": 1,
+                "incomplete_files": 1,
+                "cache_hits": 0,
+                "files_sent_to_scanner": 1,
+                "total_bytes": 3,
+                "elapsed_seconds": 0.5,
+                "bytes_per_second": 6.0,
+                "files_per_second": 2.0,
+                "limit_reached": False,
+                "coverage_is_partial": True,
+                "overall_severity": "warning",
+                "overall_status": "warning",
+                "totals_consistent": True,
+            },
+            "records": [
+                {
+                    "name": "clean.exe",
+                    "path": "C:/scan-root/clean.exe",
+                    "malware_status": "clean",
+                    "malware_scan_health": "ok",
+                    "malware_cache_hit": False,
+                    "malware_scanned_at": "2026-07-25T12:00:00+00:00",
+                },
+                {
+                    "name": "skip.txt",
+                    "path": "C:/scan-root/skip.txt",
+                    "malware_status": "not_scanned",
+                    "malware_scan_health": "mode_excluded",
+                    "malware_message": "excluded by mode",
+                    "malware_cache_hit": False,
+                    "malware_scanned_at": "2026-07-25T12:00:00+00:00",
+                },
+                {
+                    "name": "missing.bin",
+                    "path": "C:/scan-root/missing.bin",
+                    "malware_status": "not_scanned",
+                    "malware_scan_health": "incomplete",
+                    "malware_message": "scanner returned no result",
+                    "malware_cache_hit": False,
+                    "malware_scanned_at": "2026-07-25T12:00:00+00:00",
+                },
+            ],
+        }
+    }
+    metric_calls: list[tuple[str, object]] = []
+    dataframe_calls: list[list[Mapping[str, object]]] = []
+
+    fake_st = SimpleNamespace(
+        session_state=session_state,
+        error=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        success=lambda *args, **kwargs: None,
+        info=lambda *args, **kwargs: None,
+        caption=lambda *args, **kwargs: None,
+        tabs=lambda labels: [_Tab() for _ in labels],
+        columns=lambda count, **kwargs: [_Column() for _ in range(count)],
+        metric=lambda label, value, **kwargs: metric_calls.append((str(label), value)),
+        dataframe=lambda rows, **kwargs: dataframe_calls.append(list(rows)),
+        expander=lambda *args, **kwargs: _Expander(),
+        code=lambda *args, **kwargs: None,
+        download_button=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr("ui_home.st", fake_st)
+
+    _render_malware_result_dialog_body()
+
+    assert (t("home.malware_result.metrics.mode_excluded_files"), 1) in metric_calls
+    assert len(dataframe_calls[1]) == 1
+    assert dataframe_calls[1][0][t("home.malware_result.columns.file_name")] == "missing.bin"
