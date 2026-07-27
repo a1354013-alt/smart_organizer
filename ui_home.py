@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast

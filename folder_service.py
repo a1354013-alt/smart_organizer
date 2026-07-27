@@ -292,8 +292,7 @@ def _iter_folder_files(
                 except OSError as exc:
                     enumeration_errors += 1
                     errors.append(f"Failed to inspect {path_obj}: {exc}")
-            if len(records) >= int(max_files):
-                limit_reached = True
+            if limit_reached:
                 break
     else:
         try:

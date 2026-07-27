@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 from i18n import t
 from ui_common import render_dialog, reset_dialog_render_cycle
-from ui_home import _is_incomplete_malware_row, _malware_result_conclusion, _render_home_header, _render_malware_result_dialog_body, render_home
+from ui_home import (
+    _is_incomplete_malware_row,
+    _malware_result_conclusion,
+    _render_home_header,
+    _render_malware_result_dialog_body,
+    render_home,
+)
 
 
 class _Column:
