@@ -118,7 +118,7 @@ def _build_context(runtime_config: RuntimeConfig | None = None) -> UIContext:
         max_upload_bytes=MAX_UPLOAD_BYTES,
         max_upload_batch_bytes=MAX_UPLOAD_BATCH_BYTES,
         pandas=_optional_import("pandas"),
-        plt=_optional_import("matplotlib.pyplot"),
+        plt=None,
     )
 
 

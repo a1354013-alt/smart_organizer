@@ -248,6 +248,8 @@
       "tabs": {
         "summary": "摘要",
         "blocked": "受阻項目",
+        "excluded": "模式排除",
+        "failures": "掃描失敗",
         "incomplete": "不完整項目",
         "all_files": "全部檔案",
         "technical": "技術資訊"
@@ -274,6 +276,9 @@
         "cache_hit": "快取命中",
         "scanned_at": "掃描時間",
         "cause": "不完整原因",
+        "mode": "掃描模式",
+        "reason": "原因",
+        "explanation": "說明",
         "count": "數量",
         "metric": "項目",
         "value": "值"
@@ -310,8 +315,11 @@
       "completion": "完成 {completed} / {total}（{percent}%）",
       "coverage": "模式 {mode} | 實際涵蓋 {coverage} | 遞迴 {recursive} | 最多檔案 {max_files} | 已截斷 {truncated}",
       "performance": "總大小 {total_bytes} | 耗時 {elapsed} | 吞吐量 {throughput}",
+      "partial_coverage_warning": "有些檔案因選取的掃描模式而未納入掃描範圍，這代表目前僅為部分涵蓋，不能作為任何受保護操作的放行依據。",
       "no_blocked": "目前沒有可疑或感染項目。",
+      "no_excluded": "沒有檔案因選取的掃描模式而被排除。",
       "no_incomplete": "目前沒有記錄到不完整掃描列。",
+      "excluded_explanation": "這些檔案因選取的掃描模式而未被掃描，不可視為已確認乾淨，也不能視為整體掃描已完整涵蓋。",
       "full_paths": "完整路徑",
       "technical": {
         "mode": "掃描模式",
