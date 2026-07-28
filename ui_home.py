@@ -1520,7 +1520,8 @@ def _render_malware_result_dialog_body() -> None:
         [
             t("home.malware_result.tabs.summary"),
             t("home.malware_result.tabs.blocked"),
-            t("home.malware_result.tabs.incomplete"),
+            t("home.malware_result.tabs.excluded"),
+            t("home.malware_result.tabs.failures"),
             t("home.malware_result.tabs.all_files"),
             t("home.malware_result.tabs.technical"),
         ]
@@ -1563,6 +1564,8 @@ def _render_malware_result_dialog_body() -> None:
                 ),
             )
         )
+        if safe_int(summary.get("mode_excluded_files")) > 0:
+            st.warning(t("home.malware_result.partial_coverage_warning"))
     with tabs[1]:
         blocked_rows = [
             {
@@ -1581,6 +1584,22 @@ def _render_malware_result_dialog_body() -> None:
         else:
             st.info(t("home.malware_result.no_blocked"))
     with tabs[2]:
+        excluded_rows = [
+            {
+                t("home.malware_result.columns.file_name"): str(row.get("name") or Path(str(row.get("path") or "")).name),
+                t("home.malware_result.columns.relative_path"): _safe_relative_path(result.get("path"), row.get("path")),
+                t("home.malware_result.columns.mode"): _scan_mode_label(result.get("scan_mode")),
+                t("home.malware_result.columns.reason"): str(row.get("malware_message") or ""),
+                t("home.malware_result.columns.explanation"): t("home.malware_result.excluded_explanation"),
+            }
+            for row in records
+            if str(row.get("malware_scan_health") or "") == "mode_excluded"
+        ]
+        if excluded_rows:
+            st.dataframe(excluded_rows, use_container_width=True, hide_index=True)
+        else:
+            st.info(t("home.malware_result.no_excluded"))
+    with tabs[3]:
         incomplete_rows = [
             row for row in records if _is_incomplete_malware_row(row)
         ]
@@ -1617,7 +1636,7 @@ def _render_malware_result_dialog_body() -> None:
             )
         else:
             st.info(t("home.malware_result.no_incomplete"))
-    with tabs[3]:
+    with tabs[4]:
         all_rows = [
             {
                 t("home.malware_result.columns.file_name"): str(row.get("name") or Path(str(row.get("path") or "")).name),
@@ -1632,7 +1651,7 @@ def _render_malware_result_dialog_body() -> None:
             for row in records
         ]
         st.dataframe(all_rows, use_container_width=True, hide_index=True)
-    with tabs[4]:
+    with tabs[5]:
         st.dataframe(
             [
                 {t("home.malware_result.columns.metric"): t("home.malware_result.technical.mode"), t("home.malware_result.columns.value"): _scan_mode_label(result.get("scan_mode"))},

@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.8.5rc14 - 2026-07-28
+
+- fixed max-files truncation detection so recursive and non-recursive folder scans only report truncation after a real extra eligible file is found, with deterministic enumeration ordering
+- corrected non-recursive symlink accounting so skipped symlinks no longer advance progress twice or trigger false truncation boundaries
+- split malware cache identity tracking from content verdict reuse, adding schema v19 identity mappings so identical files on different paths can both hit the unchanged-file fast path independently
+- separated malware scanner sent, completed, and incomplete metrics for ClamD and ClamScan paths, including malformed and partial-result handling
+- added a dedicated mode-excluded malware results tab and updated localized messaging for partial scan coverage
+
 ## v2.8.5rc13 - 2026-07-23
 
 - hardened ClamD scan-content consistency by calculating SHA-256 from the exact bounded INSTREAM chunks and reconciling pre/post file identity

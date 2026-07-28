@@ -83,6 +83,10 @@ _STANDARD_SKIP_SUFFIXES = {
 MalwareResultSeverity = Literal["danger", "warning", "success"]
 
 
+def _stable_name_key(value: str) -> tuple[str, str]:
+    return (value.casefold(), value)
+
+
 class MalwareScanSummary(TypedDict, total=False):
     scan_mode: str
     coverage_scope: str
@@ -101,6 +105,10 @@ class MalwareScanSummary(TypedDict, total=False):
     missing_result_files: int
     cache_hits: int
     files_sent_to_scanner: int
+    bytes_sent_to_scanner: int
+    completed_scanner_results: int
+    completed_scanner_bytes: int
+    incomplete_scanner_results: int
     scanned_bytes: int
     permission_failures: int
     enumeration_errors: int
@@ -257,7 +265,7 @@ def _iter_folder_files(
         walker = os.walk(str(root), topdown=True, onerror=on_walk_error)
         for dirpath, dirnames, filenames in walker:
             kept_dirnames: list[str] = []
-            for name in dirnames:
+            for name in sorted(dirnames, key=_stable_name_key):
                 if name == ".smart_organizer_quarantine":
                     continue
                 dir_path = Path(dirpath) / name
@@ -272,10 +280,7 @@ def _iter_folder_files(
                     continue
                 kept_dirnames.append(name)
             dirnames[:] = kept_dirnames
-            for filename in filenames:
-                if len(records) >= int(max_files):
-                    limit_reached = True
-                    break
+            for filename in sorted(filenames, key=_stable_name_key):
                 path_obj = Path(dirpath) / filename
                 try:
                     stat_result = path_obj.lstat()
@@ -283,6 +288,9 @@ def _iter_folder_files(
                         skipped_symlinks += 1
                         notes.append(f"Skipped symlink file for safety: {path_obj}")
                         continue
+                    if len(records) >= int(max_files):
+                        limit_reached = True
+                        break
                     append_record(path_obj, stat_result)
                 except PermissionError:
                     permission_failures += 1
@@ -296,10 +304,8 @@ def _iter_folder_files(
                 break
     else:
         try:
-            for entry in os.scandir(str(root)):
-                if len(records) >= int(max_files):
-                    limit_reached = True
-                    break
+            entries = sorted(os.scandir(str(root)), key=lambda entry: _stable_name_key(entry.name))
+            for entry in entries:
                 try:
                     if entry.is_symlink():
                         skipped_symlinks += 1
@@ -311,6 +317,9 @@ def _iter_folder_files(
                 if not entry.is_file(follow_symlinks=False):
                     continue
                 try:
+                    if len(records) >= int(max_files):
+                        limit_reached = True
+                        break
                     append_record(Path(entry.path), entry.stat(follow_symlinks=False))
                 except PermissionError:
                     permission_failures += 1
@@ -731,6 +740,10 @@ def scan_folder_malware(
     cache_hits = int(metrics.cache_hits)
     scanned_bytes = int(getattr(metrics, "bytes_scanned", 0))
     files_sent_to_scanner = int(getattr(metrics, "files_sent_to_scanner", 0))
+    bytes_sent_to_scanner = int(getattr(metrics, "bytes_sent_to_scanner", scanned_bytes))
+    completed_scanner_results = int(getattr(metrics, "completed_scanner_results", files_successfully_scanned))
+    completed_scanner_bytes = int(getattr(metrics, "completed_scanner_bytes", scanned_bytes))
+    incomplete_scanner_results = int(getattr(metrics, "incomplete_scanner_results", incomplete_count))
     scan_error_count = sum(
         1
         for item in enriched_records
@@ -756,6 +769,10 @@ def scan_folder_malware(
         "missing_result_files": missing_result_files,
         "cache_hits": cache_hits,
         "files_sent_to_scanner": files_sent_to_scanner,
+        "bytes_sent_to_scanner": bytes_sent_to_scanner,
+        "completed_scanner_results": completed_scanner_results,
+        "completed_scanner_bytes": completed_scanner_bytes,
+        "incomplete_scanner_results": incomplete_scanner_results,
         "scanned_bytes": scanned_bytes,
         "permission_failures": safe_int(enumeration_stats["permission_failures"]),
         "enumeration_errors": safe_int(enumeration_stats["enumeration_errors"]),
@@ -772,7 +789,7 @@ def scan_folder_malware(
         "total_bytes": total_bytes,
         "elapsed_seconds": elapsed_seconds,
         "files_per_second": (files_sent_to_scanner / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
-        "bytes_per_second": (scanned_bytes / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
+        "bytes_per_second": (bytes_sent_to_scanner / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
         "backend": status.selected_backend,
         "engine_version": status.engine_version or "",
         "database_version": status.database_version or "",

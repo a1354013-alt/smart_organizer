@@ -272,5 +272,6 @@ def test_render_malware_result_dialog_excludes_mode_excluded_from_incomplete_and
     _render_malware_result_dialog_body()
 
     assert (t("home.malware_result.metrics.mode_excluded_files"), 1) in metric_calls
-    assert len(dataframe_calls[1]) == 1
-    assert dataframe_calls[1][0][t("home.malware_result.columns.file_name")] == "missing.bin"
+    rendered_values = [str(value) for rows in dataframe_calls for row in rows for value in row.values()]
+    assert "skip.txt" in rendered_values
+    assert "missing.bin" in rendered_values

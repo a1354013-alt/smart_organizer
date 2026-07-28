@@ -248,6 +248,8 @@
       "tabs": {
         "summary": "Summary",
         "blocked": "Suspicious and infected",
+        "excluded": "Mode excluded",
+        "failures": "Scan failures",
         "incomplete": "Incomplete scans",
         "all_files": "All files",
         "technical": "Technical details"
@@ -274,6 +276,9 @@
         "cache_hit": "Cache hit",
         "scanned_at": "Scanned at",
         "cause": "Incomplete reason",
+        "mode": "Selected mode",
+        "reason": "Exclusion reason",
+        "explanation": "Explanation",
         "count": "Count",
         "metric": "Metric",
         "value": "Value"
@@ -310,8 +315,11 @@
       "completion": "{completed} / {total} completed ({percent}%)",
       "coverage": "Mode {mode} | Coverage {coverage} | Recursive {recursive} | Max files {max_files} | Truncated {truncated}",
       "performance": "Total bytes {total_bytes} | Elapsed {elapsed} | Throughput {throughput}",
+      "partial_coverage_warning": "Some files were excluded by the selected scan mode. This is partial coverage and cannot authorize protected actions.",
       "no_blocked": "No suspicious or infected files were found.",
+      "no_excluded": "No files were excluded by the selected scan mode.",
       "no_incomplete": "No incomplete scan rows were recorded.",
+      "excluded_explanation": "These files were skipped by the selected scan mode and must not be treated as clean or fully covered.",
       "full_paths": "Full paths",
       "technical": {
         "mode": "Selected scan mode",

@@ -15,11 +15,13 @@ from sqlite_utils import (
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 MIN_SUPPORTED_SCHEMA_VERSION = 1
 
 REQUIRED_SCHEMA_TABLES = frozenset({"sys_config", "files"})
-EXPECTED_RUNTIME_TABLES = frozenset({"sys_config", "files", "tags", "file_tags", "file_content_fts"})
+EXPECTED_RUNTIME_TABLES = frozenset(
+    {"sys_config", "files", "tags", "file_tags", "file_content_fts", "malware_scan_cache_identities"}
+)
 MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("safe_name", "TEXT"),
     ("final_name", "TEXT"),
@@ -175,10 +177,6 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
         CREATE TABLE IF NOT EXISTS malware_scan_cache (
             cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
             sha256 TEXT NOT NULL,
-            canonical_path_key TEXT,
-            size_bytes INTEGER,
-            mtime_ns INTEGER,
-            file_identity TEXT,
             scanner_backend TEXT NOT NULL,
             engine_version TEXT,
             database_version TEXT,
@@ -202,11 +200,25 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
     )
     cursor.execute(
         """
-        CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
-        ON malware_scan_cache(
+        CREATE TABLE IF NOT EXISTS malware_scan_cache_identities (
+            identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
             canonical_path_key, size_bytes, mtime_ns, file_identity,
             scanner_backend, engine_version, database_version, database_date, scan_policy_version,
-            verdict, scan_health
+            cache_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(
+                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+            ),
+            FOREIGN KEY (cache_id) REFERENCES malware_scan_cache(cache_id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
+        ON malware_scan_cache_identities(
+            canonical_path_key, size_bytes, mtime_ns, file_identity,
+            scanner_backend, engine_version, database_version, database_date, scan_policy_version, cache_id
         )
         """
     )
@@ -334,6 +346,72 @@ def upgrade_database_schema(
                         WHERE updated_at IS NULL OR updated_at = ''
                         """
                     )
+
+                if version < 19:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS malware_scan_cache_identities (
+                            identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            canonical_path_key TEXT NOT NULL,
+                            size_bytes INTEGER,
+                            mtime_ns INTEGER,
+                            file_identity TEXT,
+                            scanner_backend TEXT NOT NULL,
+                            engine_version TEXT,
+                            database_version TEXT,
+                            database_date TEXT,
+                            scan_policy_version TEXT NOT NULL,
+                            cache_id INTEGER NOT NULL,
+                            updated_at TEXT NOT NULL,
+                            UNIQUE(
+                                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+                            ),
+                            FOREIGN KEY (cache_id) REFERENCES malware_scan_cache(cache_id) ON DELETE CASCADE
+                            )
+                            """
+                        )
+                    cache_columns = {str(row[1]) for row in cursor.execute("PRAGMA table_info(malware_scan_cache)").fetchall()}
+                    if {"canonical_path_key", "size_bytes", "mtime_ns", "file_identity"}.issubset(cache_columns):
+                        cursor.execute(
+                            """
+                            INSERT INTO malware_scan_cache_identities (
+                                canonical_path_key,
+                                size_bytes,
+                                mtime_ns,
+                                file_identity,
+                                scanner_backend,
+                                engine_version,
+                                database_version,
+                                database_date,
+                                scan_policy_version,
+                                cache_id,
+                                updated_at
+                            )
+                            SELECT
+                                canonical_path_key,
+                                size_bytes,
+                                mtime_ns,
+                                file_identity,
+                                scanner_backend,
+                                engine_version,
+                                database_version,
+                                database_date,
+                                scan_policy_version,
+                                cache_id,
+                                scanned_at
+                            FROM malware_scan_cache
+                            WHERE canonical_path_key IS NOT NULL
+                            ON CONFLICT(
+                                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+                            )
+                            DO UPDATE SET
+                                size_bytes = excluded.size_bytes,
+                                mtime_ns = excluded.mtime_ns,
+                                file_identity = excluded.file_identity,
+                                cache_id = excluded.cache_id,
+                                updated_at = excluded.updated_at
+                            """
+                        )
 
                 cursor.execute(
                     "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",

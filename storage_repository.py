@@ -217,10 +217,10 @@ class StorageRepositoryMixin:
                 return None
             payload = dict(row)
             if payload.get("scan_health") in {
-                "timeout",
                 "scanner_unavailable",
                 "database_missing",
                 "database_outdated",
+                "timeout",
                 "error",
                 "incomplete",
                 "limit_exceeded",
@@ -285,20 +285,21 @@ class StorageRepositoryMixin:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT *
-                FROM malware_scan_cache
-                WHERE canonical_path_key = ?
-                  AND size_bytes = ?
-                  AND mtime_ns = ?
-                  AND file_identity = ?
-                  AND scanner_backend = ?
-                  AND COALESCE(engine_version, '') = COALESCE(?, '')
-                  AND COALESCE(database_version, '') = COALESCE(?, '')
-                  AND COALESCE(database_date, '') = COALESCE(?, '')
-                  AND scan_policy_version = ?
-                  AND verdict = 'clean'
-                  AND scan_health = 'ok'
-                ORDER BY scanned_at DESC, cache_id DESC
+                SELECT cache.*, identity.size_bytes, identity.mtime_ns, identity.file_identity
+                FROM malware_scan_cache_identities AS identity
+                JOIN malware_scan_cache AS cache ON cache.cache_id = identity.cache_id
+                WHERE identity.canonical_path_key = ?
+                  AND identity.size_bytes = ?
+                  AND identity.mtime_ns = ?
+                  AND identity.file_identity = ?
+                  AND identity.scanner_backend = ?
+                  AND COALESCE(identity.engine_version, '') = COALESCE(?, '')
+                  AND COALESCE(identity.database_version, '') = COALESCE(?, '')
+                  AND COALESCE(identity.database_date, '') = COALESCE(?, '')
+                  AND identity.scan_policy_version = ?
+                  AND cache.verdict = 'clean'
+                  AND cache.scan_health = 'ok'
+                ORDER BY identity.updated_at DESC, identity.identity_id DESC
                 LIMIT 1
                 """,
                 (
@@ -351,17 +352,12 @@ class StorageRepositoryMixin:
             cursor.execute(
                 """
                 INSERT INTO malware_scan_cache (
-                    sha256, canonical_path_key, size_bytes, mtime_ns, file_identity,
                     scanner_backend, engine_version, database_version, database_date, scan_policy_version,
                     verdict, scan_health, threat_name, message, scanned_at, elapsed_seconds
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
                 DO UPDATE SET
-                    canonical_path_key = excluded.canonical_path_key,
-                    size_bytes = excluded.size_bytes,
-                    mtime_ns = excluded.mtime_ns,
-                    file_identity = excluded.file_identity,
                     verdict = excluded.verdict,
                     scan_health = excluded.scan_health,
                     threat_name = excluded.threat_name,
@@ -371,10 +367,6 @@ class StorageRepositoryMixin:
                 """,
                 (
                     sha256,
-                    canonical_path_key(canonical_path) if canonical_path else None,
-                    size_bytes,
-                    mtime_ns,
-                    file_identity,
                     result.backend,
                     result.engine_version,
                     result.database_version,
@@ -388,6 +380,68 @@ class StorageRepositoryMixin:
                     float(result.elapsed_seconds),
                 ),
             )
+            cache_id_row = cursor.execute(
+                """
+                SELECT cache_id
+                FROM malware_scan_cache
+                WHERE sha256 = ?
+                  AND scanner_backend = ?
+                  AND COALESCE(engine_version, '') = COALESCE(?, '')
+                  AND COALESCE(database_version, '') = COALESCE(?, '')
+                  AND COALESCE(database_date, '') = COALESCE(?, '')
+                  AND scan_policy_version = ?
+                LIMIT 1
+                """,
+                (
+                    sha256,
+                    result.backend,
+                    result.engine_version,
+                    result.database_version,
+                    result.database_date,
+                    scan_policy_version,
+                ),
+            ).fetchone()
+            if canonical_path and cache_id_row is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO malware_scan_cache_identities (
+                        canonical_path_key,
+                        size_bytes,
+                        mtime_ns,
+                        file_identity,
+                        scanner_backend,
+                        engine_version,
+                        database_version,
+                        database_date,
+                        scan_policy_version,
+                        cache_id,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(
+                        canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+                    )
+                    DO UPDATE SET
+                        size_bytes = excluded.size_bytes,
+                        mtime_ns = excluded.mtime_ns,
+                        file_identity = excluded.file_identity,
+                        cache_id = excluded.cache_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        canonical_path_key(canonical_path),
+                        size_bytes,
+                        mtime_ns,
+                        file_identity,
+                        result.backend,
+                        result.engine_version,
+                        result.database_version,
+                        result.database_date,
+                        scan_policy_version,
+                        int(cache_id_row[0]),
+                        utc_now_iso(),
+                    ),
+                )
             conn.commit()
             return True
         except sqlite3.Error:

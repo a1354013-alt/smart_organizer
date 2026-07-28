@@ -317,6 +317,10 @@ def _normalize_duplicate_name(path_value: str) -> str:
     return re.sub(r"([_-](copy|\d+|[a-z]))+$", "", stem)
 
 
+def _stable_name_key(value: str) -> tuple[str, str]:
+    return (value.casefold(), value)
+
+
 def _hash_file(path_obj: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str | None, str | None]:
     digest = hashlib.sha256()
     try:
@@ -341,7 +345,12 @@ def _classify_duplicates(
     deep_compare_large_files: bool,
 ) -> list[str]:
     def assign_group_id(grouped_records: list[FolderScanRecord], duplicate_type: str) -> str:
-        key_material = "|".join(sorted(canonical_path_key(record.path) for record in grouped_records))
+        if duplicate_type == SAME_CONTENT_DUPLICATE:
+            size_bytes = grouped_records[0].size_bytes
+            content_sha256, _ = _hash_file(Path(grouped_records[0].path))
+            key_material = f"{size_bytes}|{content_sha256 or ''}"
+        else:
+            key_material = "|".join(sorted((canonical_path_key(record.path) for record in grouped_records), key=_stable_name_key))
         return hashlib.sha256(f"{duplicate_type}|{key_material}".encode()).hexdigest()[:16]
 
     notes: list[str] = []
@@ -797,12 +806,12 @@ def scan_local_folder(
     notes: list[str] = []
     now = datetime.datetime.now(datetime.UTC)
     stale_delta = datetime.timedelta(days=max(0, int(stale_days)))
-    scanned = 0
+    eligible_records = 0
     visited = 0
     limit_reached = False
 
     def append_record(path_obj: Path, stat_result: os.stat_result) -> None:
-        nonlocal scanned
+        nonlocal eligible_records
         mtime = datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC)
         atime = datetime.datetime.fromtimestamp(stat_result.st_atime, tz=datetime.UTC)
         age_days = int((now - max(mtime, atime)).days)
@@ -834,9 +843,9 @@ def scan_local_folder(
                 recommendation=Recommendation.DO_NOT_TOUCH.value,
             )
         )
-        scanned += 1
+        eligible_records += 1
         if progress_callback is not None:
-            progress_callback(scanned, max_files)
+            progress_callback(eligible_records, max_files)
 
     def on_walk_error(err: OSError) -> None:
         errors.append(f"Scan error: {err}")
@@ -845,7 +854,7 @@ def scan_local_folder(
         walker = os.walk(str(root), topdown=True, onerror=on_walk_error)
         for dirpath, dirnames, filenames in walker:
             kept_dirnames: list[str] = []
-            for name in dirnames:
+            for name in sorted(dirnames, key=_stable_name_key):
                 if name == QUARANTINE_DIRNAME:
                     continue
                 dir_path = Path(dirpath) / name
@@ -858,12 +867,8 @@ def scan_local_folder(
                     continue
                 kept_dirnames.append(name)
             dirnames[:] = kept_dirnames
-            for filename in filenames:
-                if scanned >= int(max_files):
-                    limit_reached = True
-                    break
+            for filename in sorted(filenames, key=_stable_name_key):
                 path_obj = Path(dirpath) / filename
-                visited += 1
                 try:
                     stat_result = path_obj.lstat()
                     if path_obj.is_symlink():
@@ -887,8 +892,11 @@ def scan_local_folder(
                                 risk_level=RiskLevel.DO_NOT_TOUCH.value,
                             )
                         )
-                        scanned += 1
                         continue
+                    if eligible_records >= int(max_files):
+                        limit_reached = True
+                        break
+                    visited += 1
                     append_record(path_obj, stat_result)
                 except PermissionError:
                     errors.append(f"Permission denied: {path_obj}")
@@ -896,14 +904,12 @@ def scan_local_folder(
                     continue
                 except OSError as exc:
                     errors.append(f"Failed to inspect {path_obj}: {exc}")
-            if scanned >= int(max_files):
+            if limit_reached:
                 break
     else:
         try:
-            for entry in os.scandir(str(root)):
-                if scanned >= int(max_files):
-                    limit_reached = True
-                    break
+            entries = sorted(os.scandir(str(root)), key=lambda entry: _stable_name_key(entry.name))
+            for entry in entries:
                 try:
                     if entry.is_symlink():
                         stat_result = entry.stat(follow_symlinks=False)
@@ -927,14 +933,16 @@ def scan_local_folder(
                                 risk_level=RiskLevel.DO_NOT_TOUCH.value,
                             )
                         )
-                        scanned += 1
                         continue
                 except OSError:
                     continue
                 if not entry.is_file(follow_symlinks=False):
                     continue
-                visited += 1
+                if eligible_records >= int(max_files):
+                    limit_reached = True
+                    break
                 try:
+                    visited += 1
                     append_record(Path(entry.path), entry.stat(follow_symlinks=False))
                 except PermissionError:
                     errors.append(f"Permission denied: {entry.path}")
@@ -968,7 +976,7 @@ def scan_local_folder(
     quarantine_items, manifest_warnings = load_quarantine_items_with_warnings(str(root))
     errors.extend(manifest_warnings)
     stats = FolderScanStats(
-        scanned_files=scanned,
+        scanned_files=eligible_records,
         visited_files=visited,
         total_bytes=sum(item.size_bytes for item in records),
         stale_candidates=sum(1 for item in records if item.is_stale),
