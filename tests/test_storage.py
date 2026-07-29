@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 import storage_base
+from malware_scanner import MalwareScanResult, _file_identity, file_sha256
+from path_utils import canonical_path_key
 from sqlite_utils import open_sqlite
 from storage import StorageManager
 
@@ -36,6 +38,328 @@ def _page_items(page: dict[str, object]) -> list[Mapping[str, object]]:
     items = page.get("items")
     assert isinstance(items, list)
     return items
+
+
+def _make_cache_storage(tmp_path: Path) -> tuple[StorageManager, Path]:
+    db_path = tmp_path / "cache.db"
+    storage = StorageManager(str(db_path), str(tmp_path / "repo"), str(tmp_path / "uploads"))
+    return storage, db_path
+
+
+def _build_cache_result(
+    file_path: Path,
+    *,
+    verdict: str = "clean",
+    scan_health: str = "ok",
+    backend: str = "clamd",
+    engine_version: str = "1.4.3",
+    database_version: str = "12345",
+    database_date: str = "2026-07-28",
+    message: str = "OK",
+    elapsed_seconds: float = 0.25,
+) -> tuple[MalwareScanResult, str, int, int, str]:
+    sha256 = file_sha256(file_path)
+    size_bytes, mtime_ns, file_identity = _file_identity(file_path)
+    assert size_bytes is not None
+    assert mtime_ns is not None
+    assert file_identity is not None
+    return (
+        MalwareScanResult(
+            verdict=verdict,  # type: ignore[arg-type]
+            scan_health=scan_health,  # type: ignore[arg-type]
+            scanner="ClamAV",
+            file_path=str(file_path.resolve()),
+            backend=backend,
+            engine_version=engine_version,
+            database_version=database_version,
+            database_date=database_date,
+            message=message,
+            elapsed_seconds=elapsed_seconds,
+            file_sha256=sha256,
+            file_size=size_bytes,
+            file_mtime_ns=mtime_ns,
+            file_inode=file_identity,
+        ),
+        sha256,
+        size_bytes,
+        mtime_ns,
+        file_identity,
+    )
+
+
+def _cache_counts(db_path: Path) -> tuple[int, int]:
+    with open_sqlite(db_path) as conn:
+        content_rows = int(conn.execute("SELECT COUNT(*) FROM malware_scan_cache").fetchone()[0])
+        identity_rows = int(conn.execute("SELECT COUNT(*) FROM malware_scan_cache_identities").fetchone()[0])
+    return content_rows, identity_rows
+
+
+def test_malware_cache_clean_write_persists_content_and_identity_rows(tmp_path: Path):
+    storage, db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "sample.bin"
+    file_path.write_bytes(b"cache me")
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(file_path)
+
+    saved = storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    )
+
+    assert saved is True
+    assert _cache_counts(db_path) == (1, 1)
+    with open_sqlite(db_path) as conn:
+        content_row = conn.execute(
+            """
+            SELECT sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version,
+                   verdict, scan_health
+            FROM malware_scan_cache
+            """
+        ).fetchone()
+        identity_row = conn.execute(
+            """
+            SELECT canonical_path_key, size_bytes, mtime_ns, file_identity, cache_id
+            FROM malware_scan_cache_identities
+            """
+        ).fetchone()
+    assert content_row == (
+        sha256,
+        "clamd",
+        "1.4.3",
+        "12345",
+        "2026-07-28",
+        "standard-v1",
+        "clean",
+        "ok",
+    )
+    assert identity_row is not None
+    assert identity_row[0] == canonical_path_key(str(file_path.resolve()))
+    assert identity_row[1] == size_bytes
+    assert identity_row[2] == mtime_ns
+    assert identity_row[3] == file_identity
+    assert int(identity_row[4]) > 0
+    storage.close()
+
+
+def test_malware_cache_content_and_unchanged_lookups_succeed_after_valid_write(tmp_path: Path):
+    storage, _db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "lookup.bin"
+    file_path.write_bytes(b"lookup payload")
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(file_path)
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    content_hit = storage.get_malware_scan_cache_by_content(
+        sha256=sha256,
+        scanner_backend="clamd",
+        engine_version="1.4.3",
+        database_version="12345",
+        database_date="2026-07-28",
+        scan_policy_version="standard-v1",
+    )
+    unchanged_hit = storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        scanner_backend="clamd",
+        engine_version="1.4.3",
+        database_version="12345",
+        database_date="2026-07-28",
+        scan_policy_version="standard-v1",
+    )
+
+    assert content_hit is not None
+    assert content_hit["verdict"] == "clean"
+    assert content_hit["scan_health"] == "ok"
+    assert content_hit["sha256"] == sha256
+    assert int(content_hit["cache_id"]) > 0
+    assert unchanged_hit is not None
+    assert unchanged_hit["verdict"] == "clean"
+    assert unchanged_hit["scan_health"] == "ok"
+    assert unchanged_hit["cache_id"] == content_hit["cache_id"]
+    storage.close()
+
+
+def test_malware_cache_identical_files_share_content_row_but_keep_separate_identities(tmp_path: Path):
+    storage, db_path = _make_cache_storage(tmp_path)
+    first = tmp_path / "first.bin"
+    second = tmp_path / "second.bin"
+    shared_bytes = b"same bytes"
+    first.write_bytes(shared_bytes)
+    second.write_bytes(shared_bytes)
+    first_result, sha256, first_size, first_mtime_ns, first_identity = _build_cache_result(first)
+    second_result, _, second_size, second_mtime_ns, second_identity = _build_cache_result(second)
+
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(first.resolve()),
+        size_bytes=first_size,
+        mtime_ns=first_mtime_ns,
+        file_identity=first_identity,
+        result=first_result,
+        scan_policy_version="standard-v1",
+    ) is True
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(second.resolve()),
+        size_bytes=second_size,
+        mtime_ns=second_mtime_ns,
+        file_identity=second_identity,
+        result=second_result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    assert _cache_counts(db_path) == (1, 2)
+    assert storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(first.resolve()),
+        size_bytes=first_size,
+        mtime_ns=first_mtime_ns,
+        file_identity=first_identity,
+        scanner_backend="clamd",
+        engine_version="1.4.3",
+        database_version="12345",
+        database_date="2026-07-28",
+        scan_policy_version="standard-v1",
+    ) is not None
+    assert storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(second.resolve()),
+        size_bytes=second_size,
+        mtime_ns=second_mtime_ns,
+        file_identity=second_identity,
+        scanner_backend="clamd",
+        engine_version="1.4.3",
+        database_version="12345",
+        database_date="2026-07-28",
+        scan_policy_version="standard-v1",
+    ) is not None
+    storage.close()
+
+
+def test_malware_cache_same_path_upsert_updates_identity_without_duplicate(tmp_path: Path):
+    storage, db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "update.bin"
+    file_path.write_bytes(b"stable content")
+    first_result, sha256, size_bytes, first_mtime_ns, file_identity = _build_cache_result(file_path, elapsed_seconds=0.25)
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=first_mtime_ns,
+        file_identity=file_identity,
+        result=first_result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    os.utime(file_path, ns=(first_mtime_ns + 5_000_000, first_mtime_ns + 5_000_000))
+    second_result, _, _size_bytes, second_mtime_ns, second_identity = _build_cache_result(file_path, elapsed_seconds=0.5)
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=second_mtime_ns,
+        file_identity=second_identity,
+        result=second_result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    assert _cache_counts(db_path) == (1, 1)
+    with open_sqlite(db_path) as conn:
+        identity_row = conn.execute(
+            "SELECT mtime_ns, file_identity FROM malware_scan_cache_identities"
+        ).fetchone()
+    assert identity_row == (second_mtime_ns, second_identity)
+    storage.close()
+
+
+@pytest.mark.parametrize(
+    ("engine_version", "database_version", "database_date", "scan_policy_version"),
+    [
+        ("1.4.4", "12345", "2026-07-28", "standard-v1"),
+        ("1.4.3", "99999", "2026-07-28", "standard-v1"),
+        ("1.4.3", "12345", "2026-07-27", "standard-v1"),
+        ("1.4.3", "12345", "2026-07-28", "strict-v1"),
+    ],
+)
+def test_malware_cache_compatibility_dimensions_must_match(
+    tmp_path: Path,
+    engine_version: str,
+    database_version: str,
+    database_date: str,
+    scan_policy_version: str,
+):
+    storage, _db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "compat.bin"
+    file_path.write_bytes(b"compat payload")
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(file_path)
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    assert storage.get_malware_scan_cache_by_content(
+        sha256=sha256,
+        scanner_backend="clamd",
+        engine_version=engine_version,
+        database_version=database_version,
+        database_date=database_date,
+        scan_policy_version=scan_policy_version,
+    ) is None
+    assert storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        scanner_backend="clamd",
+        engine_version=engine_version,
+        database_version=database_version,
+        database_date=database_date,
+        scan_policy_version=scan_policy_version,
+    ) is None
+    storage.close()
+
+
+@pytest.mark.parametrize("scan_health", ["timeout", "error", "incomplete", "database_outdated", "mode_excluded"])
+def test_malware_cache_rejects_non_reusable_healths(tmp_path: Path, scan_health: str):
+    storage, db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / f"{scan_health}.bin"
+    file_path.write_bytes(scan_health.encode("utf-8"))
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(
+        file_path,
+        verdict="not_scanned",
+        scan_health=scan_health,
+        message=scan_health,
+    )
+
+    saved = storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    )
+
+    assert saved is False
+    assert _cache_counts(db_path) == (0, 0)
+    storage.close()
 
 
 def test_create_temp_file_and_duplicate_detection():

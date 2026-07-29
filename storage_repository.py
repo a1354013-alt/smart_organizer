@@ -352,6 +352,7 @@ class StorageRepositoryMixin:
             cursor.execute(
                 """
                 INSERT INTO malware_scan_cache (
+                    sha256,
                     scanner_backend, engine_version, database_version, database_date, scan_policy_version,
                     verdict, scan_health, threat_name, message, scanned_at, elapsed_seconds
                 )
