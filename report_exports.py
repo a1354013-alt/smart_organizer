@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
 
+from i18n import get_current_language
 from topic_taxonomy import topic_display_label
 
 
@@ -105,8 +106,9 @@ def export_rows_to_markdown(
     return "\n".join(lines) + "\n"
 
 
-def export_records_csv(records: list[dict[str, object]]) -> str:
+def export_records_csv(records: list[dict[str, object]], *, locale: str | None = None) -> str:
     buffer = StringIO()
+    active_locale = locale or get_current_language()
     fieldnames = [
         "file_id",
         "original_name",
@@ -127,12 +129,13 @@ def export_records_csv(records: list[dict[str, object]]) -> str:
     for record in records:
         row = {key: record.get(key) for key in fieldnames}
         row["created_at"] = format_timestamp_for_export(record.get("created_at"))
-        row["main_topic"] = topic_display_label(record.get("main_topic"))
+        row["main_topic"] = topic_display_label(record.get("main_topic"), locale=active_locale)
         writer.writerow(row)
     return buffer.getvalue()
 
 
-def export_records_markdown(records: list[dict[str, object]]) -> str:
+def export_records_markdown(records: list[dict[str, object]], *, locale: str | None = None) -> str:
+    active_locale = locale or get_current_language()
     lines = [
         "# Filtered Records Export",
         "",
@@ -149,7 +152,7 @@ def export_records_markdown(records: list[dict[str, object]]) -> str:
                     escape_markdown_table_cell(record.get("file_id")),
                     escape_markdown_table_cell(record.get("original_name")),
                     escape_markdown_table_cell(record.get("file_type")),
-                    escape_markdown_table_cell(topic_display_label(record.get("main_topic"))),
+                    escape_markdown_table_cell(topic_display_label(record.get("main_topic"), locale=active_locale)),
                     escape_markdown_table_cell(record.get("summary_status")),
                     escape_markdown_table_cell(record.get("status")),
                     escape_markdown_table_cell(format_timestamp_for_export(record.get("created_at"))),

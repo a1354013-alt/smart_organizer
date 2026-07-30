@@ -119,7 +119,10 @@ class StorageRecoveryMixin:
             safe_name = file_info.get("safe_name") or FileUtils.sanitize_filename(
                 Path(original_name or file_info.get("original_name") or "").name
             )
-            final_name = FileUtils.sanitize_filename(f"{normalized_date}_{main_topic}_{safe_name}")
+            final_name = FileUtils.fit_filename_component(
+                f"{normalized_date}_{main_topic}_{safe_name}",
+                prefix=f"{normalized_date}_{main_topic}_",
+            )
 
             if self._mem_files is not None:
                 with self._mem_files_lock:
@@ -163,8 +166,12 @@ class StorageRecoveryMixin:
                         if self._path_exists(target_path):
                             try:
                                 self._remove_path(target_path)
-                            except Exception:
-                                logger.warning("Failed to remove partial target%s", _log_context(file_id=file_id, target=target_path), exc_info=True)
+                            except OSError:
+                                logger.warning(
+                                    "Failed to remove partial target%s",
+                                    _log_context(file_id=file_id, target=target_path),
+                                    exc_info=True,
+                                )
 
                         msg = str(copy_err)
                         if len(msg) > 400:

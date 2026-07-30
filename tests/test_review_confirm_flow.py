@@ -24,9 +24,9 @@ def _result(file_id: int = 1) -> AnalysisResult:
         original_name="invoice.pdf",
         file_type="document",
         standard_date="2026-01-01",
-        main_topic="Invoices",
-        suggested_main_topic="Invoices",
-        tag_scores={"Invoices": 1.0},
+        main_topic="document.invoice",
+        suggested_main_topic="document.invoice",
+        tag_scores={"document.invoice": 1.0},
         classification_reason="rule matched",
         final_decision_reason="rule decision",
         metadata=_metadata(),
@@ -47,23 +47,23 @@ def test_build_confirmed_results_accepts_review_flow_kwargs():
     confirmed = build_confirmed_results(
         [_result()],
         processor=StubProcessor(),
-        selected_topics={1: "Tax"},
+        selected_topics={1: "document.contract"},
         summaries={1: "manual summary"},
     )
 
     assert len(confirmed) == 1
     item = confirmed[0]
-    assert item.main_topic == "Tax"
+    assert item.main_topic == "document.contract"
     assert item.summary == "manual summary"
     assert item.manual_override is True
-    assert item.tag_scores["Tax"] == 1.0
+    assert item.tag_scores["document.contract"] == 1.0
 
 
 def test_build_confirmed_results_keeps_execute_flow_shape():
     confirmed = build_confirmed_results(
         [_result()],
         processor=StubProcessor(),
-        selected_topics={1: "Invoices"},
+        selected_topics={1: "document.invoice"},
         summaries={1: "kept summary"},
     )
 
@@ -100,4 +100,4 @@ def test_build_confirmed_results_handles_multiple_items_and_summaries():
 
 def test_review_manual_override_requires_processor_safety_gate():
     with pytest.raises(ValueError, match="processor is required"):
-        build_confirmed_results([_result()], selected_topics={1: "Tax"})
+        build_confirmed_results([_result()], selected_topics={1: "document.contract"})

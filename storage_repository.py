@@ -120,9 +120,14 @@ class StorageRepositoryMixin:
         return "document"
 
     def _build_unique_temp_name(self, file_hash: str, safe_name: str) -> str:
-        normalized_hash = (str(file_hash or "").strip().lower() or uuid.uuid4().hex)
-        unique_suffix = uuid.uuid4().hex
-        return f"{normalized_hash}_{unique_suffix}_{Path(safe_name).name}"
+        normalized_hash = (str(file_hash or "").strip().lower() or uuid.uuid4().hex)[:16]
+        unique_suffix = uuid.uuid4().hex[:12]
+        prefix = f"{normalized_hash}_{unique_suffix}_"
+        fitted_name = FileUtils.fit_filename_component(
+            Path(safe_name).name,
+            prefix=prefix,
+        )
+        return f"{prefix}{fitted_name}"
 
     def _resolve_preview_path_for_update(
         self,
@@ -963,12 +968,12 @@ class StorageRepositoryMixin:
     def get_recent_records(self: Any, *, limit: int = 500) -> list[dict[str, object]]:
         return self.get_records_page(limit=limit, offset=0)["items"]
 
-    def get_record_filter_values(self: Any) -> dict[str, list[str]]:
+    def get_record_filter_values(self: Any) -> Mapping[str, object]:
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            values: dict[str, list[str]] = {}
+            values: dict[str, object] = {}
             for field in ("status", "main_topic", "file_type"):
                 cursor.execute(
                     f"SELECT DISTINCT COALESCE({field}, '') FROM files WHERE COALESCE({field}, '') <> '' ORDER BY {field}"
@@ -982,7 +987,7 @@ class StorageRepositoryMixin:
             return values
         except sqlite3.Error as exc:
             logger.error("get_record_filter_values failed: %s", exc)
-            return {"status": [], "main_topic": [], "file_type": []}
+            return {"status": [], "main_topic": [], "file_type": [], "ok": False, "error": str(exc)}
         finally:
             if conn:
                 conn.close()
@@ -1069,10 +1074,15 @@ class StorageRepositoryMixin:
                 """,
                 tuple(query_params),
             )
-            return {"items": [self._normalize_record_row(dict(row)) for row in cursor.fetchall()], "total": total}
+            return {
+                "items": [self._normalize_record_row(dict(row)) for row in cursor.fetchall()],
+                "total": total,
+                "ok": True,
+                "error": None,
+            }
         except sqlite3.Error as exc:
             logger.error("get_records_page failed: %s", exc)
-            return {"items": [], "total": 0}
+            return {"items": [], "total": 0, "ok": False, "error": str(exc)}
         finally:
             if conn:
                 conn.close()

@@ -4,6 +4,7 @@ import logging
 
 from core import FileProcessor
 from services_models import AnalysisResult, SummarySuggestion
+from topic_taxonomy import normalize_topic_key
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,9 @@ def apply_manual_topic_override(
     chosen_topic: str,
     summary: str | None = None,
 ) -> AnalysisResult:
-    suggested = result.suggested_main_topic or result.main_topic
-    chosen_topic = chosen_topic or result.main_topic
+    suggested = normalize_topic_key(result.suggested_main_topic or result.main_topic)
+    current = normalize_topic_key(result.main_topic)
+    chosen_topic = normalize_topic_key(chosen_topic or current)
     manual = bool(chosen_topic and chosen_topic != suggested)
     reason = (
         f"Manual override from '{suggested}' to '{chosen_topic}'."
@@ -36,8 +38,8 @@ def apply_manual_topic_override(
         original_name=result.original_name,
         file_type=result.file_type,
         standard_date=result.standard_date,
-        main_topic=chosen_topic,
-        suggested_main_topic=result.suggested_main_topic,
+        main_topic=chosen_topic or current,
+        suggested_main_topic=suggested or result.suggested_main_topic,
         tag_scores=dict(synced or {}),
         classification_reason=result.classification_reason,
         final_decision_reason=reason,
@@ -104,10 +106,11 @@ def build_confirmed_results(
         raise ValueError("processor is required when selected_topics are provided")
 
     for result in results:
-        chosen_topic = selected_topics.get(result.file_id, result.main_topic)
+        chosen_topic = normalize_topic_key(selected_topics.get(result.file_id, result.main_topic))
         summary = summaries.get(result.file_id, result.summary)
 
-        if processor is not None and (chosen_topic != result.main_topic or summary != result.summary):
+        current_topic = normalize_topic_key(result.main_topic)
+        if processor is not None and (chosen_topic != current_topic or summary != result.summary):
             confirmed_result = apply_manual_topic_override(
                 result,
                 processor=processor,

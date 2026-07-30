@@ -45,6 +45,14 @@ def test_sanitize_filename_truncates_stem_but_preserves_extension_within_limit()
     assert sanitized[:-5] == "a" * (32 - len(".jpeg"))
 
 
+def test_fit_filename_component_respects_utf8_byte_budget_and_extension():
+    raw_name = f"{'測試文件' * 40}.pdf"
+    fitted = FileUtils.fit_filename_component(raw_name, prefix="1234567890_", suffix=".part", max_bytes=120)
+
+    assert fitted.endswith(".pdf")
+    assert len(fitted.encode("utf-8")) <= 120 - len(b"1234567890_") - len(b".part")
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

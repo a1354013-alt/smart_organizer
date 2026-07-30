@@ -123,15 +123,32 @@ class AsyncProcessor:
                             future_to_index.pop(future, None)
                             if progress_callback:
                                 progress_callback(progress)
-                    remaining = len(items) - next_index
-                    if remaining > 0:
-                        progress.skipped_count += remaining
-                        progress.current += remaining
-                        for idx in range(next_index, len(items)):
+                    for idx in range(next_index, len(items)):
+                        if item_statuses[idx] == "PENDING":
+                            progress.skipped_count += 1
+                            progress.current += 1
                             item_statuses[idx] = "SKIPPED"
-                    break
+                    if not future_to_index:
+                        break
+                    continue
 
                 submit_until_full()
+
+        for idx, status in enumerate(item_statuses):
+            if status == "PENDING":
+                item_statuses[idx] = "SKIPPED" if progress.cancelled else "FAILED"
+                if progress.cancelled:
+                    progress.skipped_count += 1
+                else:
+                    progress.failed_count += 1
+                progress.current += 1
+            elif status == "RUNNING":
+                item_statuses[idx] = "CANCELLED" if progress.cancelled else "FAILED"
+                if progress.cancelled:
+                    progress.cancelled_count += 1
+                else:
+                    progress.failed_count += 1
+                progress.current += 1
 
         return BatchProcessResult(
             results=[result for result in results if result is not None],

@@ -28,6 +28,7 @@ class FileUtils:
         }
     )
     _INVALID_FILENAME_CHARS = re.compile(r'[\\/*?:"<>|]')
+    MAX_PATH_COMPONENT_BYTES = 180
 
     @staticmethod
     def truncate_text(text: object, max_chars: object) -> tuple[str, bool]:
@@ -58,6 +59,30 @@ class FileUtils:
         cleaned_name = FileUtils._avoid_windows_reserved_name(cleaned_name, max_length=max_name_length)
 
         return f"{cleaned_name}{cleaned_ext}"
+
+    @staticmethod
+    def fit_filename_component(
+        filename: str,
+        *,
+        prefix: str = "",
+        suffix: str = "",
+        max_bytes: int | None = None,
+    ) -> str:
+        budget = max(32, int(max_bytes or FileUtils.MAX_PATH_COMPONENT_BYTES))
+        sanitized = FileUtils.sanitize_filename(filename, max_length=budget)
+        stem, ext = os.path.splitext(sanitized)
+        ext = FileUtils._sanitize_extension(ext, total_limit=budget)
+        if not stem:
+            stem = "untitled_file"
+
+        reserved_bytes = len(prefix.encode("utf-8")) + len(suffix.encode("utf-8")) + len(ext.encode("utf-8"))
+        stem_budget = max(1, budget - reserved_bytes)
+        while len(stem.encode("utf-8")) > stem_budget and stem:
+            stem = stem[:-1].rstrip(" .")
+        stem = FileUtils._avoid_windows_reserved_name(stem or "untitled_file", max_length=max(1, stem_budget))
+        while len(stem.encode("utf-8")) > stem_budget and stem:
+            stem = stem[:-1].rstrip(" .")
+        return f"{stem or 'file'}{ext}"
 
     @staticmethod
     def _sanitize_filename_part(value: str) -> str:

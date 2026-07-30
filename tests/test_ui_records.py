@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 
 from i18n import t
 from storage import StorageManager
@@ -148,6 +149,19 @@ def test_record_filter_values_reflect_loaded_history_states():
     assert "RESTORED" in values["status"]
     assert "QUARANTINED" in values["status"]
     assert values["main_topic"] == ["Archive"]
+
+
+def test_record_filter_values_surface_database_errors():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    storage._get_connection = lambda *args, **kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("db unavailable"))  # type: ignore[method-assign]
+
+    values = storage.get_record_filter_values()
+
+    assert values["status"] == []
+    assert values["main_topic"] == []
+    assert values["file_type"] == []
+    assert values["ok"] is False
+    assert values["error"]
 
 
 def test_get_all_records_paginates_beyond_recent_limit():

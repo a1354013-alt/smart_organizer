@@ -890,6 +890,18 @@ def test_get_records_page_searches_by_tag_and_preserves_all_tags():
     assert "Utilities" in str(items[0]["all_tags"])
 
 
+def test_get_records_page_surfaces_database_errors():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    storage._get_connection = lambda *args, **kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("db unavailable"))  # type: ignore[method-assign]
+
+    page = storage.get_records_page()
+
+    assert page["items"] == []
+    assert page["total"] == 0
+    assert page["ok"] is False
+    assert page["error"]
+
+
 def test_search_content_returns_plain_text_snippets_without_html_tags():
     storage = StorageManager(":memory:", ":memory:", ":memory:")
 

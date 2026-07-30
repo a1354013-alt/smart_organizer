@@ -23,6 +23,8 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
         <div style="display:none"></div>
         <script>
         (function () {
+          const OWNED_PREFIXES = ["smart_organizer:", "smart-organizer:", "streamlit:"];
+
           function previewValue(value) {
             if (value === null || value === undefined) return String(value);
             const text = String(value);
@@ -65,6 +67,7 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
             }
 
             for (const key of keys) {
+              if (!OWNED_PREFIXES.some((prefix) => String(key).startsWith(prefix))) continue;
               let raw;
               try {
                 raw = storage.getItem(key);
@@ -80,7 +83,7 @@ def inject_browser_storage_sanitizer(*, enabled: bool = True) -> None:
               const parsed = safeParse(text, key, storageName);
               if (parsed !== null) continue;
 
-              // Looks JSON-like but cannot be parsed, so remove it to avoid downstream crashes.
+              // Only remove malformed values owned by Smart Organizer / Streamlit state.
               try {
                 storage.removeItem(key);
                 try {

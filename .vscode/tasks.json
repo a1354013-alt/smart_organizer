@@ -4,7 +4,7 @@
     {
       "label": "Smart Organizer: Install runtime dependencies",
       "type": "shell",
-      "command": "python -m pip install -r requirements.txt",
+      "command": "python -m pip install -r requirements.lock.txt",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -13,7 +13,7 @@
     {
       "label": "Smart Organizer: Install dev dependencies",
       "type": "shell",
-      "command": "python -m pip install -r requirements.txt -r requirements-dev.txt",
+      "command": "python -m pip install -r requirements.lock.txt -r requirements-dev.lock.txt",
       "options": {
         "cwd": "${workspaceFolder}"
       },

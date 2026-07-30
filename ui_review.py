@@ -4,14 +4,14 @@ import logging
 
 import streamlit as st
 
-from core import DOCUMENT_TAGS, PHOTO_TAGS, VIDEO_TAGS
-from i18n import t
+from i18n import get_current_language, t
 from services import (
     AnalysisResult,
     apply_manual_topic_override,
     build_confirmed_results,
     generate_summary_suggestion,
 )
+from topic_taxonomy import canonical_topics_for_file_type, normalize_topic_key, topic_display_label
 from ui_common import UIContext, handle_ui_exception, is_debug, safe_display_text
 from ui_renderers import render_video_details
 
@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 def _tag_options_for(file_type: str) -> list[str]:
-    if file_type == "document":
-        return list(DOCUMENT_TAGS)
-    if file_type == "photo":
-        return list(PHOTO_TAGS)
-    if file_type == "video":
-        return list(VIDEO_TAGS)
-    return list(DOCUMENT_TAGS)
+    return list(canonical_topics_for_file_type(file_type))
+
+
+def _ai_summary_disclosure(locale: str) -> str:
+    if locale == "zh-TW":
+        return "AI 摘要為選用功能，會將最多約 6000 個擷取字元傳送到已設定的外部 OpenAI 服務。"
+    return "AI summary is optional and sends up to about 6000 extracted characters to the configured external OpenAI service."
 
 
 def render_review(context: UIContext) -> None:
@@ -45,9 +45,12 @@ def render_review(context: UIContext) -> None:
 
     analysis_results: list[AnalysisResult] = analysis_results_raw
     selected_topics: dict[int, str] = {}
+    review_warnings: list[str] = []
+    locale = get_current_language()
 
     for idx, result in enumerate(analysis_results):
         safe_name = safe_display_text(result.original_name)
+        normalized_main_topic = normalize_topic_key(result.main_topic)
         with st.expander(f"{idx + 1}. {safe_name}", expanded=(idx == 0)):
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -88,22 +91,40 @@ def render_review(context: UIContext) -> None:
                     note_lines = notes if isinstance(notes, list) else [str(notes)]
                     st.info(f"{t('review.notes')}\n- " + "\n- ".join(safe_display_text(note) for note in note_lines))
 
-                tag_options = _tag_options_for(result.file_type) or ["Unclassified"]
-                current_index = tag_options.index(result.main_topic) if result.main_topic in tag_options else 0
-                new_topic = st.selectbox(
-                    t("review.topic_label"),
-                    tag_options,
-                    index=current_index,
-                    key=f"topic_{idx}_{result.file_id}",
-                )
-                selected_topics[result.file_id] = new_topic
+                tag_options = _tag_options_for(result.file_type)
+                if normalized_main_topic not in tag_options:
+                    review_warnings.append(
+                        f"{result.original_name}: unknown topic '{result.main_topic}' is not being auto-converted."
+                    )
+                select_index = tag_options.index(normalized_main_topic) if normalized_main_topic in tag_options else None
+                try:
+                    new_topic = st.selectbox(
+                        t("review.topic_label"),
+                        tag_options,
+                        index=select_index if select_index is not None else 0,
+                        key=f"topic_{idx}_{result.file_id}",
+                        format_func=lambda key: topic_display_label(key, locale=locale),
+                    )
+                except TypeError:
+                    new_topic = st.selectbox(
+                        t("review.topic_label"),
+                        tag_options,
+                        index=select_index if select_index is not None else 0,
+                        key=f"topic_{idx}_{result.file_id}",
+                    )
+                selected_topics[result.file_id] = normalize_topic_key(new_topic)
+                if select_index is None:
+                    st.warning(
+                        t("review.topic_preview_failed")
+                        + f" Current stored topic: {safe_display_text(result.main_topic)}"
+                    )
 
                 computed = result
                 try:
                     computed = apply_manual_topic_override(
                         result,
                         processor=context.processor,
-                        chosen_topic=new_topic,
+                        chosen_topic=normalize_topic_key(new_topic),
                         summary=st.session_state.review_summaries.get(result.file_id),
                     )
                     st.caption(t("review.classification_reason"))
@@ -114,6 +135,7 @@ def render_review(context: UIContext) -> None:
                     logger.exception("manual override preview failed")
                     handle_ui_exception(t("review.topic_preview_failed"), exc)
 
+                st.caption(safe_display_text(_ai_summary_disclosure(locale)))
                 if st.button(t("review.generate_ai_summary"), key=f"summary_{idx}_{result.file_id}"):
                     if not st.session_state.get("ai_enabled"):
                         st.warning(t("review.enable_ai_first"))
@@ -137,6 +159,9 @@ def render_review(context: UIContext) -> None:
                 saved_summary = st.session_state.review_summaries.get(result.file_id) or result.summary
                 if saved_summary:
                     st.write(f"**{t('review.summary_label')}**: {safe_display_text(saved_summary)}")
+
+    for warning in review_warnings:
+        st.warning(safe_display_text(warning))
 
     if st.button(t("review.confirm_button"), key="confirm_button"):
         try:
