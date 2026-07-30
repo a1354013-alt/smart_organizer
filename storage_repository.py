@@ -29,6 +29,12 @@ def _is_relative_to(child: Path, parent: Path) -> bool:
         return False
 
 
+def _normalize_cache_compatibility_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 class CreateTempFileResult(TypedDict, total=False):
     success: bool
     reason: str
@@ -192,6 +198,9 @@ class StorageRepositoryMixin:
         database_date: str | None,
         scan_policy_version: str,
     ) -> dict[str, object] | None:
+        normalized_engine_version = _normalize_cache_compatibility_value(engine_version)
+        normalized_database_version = _normalize_cache_compatibility_value(database_version)
+        normalized_database_date = _normalize_cache_compatibility_value(database_date)
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -210,7 +219,14 @@ class StorageRepositoryMixin:
                 ORDER BY scanned_at DESC, cache_id DESC
                 LIMIT 1
                 """,
-                (sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version),
+                (
+                    sha256,
+                    scanner_backend,
+                    normalized_engine_version,
+                    normalized_database_version,
+                    normalized_database_date,
+                    scan_policy_version,
+                ),
             )
             row = cursor.fetchone()
             if row is None:
@@ -278,6 +294,9 @@ class StorageRepositoryMixin:
     ) -> dict[str, object] | None:
         if not file_identity:
             return None
+        normalized_engine_version = _normalize_cache_compatibility_value(engine_version)
+        normalized_database_version = _normalize_cache_compatibility_value(database_version)
+        normalized_database_date = _normalize_cache_compatibility_value(database_date)
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -308,9 +327,9 @@ class StorageRepositoryMixin:
                     mtime_ns,
                     file_identity,
                     scanner_backend,
-                    engine_version,
-                    database_version,
-                    database_date,
+                    normalized_engine_version,
+                    normalized_database_version,
+                    normalized_database_date,
                     scan_policy_version,
                 ),
             )
@@ -345,6 +364,9 @@ class StorageRepositoryMixin:
             "mode_excluded",
         }:
             return False
+        normalized_engine_version = _normalize_cache_compatibility_value(result.engine_version)
+        normalized_database_version = _normalize_cache_compatibility_value(result.database_version)
+        normalized_database_date = _normalize_cache_compatibility_value(result.database_date)
         conn: sqlite3.Connection | None = None
         try:
             conn = self._get_connection()
@@ -369,9 +391,9 @@ class StorageRepositoryMixin:
                 (
                     sha256,
                     result.backend,
-                    result.engine_version,
-                    result.database_version,
-                    result.database_date,
+                    normalized_engine_version,
+                    normalized_database_version,
+                    normalized_database_date,
                     scan_policy_version,
                     result.verdict,
                     result.scan_health,
@@ -396,9 +418,9 @@ class StorageRepositoryMixin:
                 (
                     sha256,
                     result.backend,
-                    result.engine_version,
-                    result.database_version,
-                    result.database_date,
+                    normalized_engine_version,
+                    normalized_database_version,
+                    normalized_database_date,
                     scan_policy_version,
                 ),
             ).fetchone()
@@ -435,9 +457,9 @@ class StorageRepositoryMixin:
                         mtime_ns,
                         file_identity,
                         result.backend,
-                        result.engine_version,
-                        result.database_version,
-                        result.database_date,
+                        normalized_engine_version,
+                        normalized_database_version,
+                        normalized_database_date,
                         scan_policy_version,
                         int(cache_id_row[0]),
                         utc_now_iso(),

@@ -97,14 +97,10 @@ class StorageSchemaMixin:
                 CREATE TABLE IF NOT EXISTS malware_scan_cache (
                     cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     sha256 TEXT NOT NULL,
-                    canonical_path_key TEXT,
-                    size_bytes INTEGER,
-                    mtime_ns INTEGER,
-                    file_identity TEXT,
                     scanner_backend TEXT NOT NULL,
-                    engine_version TEXT,
-                    database_version TEXT,
-                    database_date TEXT,
+                    engine_version TEXT NOT NULL DEFAULT '',
+                    database_version TEXT NOT NULL DEFAULT '',
+                    database_date TEXT NOT NULL DEFAULT '',
                     scan_policy_version TEXT NOT NULL,
                     verdict TEXT NOT NULL,
                     scan_health TEXT NOT NULL,
@@ -124,13 +120,34 @@ class StorageSchemaMixin:
             )
             cursor.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
-                ON malware_scan_cache(
-                    canonical_path_key, size_bytes, mtime_ns, file_identity,
-                    scanner_backend, engine_version, database_version, database_date, scan_policy_version,
-                    verdict, scan_health
+                CREATE TABLE IF NOT EXISTS malware_scan_cache_identities (
+                    identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    canonical_path_key TEXT NOT NULL,
+                    size_bytes INTEGER,
+                    mtime_ns INTEGER,
+                    file_identity TEXT,
+                    scanner_backend TEXT NOT NULL,
+                    engine_version TEXT NOT NULL DEFAULT '',
+                    database_version TEXT NOT NULL DEFAULT '',
+                    database_date TEXT NOT NULL DEFAULT '',
+                    scan_policy_version TEXT NOT NULL,
+                    cache_id INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(
+                        canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+                    ),
+                    FOREIGN KEY (cache_id) REFERENCES malware_scan_cache(cache_id) ON DELETE CASCADE
                 )
-            """
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
+                ON malware_scan_cache_identities(
+                    canonical_path_key, size_bytes, mtime_ns, file_identity,
+                    scanner_backend, engine_version, database_version, database_date, scan_policy_version, cache_id
+                )
+                """
             )
             cursor.execute(
                 "INSERT OR IGNORE INTO sys_config (key, value) VALUES (?, ?)",

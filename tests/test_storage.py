@@ -192,6 +192,163 @@ def test_malware_cache_content_and_unchanged_lookups_succeed_after_valid_write(t
     storage.close()
 
 
+def test_malware_cache_none_compatibility_values_normalize_without_duplicates(tmp_path: Path):
+    storage, db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "nullable-compat.bin"
+    file_path.write_bytes(b"nullable compatibility payload")
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(
+        file_path,
+        engine_version="",
+        database_version="",
+        database_date="",
+    )
+    result = MalwareScanResult(
+        verdict=result.verdict,
+        scan_health=result.scan_health,
+        scanner=result.scanner,
+        file_path=result.file_path,
+        backend=result.backend,
+        threat_name=result.threat_name,
+        message=result.message,
+        elapsed_seconds=result.elapsed_seconds,
+        return_code=result.return_code,
+        engine_version=None,
+        database_version=None,
+        database_date=None,
+        cache_hit=result.cache_hit,
+        file_sha256=result.file_sha256,
+        file_size=result.file_size,
+        file_mtime_ns=result.file_mtime_ns,
+        file_inode=result.file_inode,
+        file_streamed_bytes=result.file_streamed_bytes,
+    )
+
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    ) is True
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    assert _cache_counts(db_path) == (1, 1)
+    with open_sqlite(db_path) as conn:
+        content_row = conn.execute(
+            """
+            SELECT engine_version, database_version, database_date
+            FROM malware_scan_cache
+            """
+        ).fetchone()
+        identity_row = conn.execute(
+            """
+            SELECT engine_version, database_version, database_date
+            FROM malware_scan_cache_identities
+            """
+        ).fetchone()
+    assert content_row == ("", "", "")
+    assert identity_row == ("", "", "")
+    storage.close()
+
+
+def test_malware_cache_none_and_empty_compatibility_lookups_are_equivalent(tmp_path: Path):
+    storage, _db_path = _make_cache_storage(tmp_path)
+    file_path = tmp_path / "compat-equivalent.bin"
+    file_path.write_bytes(b"compatibility lookup payload")
+    result, sha256, size_bytes, mtime_ns, file_identity = _build_cache_result(
+        file_path,
+        engine_version="",
+        database_version="",
+        database_date="",
+    )
+    result = MalwareScanResult(
+        verdict=result.verdict,
+        scan_health=result.scan_health,
+        scanner=result.scanner,
+        file_path=result.file_path,
+        backend=result.backend,
+        threat_name=result.threat_name,
+        message=result.message,
+        elapsed_seconds=result.elapsed_seconds,
+        return_code=result.return_code,
+        engine_version=None,
+        database_version=None,
+        database_date=None,
+        cache_hit=result.cache_hit,
+        file_sha256=result.file_sha256,
+        file_size=result.file_size,
+        file_mtime_ns=result.file_mtime_ns,
+        file_inode=result.file_inode,
+        file_streamed_bytes=result.file_streamed_bytes,
+    )
+    assert storage.upsert_malware_scan_cache(
+        sha256=sha256,
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        result=result,
+        scan_policy_version="standard-v1",
+    ) is True
+
+    content_none = storage.get_malware_scan_cache_by_content(
+        sha256=sha256,
+        scanner_backend="clamd",
+        engine_version=None,
+        database_version=None,
+        database_date=None,
+        scan_policy_version="standard-v1",
+    )
+    content_empty = storage.get_malware_scan_cache_by_content(
+        sha256=sha256,
+        scanner_backend="clamd",
+        engine_version="",
+        database_version="",
+        database_date="",
+        scan_policy_version="standard-v1",
+    )
+    unchanged_none = storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        scanner_backend="clamd",
+        engine_version=None,
+        database_version=None,
+        database_date=None,
+        scan_policy_version="standard-v1",
+    )
+    unchanged_empty = storage.get_malware_scan_cache_for_unchanged_file(
+        canonical_path=str(file_path.resolve()),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        file_identity=file_identity,
+        scanner_backend="clamd",
+        engine_version="",
+        database_version="",
+        database_date="",
+        scan_policy_version="standard-v1",
+    )
+
+    assert content_none is not None
+    assert content_empty is not None
+    assert content_none["cache_id"] == content_empty["cache_id"]
+    assert unchanged_none is not None
+    assert unchanged_empty is not None
+    assert unchanged_none["cache_id"] == unchanged_empty["cache_id"]
+    storage.close()
+
+
 def test_malware_cache_identical_files_share_content_row_but_keep_separate_identities(tmp_path: Path):
     storage, db_path = _make_cache_storage(tmp_path)
     first = tmp_path / "first.bin"

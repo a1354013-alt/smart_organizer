@@ -103,6 +103,14 @@ def _ensure_indexes(cursor: sqlite3.Cursor) -> None:
             cursor.execute(statement)
 
 
+def _normalize_cache_compatibility_sql(column_name: str) -> str:
+    return f"COALESCE(TRIM({column_name}), '')"
+
+
+def _table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
+    return {str(row[1]) for row in cursor.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
 def _create_current_schema(cursor: sqlite3.Cursor) -> None:
     cursor.execute("CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT)")
     cursor.execute(
@@ -178,9 +186,9 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
             cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
             sha256 TEXT NOT NULL,
             scanner_backend TEXT NOT NULL,
-            engine_version TEXT,
-            database_version TEXT,
-            database_date TEXT,
+            engine_version TEXT NOT NULL DEFAULT '',
+            database_version TEXT NOT NULL DEFAULT '',
+            database_date TEXT NOT NULL DEFAULT '',
             scan_policy_version TEXT NOT NULL,
             verdict TEXT NOT NULL,
             scan_health TEXT NOT NULL,
@@ -202,8 +210,15 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
         """
         CREATE TABLE IF NOT EXISTS malware_scan_cache_identities (
             identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            canonical_path_key, size_bytes, mtime_ns, file_identity,
-            scanner_backend, engine_version, database_version, database_date, scan_policy_version,
+            canonical_path_key TEXT NOT NULL,
+            size_bytes INTEGER,
+            mtime_ns INTEGER,
+            file_identity TEXT,
+            scanner_backend TEXT NOT NULL,
+            engine_version TEXT NOT NULL DEFAULT '',
+            database_version TEXT NOT NULL DEFAULT '',
+            database_date TEXT NOT NULL DEFAULT '',
+            scan_policy_version TEXT NOT NULL,
             cache_id INTEGER NOT NULL,
             updated_at TEXT NOT NULL,
             UNIQUE(
@@ -227,6 +242,285 @@ def _create_current_schema(cursor: sqlite3.Cursor) -> None:
         ("schema_version", str(CURRENT_SCHEMA_VERSION)),
     )
     _ensure_indexes(cursor)
+
+
+def _rebuild_malware_cache_tables(cursor: sqlite3.Cursor) -> None:
+    table_names = {str(row[0]) for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "malware_scan_cache" not in table_names:
+        return
+
+    cache_columns = _table_columns(cursor, "malware_scan_cache")
+    has_identity_table = "malware_scan_cache_identities" in table_names
+
+    cursor.execute("DROP TABLE IF EXISTS malware_scan_cache__rebuilt")
+    cursor.execute("DROP TABLE IF EXISTS malware_scan_cache_identities__rebuilt")
+    cursor.execute("DROP TABLE IF EXISTS malware_scan_cache_identity_source")
+
+    cursor.execute(
+        """
+        CREATE TABLE malware_scan_cache__rebuilt (
+            cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sha256 TEXT NOT NULL,
+            scanner_backend TEXT NOT NULL,
+            engine_version TEXT NOT NULL DEFAULT '',
+            database_version TEXT NOT NULL DEFAULT '',
+            database_date TEXT NOT NULL DEFAULT '',
+            scan_policy_version TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            scan_health TEXT NOT NULL,
+            threat_name TEXT,
+            message TEXT,
+            scanned_at TEXT NOT NULL,
+            elapsed_seconds REAL DEFAULT 0,
+            UNIQUE(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
+        )
+        """
+    )
+    cursor.execute(
+        f"""
+        WITH ranked AS (
+            SELECT
+                cache_id,
+                sha256,
+                scanner_backend,
+                {_normalize_cache_compatibility_sql('engine_version')} AS engine_version,
+                {_normalize_cache_compatibility_sql('database_version')} AS database_version,
+                {_normalize_cache_compatibility_sql('database_date')} AS database_date,
+                scan_policy_version,
+                verdict,
+                scan_health,
+                threat_name,
+                message,
+                scanned_at,
+                COALESCE(elapsed_seconds, 0) AS elapsed_seconds,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        sha256,
+                        scanner_backend,
+                        {_normalize_cache_compatibility_sql('engine_version')},
+                        {_normalize_cache_compatibility_sql('database_version')},
+                        {_normalize_cache_compatibility_sql('database_date')},
+                        scan_policy_version
+                    ORDER BY scanned_at DESC, cache_id DESC
+                ) AS row_num
+            FROM malware_scan_cache
+        )
+        INSERT INTO malware_scan_cache__rebuilt (
+            sha256,
+            scanner_backend,
+            engine_version,
+            database_version,
+            database_date,
+            scan_policy_version,
+            verdict,
+            scan_health,
+            threat_name,
+            message,
+            scanned_at,
+            elapsed_seconds
+        )
+        SELECT
+            sha256,
+            scanner_backend,
+            engine_version,
+            database_version,
+            database_date,
+            scan_policy_version,
+            verdict,
+            scan_health,
+            threat_name,
+            message,
+            scanned_at,
+            elapsed_seconds
+        FROM ranked
+        WHERE row_num = 1
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE malware_scan_cache_identity_source (
+            source_order INTEGER NOT NULL,
+            canonical_path_key TEXT NOT NULL,
+            size_bytes INTEGER,
+            mtime_ns INTEGER,
+            file_identity TEXT,
+            scanner_backend TEXT NOT NULL,
+            engine_version TEXT NOT NULL,
+            database_version TEXT NOT NULL,
+            database_date TEXT NOT NULL,
+            scan_policy_version TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    if has_identity_table:
+        cursor.execute(
+            f"""
+            INSERT INTO malware_scan_cache_identity_source (
+                source_order,
+                canonical_path_key,
+                size_bytes,
+                mtime_ns,
+                file_identity,
+                scanner_backend,
+                engine_version,
+                database_version,
+                database_date,
+                scan_policy_version,
+                sha256,
+                updated_at
+            )
+            SELECT
+                identity.identity_id,
+                identity.canonical_path_key,
+                identity.size_bytes,
+                identity.mtime_ns,
+                identity.file_identity,
+                identity.scanner_backend,
+                {_normalize_cache_compatibility_sql('identity.engine_version')} AS engine_version,
+                {_normalize_cache_compatibility_sql('identity.database_version')} AS database_version,
+                {_normalize_cache_compatibility_sql('identity.database_date')} AS database_date,
+                identity.scan_policy_version,
+                cache.sha256,
+                COALESCE(NULLIF(identity.updated_at, ''), cache.scanned_at)
+            FROM malware_scan_cache_identities AS identity
+            JOIN malware_scan_cache AS cache ON cache.cache_id = identity.cache_id
+            WHERE identity.canonical_path_key IS NOT NULL
+            """
+        )
+    if {"canonical_path_key", "size_bytes", "mtime_ns", "file_identity"}.issubset(cache_columns):
+        cursor.execute(
+            f"""
+            INSERT INTO malware_scan_cache_identity_source (
+                source_order,
+                canonical_path_key,
+                size_bytes,
+                mtime_ns,
+                file_identity,
+                scanner_backend,
+                engine_version,
+                database_version,
+                database_date,
+                scan_policy_version,
+                sha256,
+                updated_at
+            )
+            SELECT
+                cache_id,
+                canonical_path_key,
+                size_bytes,
+                mtime_ns,
+                file_identity,
+                scanner_backend,
+                {_normalize_cache_compatibility_sql('engine_version')} AS engine_version,
+                {_normalize_cache_compatibility_sql('database_version')} AS database_version,
+                {_normalize_cache_compatibility_sql('database_date')} AS database_date,
+                scan_policy_version,
+                sha256,
+                scanned_at
+            FROM malware_scan_cache
+            WHERE canonical_path_key IS NOT NULL
+            """
+        )
+
+    cursor.execute(
+        """
+        CREATE TABLE malware_scan_cache_identities__rebuilt (
+            identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical_path_key TEXT NOT NULL,
+            size_bytes INTEGER,
+            mtime_ns INTEGER,
+            file_identity TEXT,
+            scanner_backend TEXT NOT NULL,
+            engine_version TEXT NOT NULL DEFAULT '',
+            database_version TEXT NOT NULL DEFAULT '',
+            database_date TEXT NOT NULL DEFAULT '',
+            scan_policy_version TEXT NOT NULL,
+            cache_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(
+                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
+            ),
+            FOREIGN KEY (cache_id) REFERENCES malware_scan_cache__rebuilt(cache_id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        WITH ranked AS (
+            SELECT
+                source.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        canonical_path_key,
+                        scanner_backend,
+                        engine_version,
+                        database_version,
+                        database_date,
+                        scan_policy_version
+                    ORDER BY updated_at DESC, source_order DESC
+                ) AS row_num
+            FROM malware_scan_cache_identity_source AS source
+        )
+        INSERT INTO malware_scan_cache_identities__rebuilt (
+            canonical_path_key,
+            size_bytes,
+            mtime_ns,
+            file_identity,
+            scanner_backend,
+            engine_version,
+            database_version,
+            database_date,
+            scan_policy_version,
+            cache_id,
+            updated_at
+        )
+        SELECT
+            ranked.canonical_path_key,
+            ranked.size_bytes,
+            ranked.mtime_ns,
+            ranked.file_identity,
+            ranked.scanner_backend,
+            ranked.engine_version,
+            ranked.database_version,
+            ranked.database_date,
+            ranked.scan_policy_version,
+            rebuilt.cache_id,
+            ranked.updated_at
+        FROM ranked
+        JOIN malware_scan_cache__rebuilt AS rebuilt
+          ON rebuilt.sha256 = ranked.sha256
+         AND rebuilt.scanner_backend = ranked.scanner_backend
+         AND rebuilt.engine_version = ranked.engine_version
+         AND rebuilt.database_version = ranked.database_version
+         AND rebuilt.database_date = ranked.database_date
+         AND rebuilt.scan_policy_version = ranked.scan_policy_version
+        WHERE ranked.row_num = 1
+        """
+    )
+
+    cursor.execute("DROP TABLE IF EXISTS malware_scan_cache_identities")
+    cursor.execute("DROP TABLE malware_scan_cache")
+    cursor.execute("ALTER TABLE malware_scan_cache__rebuilt RENAME TO malware_scan_cache")
+    cursor.execute("ALTER TABLE malware_scan_cache_identities__rebuilt RENAME TO malware_scan_cache_identities")
+    cursor.execute("DROP TABLE malware_scan_cache_identity_source")
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_lookup
+        ON malware_scan_cache(sha256, scanner_backend, engine_version, database_version, database_date, scan_policy_version)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_malware_scan_cache_unchanged_file
+        ON malware_scan_cache_identities(
+            canonical_path_key, size_bytes, mtime_ns, file_identity,
+            scanner_backend, engine_version, database_version, database_date, scan_policy_version, cache_id
+        )
+        """
+    )
 
 
 def expected_runtime_tables(db_path: SQLiteTarget) -> set[str]:
@@ -347,77 +641,12 @@ def upgrade_database_schema(
                         """
                     )
 
-                if version < 19:
-                    cursor.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS malware_scan_cache_identities (
-                            identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            canonical_path_key TEXT NOT NULL,
-                            size_bytes INTEGER,
-                            mtime_ns INTEGER,
-                            file_identity TEXT,
-                            scanner_backend TEXT NOT NULL,
-                            engine_version TEXT,
-                            database_version TEXT,
-                            database_date TEXT,
-                            scan_policy_version TEXT NOT NULL,
-                            cache_id INTEGER NOT NULL,
-                            updated_at TEXT NOT NULL,
-                            UNIQUE(
-                                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
-                            ),
-                            FOREIGN KEY (cache_id) REFERENCES malware_scan_cache(cache_id) ON DELETE CASCADE
-                            )
-                            """
-                        )
-                    cache_columns = {str(row[1]) for row in cursor.execute("PRAGMA table_info(malware_scan_cache)").fetchall()}
-                    if {"canonical_path_key", "size_bytes", "mtime_ns", "file_identity"}.issubset(cache_columns):
-                        cursor.execute(
-                            """
-                            INSERT INTO malware_scan_cache_identities (
-                                canonical_path_key,
-                                size_bytes,
-                                mtime_ns,
-                                file_identity,
-                                scanner_backend,
-                                engine_version,
-                                database_version,
-                                database_date,
-                                scan_policy_version,
-                                cache_id,
-                                updated_at
-                            )
-                            SELECT
-                                canonical_path_key,
-                                size_bytes,
-                                mtime_ns,
-                                file_identity,
-                                scanner_backend,
-                                engine_version,
-                                database_version,
-                                database_date,
-                                scan_policy_version,
-                                cache_id,
-                                scanned_at
-                            FROM malware_scan_cache
-                            WHERE canonical_path_key IS NOT NULL
-                            ON CONFLICT(
-                                canonical_path_key, scanner_backend, engine_version, database_version, database_date, scan_policy_version
-                            )
-                            DO UPDATE SET
-                                size_bytes = excluded.size_bytes,
-                                mtime_ns = excluded.mtime_ns,
-                                file_identity = excluded.file_identity,
-                                cache_id = excluded.cache_id,
-                                updated_at = excluded.updated_at
-                            """
-                        )
-
                 cursor.execute(
                     "UPDATE sys_config SET value = ? WHERE key = 'schema_version'",
                     (str(target_version),),
                 )
 
+            _rebuild_malware_cache_tables(cursor)
             _ensure_indexes(cursor)
     except sqlite3.Error as exc:
         raise RuntimeError(f"Database migration failed: {exc}") from exc
