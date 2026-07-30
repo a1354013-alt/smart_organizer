@@ -20,6 +20,8 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "fail-fast: false" in workflow
     assert "continue-on-error" not in workflow
     assert "requirements-dev.lock.txt" in workflow
+    assert 'python -B -m pip install --upgrade "pip==26.1.2"' in workflow
+    assert 'python -B -m pip install "pip-tools==7.6.0"' in workflow
     assert "python -B scripts/validate_dependency_locks.py --mode regenerate" in workflow
     assert "python -B scripts/validate_dependency_locks.py --mode static" in workflow
     assert "Repository unchanged check" in workflow
@@ -33,6 +35,11 @@ def test_ci_matrix_includes_windows_ubuntu_and_supported_python_versions():
     assert "error::ResourceWarning" in workflow
     assert "pip_audit" in workflow
     assert "--cov-branch" in workflow
+
+    dep_job_install = workflow.split("name: Dependency Lock Determinism", 1)[1].split("Python runtime preflight", 1)[0]
+    assert dep_job_install.index('python -B -m pip install --upgrade "pip==26.1.2"') < dep_job_install.index(
+        'python -B -m pip install "pip-tools==7.6.0"'
+    )
 
 
 def test_dependabot_and_codeql_configs_are_present_and_minimal():

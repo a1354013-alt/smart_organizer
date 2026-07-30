@@ -269,6 +269,14 @@ CI and local release validation cover compile, cache-safe compile, lock consiste
 
 Dependency lock validation is intentionally split between cross-platform static checks, canonical seeded no-upgrade regeneration, and an explicit manual upgrade path. Canonical regeneration stays pinned to Windows plus Python `3.11`, while the Ubuntu/Windows test matrix installs from the committed locks and runs static checks only.
 
+Canonical lock-generation toolchain:
+
+- Python `3.11`
+- `pip 26.1.2`
+- `pip-tools 7.6.0`
+- resolver `backtracking`
+- Windows newline `CRLF`
+
 Newly published compatible packages should no longer break CI because canonical validation reuses the committed pins before regenerating temporary lock output. Exact source-repository commands, lock-diff interpretation, and the explicit upgrade workflow live in `RUN_RELEASE.md`. The runtime zip keeps that document for reference, but the validation scripts themselves remain source-only files.
 
 Focused SQLite lifecycle validation command:

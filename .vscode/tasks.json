@@ -13,7 +13,7 @@
     {
       "label": "Smart Organizer: Install dev dependencies",
       "type": "shell",
-      "command": "python -m pip install -r requirements.lock.txt -r requirements-dev.lock.txt",
+      "command": "python -m pip install --upgrade \"pip==26.1.2\" && python -m pip install \"pip-tools==7.6.0\" && python -m pip install -r requirements.lock.txt -r requirements-dev.lock.txt",
       "options": {
         "cwd": "${workspaceFolder}"
       },

@@ -24,7 +24,8 @@ jobs:
 
       - name: Install
         run: |
-          python -B -m pip install --upgrade pip
+          python -B -m pip install --upgrade "pip==26.1.2"
+          python -B -m pip install "pip-tools==7.6.0"
           python -B -m pip install -r requirements-dev.lock.txt
 
       - name: Python runtime preflight
@@ -73,7 +74,8 @@ jobs:
 
       - name: Install
         run: |
-          python -B -m pip install --upgrade pip
+          python -B -m pip install --upgrade "pip==26.1.2"
+          python -B -m pip install "pip-tools==7.6.0"
           python -B -m pip install -r requirements-dev.lock.txt
 
       - name: Python runtime preflight

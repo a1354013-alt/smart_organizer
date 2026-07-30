@@ -197,6 +197,8 @@ python -B scripts/validate_release_source.py --timeout-tail-lines 20
 Canonical dependency lock regeneration is intentionally separate from the cross-platform source validation flow. The committed lock files are regenerated and compared only in the canonical Windows plus Python `3.11` environment:
 
 ```bash
+python -m pip install --upgrade "pip==26.1.2"
+python -m pip install "pip-tools==7.6.0"
 python -B scripts/validate_dependency_locks.py --mode regenerate
 ```
 
@@ -205,8 +207,10 @@ Static validation never upgrades packages. Canonical regenerate validation seeds
 Manual lock commands:
 
 ```bash
+python -m pip install --upgrade "pip==26.1.2"
+python -m pip install "pip-tools==7.6.0"
 python -B scripts/regenerate_dependency_locks.py
 python -B scripts/regenerate_dependency_locks.py --upgrade
 ```
 
-Use `scripts/regenerate_dependency_locks.py` in the canonical Windows + Python `3.11` environment. The default command refreshes committed locks while preserving compatible pins; `--upgrade` is the explicit opt-in path for newer compatible versions. After either command, review the printed package diff and rerun the full validation workflow.
+Use `scripts/regenerate_dependency_locks.py` in the canonical Windows + Python `3.11` environment with `pip 26.1.2` and `pip-tools 7.6.0`. The default command refreshes committed locks while preserving compatible pins; `--upgrade` is the explicit opt-in path for newer compatible versions. After either command, review the printed package diff and rerun the full validation workflow.

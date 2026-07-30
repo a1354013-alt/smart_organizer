@@ -36,6 +36,8 @@ def test_vscode_tasks_cover_validation_and_release_workflow():
     labels = {task["label"]: task["command"] for task in tasks["tasks"]}
     assert "Smart Organizer: Run tests" in labels
     assert labels["Smart Organizer: Run tests"] == "python -m pytest -q"
+    assert "pip==26.1.2" in labels["Smart Organizer: Install dev dependencies"]
+    assert "pip-tools==7.6.0" in labels["Smart Organizer: Install dev dependencies"]
     assert "Smart Organizer: Validate source repository" in labels
     assert "validate_release_source.py --timeout-tail-lines 20" in labels["Smart Organizer: Validate source repository"]
     assert "Smart Organizer: Build release zip" in labels

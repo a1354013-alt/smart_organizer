@@ -25,6 +25,9 @@ from runtime_preflight import SUPPORTED_PYTHON_RANGE, require_supported_python
 
 CANONICAL_LOCK_OS = "Windows"
 CANONICAL_LOCK_PYTHON = "3.11"
+CANONICAL_LOCK_PIP = "26.1.2"
+CANONICAL_LOCK_PIPTOOLS = "7.6.0"
+CANONICAL_LOCK_RESOLVER = "backtracking"
 CANONICAL_LOCK_NEWLINE = "crlf"
 LOCK_DIFF_LINE_LIMIT = 200
 RUNTIME_INPUT = PROJECT_ROOT / "requirements.in"
@@ -75,29 +78,60 @@ def canonical_environment_lines() -> list[str]:
         "Canonical lock environment:",
         f"- OS: {CANONICAL_LOCK_OS}",
         f"- Python: {CANONICAL_LOCK_PYTHON}",
+        f"- pip: {CANONICAL_LOCK_PIP}",
+        f"- pip-tools: {CANONICAL_LOCK_PIPTOOLS}",
+        f"- resolver: {CANONICAL_LOCK_RESOLVER}",
+        f"- newline: {CANONICAL_LOCK_NEWLINE.upper()}",
+    ]
+
+
+def detected_environment_lines() -> list[str]:
+    return [
+        "Detected environment:",
+        f"- OS: {platform.system()}",
+        f"- Python: {sys.version_info[0]}.{sys.version_info[1]}",
         f"- pip: {get_pip_version()}",
         f"- pip-tools: {get_piptools_version()}",
-        "- resolver: backtracking",
-        f"- newline: {CANONICAL_LOCK_NEWLINE.upper()}",
     ]
 
 
 def _print_canonical_environment() -> None:
     for line in canonical_environment_lines():
         print(line)
+    for line in detected_environment_lines():
+        print(line)
 
 
 def _is_canonical_lock_environment() -> bool:
-    return platform.system() == CANONICAL_LOCK_OS and tuple(sys.version_info[:2]) == (3, 11)
+    return (
+        platform.system() == CANONICAL_LOCK_OS
+        and tuple(sys.version_info[:2]) == (3, 11)
+        and get_pip_version() == CANONICAL_LOCK_PIP
+        and get_piptools_version() == CANONICAL_LOCK_PIPTOOLS
+    )
+
+
+def canonical_toolchain_restore_commands() -> list[str]:
+    return [
+        f'{sys.executable} -m pip install --upgrade "pip=={CANONICAL_LOCK_PIP}"',
+        f'{sys.executable} -m pip install "pip-tools=={CANONICAL_LOCK_PIPTOOLS}"',
+    ]
 
 
 def require_canonical_lock_environment(action: str) -> None:
     if _is_canonical_lock_environment():
         return
+    actual_python = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    actual_pip = get_pip_version()
+    actual_piptools = get_piptools_version()
     raise RuntimeError(
-        f"{action} must run in the canonical lock environment "
-        f"({CANONICAL_LOCK_OS} + Python {CANONICAL_LOCK_PYTHON}); "
-        f"detected {platform.system()} + Python {sys.version_info[0]}.{sys.version_info[1]}."
+        f"{action} must run in the canonical lock environment.\n"
+        f"Expected: OS={CANONICAL_LOCK_OS}, Python={CANONICAL_LOCK_PYTHON}, "
+        f"pip={CANONICAL_LOCK_PIP}, pip-tools={CANONICAL_LOCK_PIPTOOLS}, "
+        f"resolver={CANONICAL_LOCK_RESOLVER}, newline={CANONICAL_LOCK_NEWLINE.upper()}.\n"
+        f"Actual: OS={platform.system()}, Python={actual_python}, pip={actual_pip}, pip-tools={actual_piptools}.\n"
+        "Restore the canonical environment with:\n"
+        + "\n".join(f"- {command}" for command in canonical_toolchain_restore_commands())
     )
 
 
@@ -145,6 +179,14 @@ def _declared_dependency_names(path: Path) -> set[str]:
         requirement = Requirement(requirement_line)
         names.add(requirement.name.lower().replace("_", "-"))
     return names
+
+
+def _declared_requirements(path: Path) -> dict[str, Requirement]:
+    requirements: dict[str, Requirement] = {}
+    for requirement_line in _iter_declared_requirement_lines(path):
+        requirement = Requirement(requirement_line)
+        requirements[_normalize_requirement_name(requirement.name)] = requirement
+    return requirements
 
 
 def _lock_header_lines(path: Path) -> list[str]:
@@ -218,11 +260,24 @@ def _validate_direct_dependencies_present(spec: LockSpec) -> None:
 def _validate_runtime_and_dev_relationships() -> None:
     runtime_names = _package_names(RUNTIME_LOCK)
     dev_names = _package_names(DEV_LOCK)
+    dev_input_requirements = _declared_requirements(DEV_INPUT)
     leaked = sorted(TEST_ONLY_PACKAGES & runtime_names)
     if leaked:
         raise RuntimeError(f"Runtime lock contains development-only dependencies: {leaked}")
     if "pip-tools" not in dev_names:
         raise RuntimeError("requirements-dev.lock.txt must pin pip-tools for canonical lock generation")
+    piptools_input = dev_input_requirements.get("pip-tools")
+    if piptools_input is None or str(piptools_input.specifier) != f"=={CANONICAL_LOCK_PIPTOOLS}":
+        raise RuntimeError(
+            "requirements-dev.in must pin pip-tools to the canonical lock toolchain version "
+            f"=={CANONICAL_LOCK_PIPTOOLS}."
+        )
+    piptools_lock_version = _package_versions(DEV_LOCK).get("pip-tools")
+    if piptools_lock_version != f"=={CANONICAL_LOCK_PIPTOOLS}":
+        raise RuntimeError(
+            "requirements-dev.lock.txt must pin the canonical pip-tools version "
+            f"=={CANONICAL_LOCK_PIPTOOLS}; found {piptools_lock_version or 'missing'}."
+        )
     missing_runtime = sorted(runtime_names - dev_names)
     if missing_runtime:
         raise RuntimeError(
