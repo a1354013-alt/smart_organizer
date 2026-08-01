@@ -5,6 +5,7 @@ import sqlite3
 
 from i18n import t
 from storage import StorageManager
+from storage_repository import MAX_RECORDS_PAGE_SIZE
 from ui_records import build_records_maintenance_actions, build_unfinished_record_actions
 
 
@@ -174,3 +175,34 @@ def test_get_all_records_paginates_beyond_recent_limit():
 
     assert len(all_records) == 505
     assert len(recent_records) == 500
+
+
+def test_get_records_page_clamps_negative_zero_and_large_pagination_values():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    created_ids = [
+        _create_record(storage, f"record-{index}.pdf", topic="Archive", summary=f"summary {index}")
+        for index in range(3)
+    ]
+
+    negative_limit = storage.get_records_page(limit=-10, offset=0)
+    zero_limit = storage.get_records_page(limit=0, offset=0)
+    negative_offset = storage.get_records_page(limit=2, offset=-5)
+    excessive_limit = storage.get_records_page(limit=MAX_RECORDS_PAGE_SIZE + 1000, offset=0)
+
+    assert len(negative_limit["items"]) == 1
+    assert len(zero_limit["items"]) == 1
+    assert [item["file_id"] for item in negative_offset["items"]] == created_ids[::-1][:2]
+    assert len(excessive_limit["items"]) == 3
+
+
+def test_get_records_page_rejects_invalid_pagination_values():
+    storage = StorageManager(":memory:", ":memory:", ":memory:")
+    _create_record(storage, "record.pdf", topic="Archive", summary="summary")
+
+    invalid_limit = storage.get_records_page(limit="abc")  # type: ignore[arg-type]
+    invalid_offset = storage.get_records_page(offset="abc")  # type: ignore[arg-type]
+
+    assert invalid_limit["ok"] is False
+    assert "invalid literal for int()" in str(invalid_limit["error"])
+    assert invalid_offset["ok"] is False
+    assert "invalid literal for int()" in str(invalid_offset["error"])

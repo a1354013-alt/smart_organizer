@@ -20,6 +20,8 @@ from topic_taxonomy import normalize_topic_key, normalize_topic_scores
 
 logger = logging.getLogger(__name__)
 
+MAX_RECORDS_PAGE_SIZE = 500
+
 
 def _is_relative_to(child: Path, parent: Path) -> bool:
     try:
@@ -33,6 +35,14 @@ def _normalize_cache_compatibility_value(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _coerce_page_limit(limit: object) -> int:
+    return min(max(int(cast(Any, limit)), 1), MAX_RECORDS_PAGE_SIZE)
+
+
+def _coerce_page_offset(offset: object) -> int:
+    return max(int(cast(Any, offset)), 0)
 
 
 class CreateTempFileResult(TypedDict, total=False):
@@ -642,7 +652,8 @@ class StorageRepositoryMixin:
                         temp_created = True
             elif isinstance(temp_path, Path) and not temp_path.exists():
                 try:
-                    assert part_path is not None
+                    if part_path is None:
+                        raise RuntimeError("Temporary part path was not initialized for a filesystem upload.")
                     with open(part_path, "wb") as file_obj:
                         file_obj.write(payload)
                     os.replace(part_path, temp_path)
@@ -1006,6 +1017,8 @@ class StorageRepositoryMixin:
     ) -> dict[str, object]:
         conn: sqlite3.Connection | None = None
         try:
+            safe_limit = _coerce_page_limit(limit)
+            safe_offset = _coerce_page_offset(offset)
             conn = self._get_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -1060,7 +1073,7 @@ class StorageRepositoryMixin:
             )
             total = int(cursor.fetchone()[0])
 
-            query_params = [*params, int(limit), int(offset)]
+            query_params = [*params, safe_limit, safe_offset]
             cursor.execute(
                 f"""
                 SELECT f.*, GROUP_CONCAT(DISTINCT t.tag_name) AS all_tags
@@ -1080,7 +1093,7 @@ class StorageRepositoryMixin:
                 "ok": True,
                 "error": None,
             }
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, ValueError, TypeError) as exc:
             logger.error("get_records_page failed: %s", exc)
             return {"items": [], "total": 0, "ok": False, "error": str(exc)}
         finally:

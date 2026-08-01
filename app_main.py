@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import importlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,25 @@ _BOOTSTRAPPED_STORAGES: dict[tuple[str, str, str], StorageManager] = {}
 def _optional_import(module_name: str) -> Any:
     try:
         module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        requested_root = module_name.partition(".")[0]
+        if exc.name == requested_root:
+            return None
+        setup_logging()
+        logging.getLogger(__name__).warning(
+            "Optional dependency %s failed because a nested import is missing: %s",
+            module_name,
+            exc.name,
+            exc_info=True,
+        )
+        return None
     except Exception:  # pragma: no cover
+        setup_logging()
+        logging.getLogger(__name__).warning(
+            "Optional dependency %s raised during import and was disabled.",
+            module_name,
+            exc_info=True,
+        )
         return None
     return module
 
