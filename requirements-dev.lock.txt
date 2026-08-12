@@ -42,12 +42,6 @@ click==8.4.2
     #   pip-tools
     #   streamlit
     #   uvicorn
-colorama==0.4.6
-    # via
-    #   build
-    #   click
-    #   pytest
-    #   tqdm
 contourpy==1.3.3
     # via matplotlib
 coverage==7.15.2
@@ -195,7 +189,7 @@ pyparsing==3.3.2
     # via
     #   matplotlib
     #   pip-requirements-parser
-pypdf==6.14.2
+pypdf==6.15.0
     # via -r requirements.in
 pyproject-hooks==1.2.0
     # via
