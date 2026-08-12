@@ -1,5 +1,5 @@
 streamlit>=1.56,<2
-pypdf>=6.13.3,<7
+pypdf>=6.15.0,<7
 Pillow>=12.3,<13
 exifread>=3.0,<4
 numpy>=1.26,<2.5
